@@ -102,9 +102,7 @@ HOW_TO_READ = (
     'Each picture has numbered orange boxes. The table under the picture explains each number: '
     'what that part of the screen is and what it does. Work through the numbers in order the '
     'first time you use a screen. Boxed notes beside a table add what the numbers cannot: a rule '
-    'the screen enforces, or a panel that only appears when it has something in it. Each picture '
-    'also carries its own copy of the legend along the bottom, so a page photocopied on its own '
-    'still explains itself.'
+    'the screen enforces, or a panel that only appears when it has something in it.'
 )
 PICTURE_NOTES = [
     'The names, plate numbers, email addresses and records shown are sample data for '

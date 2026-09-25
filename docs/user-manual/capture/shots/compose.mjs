@@ -8,8 +8,11 @@ const only = process.argv.slice(3)
 if (!OUT_ROOT) throw new Error('usage: node compose.mjs <outRoot> [filter...]')
 
 const ACCENT = '#E8590C'
+// No legend is drawn into the picture: the Word document prints the callouts
+// as a numbered table under each figure, and a second copy inside the image
+// only shrank the screenshot to fit it on the page.
 // BARE=1: screenshot and numbered callouts only; the Word document supplies
-// the title, caption and legend as editable text.
+// the title and caption as editable text.
 const BARE = process.env.BARE === '1'
 // CLEAN=1: the screenshot alone (patches and redactions applied), plus a
 // .json of callout positions as fractions, for the in-app help page to draw.
@@ -52,8 +55,6 @@ function figureHtml(meta, imgB64) {
     box: { x: mk.box.x * k - pad, y: mk.box.y * k - pad, w: mk.box.w * k + pad * 2, h: mk.box.h * k + pad * 2 },
   }))
   placeBadges(marks, W, H, R)
-  const side = meta.layout === 'side'
-  const legendCols = side ? 1 : marks.length > 4 ? 2 : 1
 
   const boxes = marks.map((mk) => {
     const b = mk.box
@@ -76,19 +77,17 @@ function figureHtml(meta, imgB64) {
     }))
     meta.__size = { w: W, h: H }
   }
-  const legend = marks.map((mk) =>
-    `<li><span class="badge">${mk.n}</span><div><b>${esc(mk.label)}</b><span class="desc">${esc(mk.desc)}</span></div></li>`).join('')
 
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   @font-face { font-family: InterLocal; src: local('Inter'), local('Segoe UI'); }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: #ffffff; font-family: 'Segoe UI', Inter, system-ui, sans-serif; color: #0f2233; }
   .fig { display: inline-block; padding: 34px 40px 26px; background: #fff; }
-  header { border-left: 5px solid #0B3A6E; padding: 2px 0 2px 16px; margin-bottom: 22px; max-width: ${side ? W + 460 : W}px; }
+  header { border-left: 5px solid #0B3A6E; padding: 2px 0 2px 16px; margin-bottom: 22px; max-width: ${W}px; }
   .kicker { font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #9a6b00; }
   h1 { font-size: 27px; font-weight: 700; color: #0B3A6E; margin-top: 3px; }
   header p { font-size: 15.5px; color: #4a5d6e; margin-top: 5px; }
-  .body { display: flex; gap: 30px; flex-direction: ${side ? 'row' : 'column'}; align-items: flex-start; }
+  .body { display: flex; flex-direction: column; align-items: flex-start; }
   .shot { position: relative; width: ${W}px; height: ${H}px; border-radius: 10px; overflow: hidden;
           box-shadow: 0 0 0 1px #c9d4de, 0 6px 22px rgba(15,34,51,.14); flex: none; }
   .shot img { position: absolute; inset: 0; width: ${W}px; height: ${H}px; }
@@ -104,21 +103,13 @@ function figureHtml(meta, imgB64) {
   .redact-label::after { content: attr(data-x); }
   .redact-label { font-size: 15px; font-weight: 700; color: #fff; }
   .redact-label { text-shadow: 0 1px 3px rgba(0,0,0,.8); }
-  ol.legend { list-style: none; display: grid; grid-template-columns: repeat(${legendCols}, minmax(0, 1fr));
-              gap: 12px 26px; width: ${side ? 430 : W}px; }
-  ol.legend li { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; background: #f4f7fa;
-                 border: 1px solid #e0e8ef; border-radius: 10px; }
-  ol.legend li .badge { box-shadow: none; width: 26px; height: 26px; font-size: 13.5px; margin-top: 1px; }
-  ol.legend b { display: block; font-size: 15.5px; color: #0f2233; }
-  ol.legend span.desc { display: block; font-size: 14px; line-height: 1.42; color: #43586a; margin-top: 2px; }
   footer { margin-top: 18px; font-size: 12px; color: #8595a3; display: flex; justify-content: space-between; }
-  ${BARE ? '.fig { padding: 14px; } header, footer, ol.legend { display: none !important; }' : ''}
-  ${CLEAN ? '.fig { padding: 0; } header, footer, ol.legend, .box, .badge.on-shot { display: none !important; } .shot { border-radius: 0; box-shadow: none; }' : ''}
+  ${BARE ? '.fig { padding: 14px; } header, footer { display: none !important; }' : ''}
+  ${CLEAN ? '.fig { padding: 0; } header, footer, .box, .badge.on-shot { display: none !important; } .shot { border-radius: 0; box-shadow: none; }' : ''}
   </style></head><body><div class="fig">
     <header><div class="kicker">${esc(meta.section)}</div><h1>${esc(meta.title)}</h1>${meta.caption ? `<p>${esc(meta.caption)}</p>` : ''}</header>
     <div class="body">
       <div class="shot" id="shot"><img id="img" src="data:image/png;base64,${imgB64}">${patches}${boxes}${redactLabels}${badges}</div>
-      ${marks.length ? `<ol class="legend">${legend}</ol>` : ''}
     </div>
     <footer><span>Saint Louis College · Smart Parking and Vehicle Verification System</span><span>User Manual</span></footer>
   </div>

@@ -6,7 +6,7 @@ document is built from.
 
 This ran once before, in September 2026, from a scratch directory that was never
 committed. That is why the first edition's pictures went stale with no way to
-refresh them: the callout wording is printed **into** each picture, so it cannot
+refresh them: the callout wording was printed **into** each picture, so it cannot
 be corrected by editing the manual. It lives in the repository now.
 
 ## What is the source of what
@@ -75,11 +75,10 @@ last compose rather than after each one.
 ## Things that will catch you out
 
 * **Re-running `index.mjs` overwrites `images/README.md`.** Anything written
-  there by hand is lost, and it would have disagreed with the legend inside the
-  picture anyway. Edit `shots.mjs` or `notes.mjs`.
+  there by hand is lost. Edit `shots.mjs` or `notes.mjs`.
 * **`CLEAN=1` composes into `figures-clean/`, not `images/`.** The two are
-  different renderings of the same capture: one with the header, legend and
-  footer drawn in, one bare for the help page to annotate at render time.
+  different renderings of the same capture: one with the header, numbered
+  boxes and footer drawn in, one bare for the help page to annotate at render time.
 * **Phone captures (`-mobile`) belong only to the help page.** `index.mjs`
   skips them; if one is composed into `images/` by accident, delete the PNG.
 * **The camera feeds and the detector status are stubbed.** A real RTSP feed and

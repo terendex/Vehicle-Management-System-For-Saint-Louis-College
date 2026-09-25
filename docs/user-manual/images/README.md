@@ -3,11 +3,10 @@
 **This file is generated.** `shots/index.mjs` writes it from the figure definitions in
 `shots/shots.mjs` and the prose in `shots/notes.mjs`; the Word document is then built from
 it. Edit those two files and re-run the capture, not this one — a hand edit here is lost on
-the next run, and it would also leave the text disagreeing with the legend printed inside
-each picture, which comes from the same definitions.
+the next run.
 
 Annotated screenshots for the user manual. Each image has numbered callouts, and the same
-numbers are explained in a legend printed inside the image and repeated below it.
+numbers are explained in the list below it.
 
 The web screenshots were taken against a separate demo database filled with
 fictional people, plates and records. Camera pictures in them are sample
