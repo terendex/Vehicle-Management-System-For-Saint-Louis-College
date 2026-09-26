@@ -603,6 +603,17 @@ class TwoFactorResetView(APIView):
     rather than dropping them to password-only. The admin doing it must pass
     their own step-up, so a hijacked admin session cannot quietly strip 2FA
     from every account it can see.
+
+    Every session the account already has is ended too. A reset usually means
+    a lost or stolen phone, and that phone may still be signed in; with no
+    authenticator on the account the step-up check stands aside (see
+    HasRecentTwoFactor), so a session left running could change the password
+    without a code and then enrol its own authenticator. Refresh tokens are
+    revoked, so the old sessions stop at their current access token's expiry.
+
+    Not on one's own account: it would leave the CDSO's live session passing
+    every step-up check without a code. A CDSO who has lost their phone signs
+    in with their backup code and re-pairs from there.
     """
 
     permission_classes = [permissions.IsAuthenticated, HasRecentTwoFactor]
@@ -612,6 +623,12 @@ class TwoFactorResetView(APIView):
             return Response({'error': 'Only the CDSO may reset two-factor authentication.'},
                             status=status.HTTP_403_FORBIDDEN)
 
+        if int(pk) == request.user.pk:
+            return Response({'error': 'You cannot reset your own two-factor authentication. '
+                                      'If you lost your phone, sign in with your backup code '
+                                      'and set up a new authenticator.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         try:
             target = User.objects.get(pk=pk, is_archived=False)
         except User.DoesNotExist:
@@ -620,6 +637,8 @@ class TwoFactorResetView(APIView):
         TwoFactorDevice.objects.filter(user=target).delete()
         TwoFactorBackupCode.objects.filter(user=target).delete()
         _clear_failures(target)
+        from .views import _end_sessions      # local: accounts.views imports this module
+        _end_sessions(target)
 
         audit(
             request, AuditLog.Action.TWOFA_RESET,
@@ -629,7 +648,8 @@ class TwoFactorResetView(APIView):
         )
         return Response({
             'reset': True,
-            'message': f'{target.full_name} will set up a new authenticator at their next login.',
+            'message': (f'{target.full_name} has been signed out everywhere and will set up '
+                        f'a new authenticator at their next login.'),
         })
 
 

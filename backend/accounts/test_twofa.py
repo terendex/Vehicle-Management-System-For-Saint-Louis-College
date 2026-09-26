@@ -643,6 +643,39 @@ class BackupCodeTests(TwoFactorTestCase):
         self.assertEqual(res.status_code, 403)
         self.assertTrue(TwoFactorDevice.objects.filter(user=self.admin).exists())
 
+    def test_reset_signs_the_account_out_everywhere(self):
+        """The lost phone may still be signed in. With no authenticator left
+        the step-up check stands aside, so a session left running could change
+        the password without a code — the reset ends every session instead."""
+        from accounts.twofa_api import build_login_response
+        make_confirmed_device(self.owner)
+        phone_session = build_login_response(self.owner)   # the session on the lost phone
+        _, admin_totp = make_confirmed_device(self.admin)
+        client, token = self.step_up(self.admin, admin_totp)
+
+        res = client.post(
+            f'/api/accounts/users/{self.owner.pk}/2fa/reset/', {}, format='json',
+            HTTP_X_STEPUP_TOKEN=token,
+        )
+        self.assertEqual(res.status_code, 200, res.data)
+        renewed = APIClient().post('/api/auth/refresh/', {'refresh': phone_session['refresh']}, format='json')
+        self.assertEqual(renewed.status_code, 401)
+        # The admin's own session is untouched.
+        self.assertEqual(client.get('/api/accounts/2fa/status/').status_code, 200)
+
+    def test_admin_cannot_reset_their_own_two_factor(self):
+        """It would leave the admin's live session passing every step-up
+        check without a code."""
+        _, admin_totp = make_confirmed_device(self.admin)
+        client, token = self.step_up(self.admin, admin_totp)
+
+        res = client.post(
+            f'/api/accounts/users/{self.admin.pk}/2fa/reset/', {}, format='json',
+            HTTP_X_STEPUP_TOKEN=token,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(TwoFactorDevice.objects.filter(user=self.admin).exists())
+
 
 # ── The five protected actions ───────────────────────────────────────────────
 

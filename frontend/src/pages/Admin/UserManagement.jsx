@@ -43,7 +43,11 @@ export default function UserManagement() {
   const [pageTab, setPageTab] = useState('accounts')
   const pendingChanges = usePendingChangeCount()
 
-  const { logout } = useAuthStore()
+  const { logout, user: me } = useAuthStore()
+  // Reset 2FA is for someone else's lost phone. On your own account the server
+  // refuses it (it would leave this session passing every step-up without a
+  // code), so it is not offered on your own row.
+  const canReset2fa = (u) => u.role !== 'security' && u.id !== me?.id
   const { gateLabel: gateLabelFor, gateFullLabel } = useGates()
 
   /* ── users state ── */
@@ -249,7 +253,7 @@ export default function UserManagement() {
   const menuItemCount = (u) => (
     1                                     /* View Profile */
     + (u.role === 'security' ? 1 : 0)     /* QR Badge */
-    + (u.role !== 'security' ? 1 : 0)     /* Reset 2FA */
+    + (canReset2fa(u) ? 1 : 0)            /* Reset 2FA */
     + 1                                   /* Disable / Enable */
   )
 
@@ -640,7 +644,7 @@ export default function UserManagement() {
                               {badgeLocked(u) ? <Lock size={15} /> : <QrCode size={15} />} QR Badge{badgeLocked(u) ? ' (locked)' : ''}
                             </button>
                           )}
-                          {u.role !== 'security' && (
+                          {canReset2fa(u) && (
                             <button
                               className="um-dropdown-item view"
                               title="Clear this user's authenticator so they can pair a new phone"
@@ -1021,8 +1025,9 @@ export default function UserManagement() {
                 <h3>Reset this user&rsquo;s authenticator?</h3>
                 <p>
                   <span className="um-confirm-name">{selectedUser.full_name}</span> will be
-                  asked to set up a new authenticator app the next time they sign in.
-                  Their existing codes and backup codes stop working immediately.
+                  signed out everywhere and asked to set up a new authenticator app the
+                  next time they sign in. Their existing codes and backup codes stop
+                  working immediately.
                 </p>
                 <p style={{ marginTop: 10 }}>
                   Do this only when they have lost access to their phone &mdash; and only

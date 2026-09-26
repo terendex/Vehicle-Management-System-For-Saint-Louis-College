@@ -162,7 +162,7 @@ export const HELP_TOPICS = [
     body: [
       { type: 'p', text: 'Press Security on your dashboard to manage two-factor verification: see when your authenticator was last used, create a backup code, or move two-factor to a new phone.' },
       { type: 'figure', id: 'owner-security-two-factor' },
-      { type: 'note', text: 'Keep a backup code somewhere safe. Without your phone or a backup code, only the CDSO Office can reset your two-factor setup.' },
+      { type: 'note', text: 'Keep a backup code somewhere safe. Without your phone or a backup code, only the CDSO Office can reset your two-factor setup. A reset signs you out on every device, including a lost phone, and you set up a new authenticator at your next sign-in.' },
     ],
   },
   {
@@ -370,7 +370,7 @@ export const HELP_TOPICS = [
       { type: 'list', items: [
         'Add User — create a security guard or vehicle-owner account. A temporary password is emailed.',
         'Use the role tabs, search and status filter to find an account.',
-        'The ⋮ menu on each row edits, disables or enables, resets two-factor, prints a guard QR badge, or deletes the account.',
+        'The ⋮ menu on each row edits, disables or enables, resets two-factor, prints a guard QR badge, or deletes the account. Resetting two-factor signs that person out everywhere; it is not offered on your own account — if you lose your own phone, sign in with your backup code and set up a new authenticator.',
       ] },
       { type: 'figure', id: 'cdso-user-management' },
     ],
