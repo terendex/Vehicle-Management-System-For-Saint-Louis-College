@@ -265,7 +265,7 @@
   gap: 6px;
 }
 
-.view-btn, .delete-btn, .dm-ping-btn {
+.view-btn, .delete-btn {
   background: none;
   border: 1.5px solid #D3E1EC;
   border-radius: 8px;
@@ -279,11 +279,22 @@
 .view-btn:hover { background: #EAF2F8; border-color: #03396C; }
 .delete-btn { color: #C62828; }
 .delete-btn:hover { background: #FCEDED; border-color: #C62828; }
-.dm-ping-btn { color: #4A6B85; }
-.dm-ping-btn:hover { background: #EAF2F8; border-color: #03396C; color: #03396C; }
-.dm-ping-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.dm-ping-btn.dm-ping-ok  { color: #0F7A5A; border-color: #A8DCC8; background: #E6F5EF; }
-.dm-ping-btn.dm-ping-fail { color: #C62828; border-color: #F0B4B4; background: #FCEDED; }
+/* A connection test's answer, shown beside the row's ⋮ menu for a few seconds. */
+.dm-ping-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid #D3E1EC;
+  background: #F4F8FB;
+  color: #4A6B85;
+}
+.dm-ping-status--ok   { color: #0F7A5A; border-color: #A8DCC8; background: #E6F5EF; }
+.dm-ping-status--fail { color: #C62828; border-color: #F0B4B4; background: #FCEDED; }
 
 /* --- Badges --- */
 .dm-badge {

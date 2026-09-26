@@ -276,7 +276,29 @@ class ScheduledVisitTableTests(TestCase):
         self.assertEqual(self.names(status='arrived'), ['ARRIVED GUEST'])
         self.assertEqual(self.names(status='no_show'), ['NOSHOW GUEST'])
         self.assertEqual(self.names(status='archived'), ['ARCHIVED JOB'])
-        self.assertEqual(len(self.names(all=1)), 5)
+
+    def test_paged_response_carries_tab_counts_and_totals(self):
+        data = self.client.get('/api/vehicles/scheduled-visits/', {'page': 1, 'page_size': 2}).data
+        self.assertEqual(data['count'], 4)                 # every visit not archived
+        self.assertEqual(len(data['results']), 2)
+        self.assertIsNotNone(data['next'])
+        self.assertEqual(data['counts'], {'all': 4, 'today': 1, 'upcoming': 1, 'arrived': 1,
+                                          'no_show': 1, 'archived': 1})
+        # Tab counts follow the search; the stat totals do not.
+        data = self.client.get('/api/vehicles/scheduled-visits/', {'page': 1, 'q': 'guest'}).data
+        self.assertEqual(data['counts']['all'], 3)
+        self.assertEqual(data['counts']['upcoming'], 0)
+        self.assertEqual(data['totals']['upcoming'], 1)
+
+    def test_last_in_first_out(self):
+        newest = ScheduledVisit.objects.create(visitor_name='JUST BOOKED', created_by=self.admin,
+                                               expected_date=timezone.localdate() + timedelta(days=30))
+        rows = self.client.get('/api/vehicles/scheduled-visits/', {'page': 1}).data['results']
+        self.assertEqual(rows[0]['id'], newest.pk)          # booked last, listed first
+        ids = [r['id'] for r in rows]
+        self.assertEqual(ids, sorted(ids, reverse=True))
+        page2 = self.client.get('/api/vehicles/scheduled-visits/', {'page': 2, 'page_size': 3}).data
+        self.assertEqual([r['id'] for r in page2['results']], ids[3:])
 
     def test_search_category_and_dates(self):
         self.assertEqual(self.names(q='roof'), ['LATER CONTRACTOR'])

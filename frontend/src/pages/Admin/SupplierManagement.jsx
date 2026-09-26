@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
+import { useState, useEffect, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
   Printer, Monitor, CalendarDays, Archive, ArchiveRestore, Search, ChevronLeft, ChevronRight,
-  MoreVertical, RotateCcw,
+  RotateCcw,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
 import PageTabs from '../../components/Tabs/PageTabs'
 import ReportExportBar from '../../components/ReportExportBar'
+import RowMenu from '../../components/RowMenu/RowMenu'
 import { lookupSlip, printSlipOnServer } from '../../api/scanning'
 import { printSlipInBrowser } from '../../utils/slipPrint'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -742,8 +742,12 @@ const fmtDate = (iso) => {
 }
 
 function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
-  const [rows, setRows]         = useState([])   // the filtered table
-  const [all, setAll]           = useState([])   // everything, for the stats and tab counts
+  // One page of the table, from the server — like User Management, since
+  // archived visits are kept for good and the list only grows.
+  const [rows, setRows]         = useState([])
+  const [total, setTotal]       = useState(0)    // rows matching the filters, across every page
+  const [counts, setCounts]     = useState({})   // per status tab, over the same search/category/dates
+  const [totals, setTotals]     = useState({})   // per status over every visit, for the stat tiles
   const [loading, setLoading]   = useState(true)
   const [status, setStatus]     = useState('')
   const [search, setSearch]     = useState('')
@@ -752,25 +756,6 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   const [page, setPage]         = useState(1)
   const [action, setAction]     = useState(null)  // { visit, mode: 'reschedule' | 'archive' }
   const [printing, setPrinting] = useState(null)  // the visit whose Expected Visit card is being printed
-  const [menu, setMenu]         = useState(null)  // { id, style } — the open row menu
-
-  // Row actions sit behind a ⋮ menu, like User Management's. It is portalled
-  // to <body> at fixed coordinates so the table card cannot clip it, and any
-  // scroll or resize closes it rather than leave it floating off its row.
-  const menuRef   = useRef(null)
-  const closeMenu = useCallback(() => setMenu(null), [])
-  useEffect(() => {
-    if (!menu) return
-    const onDocClick = (e) => { if (!menuRef.current?.contains(e.target)) closeMenu() }
-    window.addEventListener('click', onDocClick)
-    window.addEventListener('resize', closeMenu)
-    window.addEventListener('scroll', closeMenu, true)
-    return () => {
-      window.removeEventListener('click', onDocClick)
-      window.removeEventListener('resize', closeMenu)
-      window.removeEventListener('scroll', closeMenu, true)
-    }
-  }, [menu, closeMenu])
 
   // Everything that narrows the table, as the server takes it. The report bar
   // adds its own date range on top, so it is left out of `filters`.
@@ -784,20 +769,29 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   const paramsKey = JSON.stringify(params)
 
   const loadRows = () =>
-    getScheduledVisits(params)
-      .then(({ data }) => setRows(data))
-      .catch(() => toast.error('Failed to load scheduled visits.'))
+    getScheduledVisits({ ...params, page, page_size: VISITS_PER_PAGE })
+      .then(({ data }) => {
+        // Archiving or restoring the last row of the last page empties it —
+        // step back a page rather than show an empty table.
+        if (!data.results.length && page > 1) { setPage(page - 1); return }
+        setRows(data.results)
+        setTotal(data.count)
+        setCounts(data.counts || {})
+        setTotals(data.totals || {})
+      })
+      .catch(err => {
+        // A page past the end (the list shrank under us) is a 404 from DRF.
+        if (err?.response?.status === 404 && page > 1) { setPage(1); return }
+        toast.error('Failed to load scheduled visits.')
+      })
       .finally(() => setLoading(false))
-  const loadAll = () =>
-    getScheduledVisits({ all: 1 }).then(({ data }) => setAll(data)).catch(() => {})
-  const reload = () => { loadRows(); loadAll() }
+  const reload = () => loadRows()
 
   // Debounced, so typing a name is one request rather than one per key.
   useEffect(() => {
     const t = setTimeout(loadRows, 250)
     return () => clearTimeout(t)
-  }, [paramsKey]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { loadAll() }, [])
+  }, [paramsKey, page]) // eslint-disable-line react-hooks/exhaustive-deps
   useLiveUpdates(reload, ['scheduledvisit', 'visitorpass'])
 
   // Any filter change starts back on page 1.
@@ -829,58 +823,30 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   // What a row's menu offers, by where the visit stands.
   const menuItems = (v, st) => {
     if (st === 'archived') {
-      return [{ key: 'restore', label: 'Restore', Icon: ArchiveRestore, tone: 'enable', run: () => restore(v) }]
+      return [{ key: 'restore', label: 'Restore', Icon: ArchiveRestore, tone: 'enable', onSelect: () => restore(v) }]
     }
     const items = []
     // A card for someone still to come. A no-show's date has passed, so it
     // is rescheduled first and printed for the new day.
     if (st === 'today' || st === 'upcoming') {
-      items.push({ key: 'print', label: 'Print Expected Visit Card', Icon: Printer, tone: 'view', run: () => setPrinting(v) })
+      items.push({ key: 'print', label: 'Print Expected Visit Card', Icon: Printer, tone: 'view', onSelect: () => setPrinting(v) })
     }
     // A hand correction — the gate marks arrivals itself.
     items.push(v.is_arrived
-      ? { key: 'unarrive', label: 'Undo Arrived', Icon: RotateCcw, tone: 'edit', run: () => toggleArrived(v) }
-      : { key: 'arrive', label: 'Mark Arrived', Icon: Check, tone: 'enable', run: () => toggleArrived(v) })
+      ? { key: 'unarrive', label: 'Undo Arrived', Icon: RotateCcw, tone: 'edit', onSelect: () => toggleArrived(v) }
+      : { key: 'arrive', label: 'Mark Arrived', Icon: Check, tone: 'enable', onSelect: () => toggleArrived(v) })
     if (!v.is_arrived) {
       items.push({ key: 'reschedule', label: 'Reschedule', Icon: CalendarDays, tone: 'view',
-        run: () => setAction({ visit: v, mode: 'reschedule' }) })
+        onSelect: () => setAction({ visit: v, mode: 'reschedule' }) })
     }
-    items.push({ key: 'archive', label: 'Archive', Icon: Archive, tone: 'disable',
-      run: () => setAction({ visit: v, mode: 'archive' }) })
+    items.push({ key: 'archive', label: 'Archive', Icon: Archive, tone: 'edit',
+      onSelect: () => setAction({ visit: v, mode: 'archive' }) })
     return items
   }
 
-  const MENU_WIDTH = 220
-  const toggleMenu = (e, v, count) => {
-    if (menu?.id === v.id) { closeMenu(); return }
-    const rect   = e.currentTarget.getBoundingClientRect()
-    const height = count * 38 + (count - 1) * 4 + 16   // item + gap + padding
-    const gap    = 8
-    const openUp = rect.bottom + gap + height > window.innerHeight - 8 && rect.top - gap - height > 8
-    const left   = Math.max(8, Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8))
-    setMenu({
-      id: v.id,
-      style: {
-        position: 'fixed',
-        left: `${left}px`,
-        width: `${MENU_WIDTH}px`,
-        ...(openUp
-          ? { bottom: `${window.innerHeight - rect.top + gap}px`, transformOrigin: 'bottom right' }
-          : { top: `${rect.bottom + gap}px`, transformOrigin: 'top right' }),
-      },
-    })
-  }
-
-  const counts = { '': 0, today: 0, upcoming: 0, arrived: 0, no_show: 0, archived: 0 }
-  all.forEach(v => {
-    const st = visitState(v, today)
-    counts[st] += 1
-    if (st !== 'archived') counts[''] += 1
-  })
-
-  const totalPages = Math.max(1, Math.ceil(rows.length / VISITS_PER_PAGE))
+  const totalPages = Math.max(1, Math.ceil(total / VISITS_PER_PAGE))
   const current    = Math.min(page, totalPages)
-  const shown      = rows.slice((current - 1) * VISITS_PER_PAGE, current * VISITS_PER_PAGE)
+  const shown      = rows
 
   const tabLabel = VISIT_TABS.find(t => t.key === status)?.label
   const reportSummary = [
@@ -894,19 +860,19 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
       <div className="um-stats-bar sv-stats">
         <div className="um-stat-card">
           <div className="um-stat-icon sv-stat-today"><CalendarClock size={20} /></div>
-          <div className="um-stat-info"><h4>Expected Today</h4><span>{counts.today}</span></div>
+          <div className="um-stat-info"><h4>Expected Today</h4><span>{totals.today ?? 0}</span></div>
         </div>
         <div className="um-stat-card">
           <div className="um-stat-icon sv-stat-upcoming"><CalendarDays size={20} /></div>
-          <div className="um-stat-info"><h4>Upcoming</h4><span>{counts.upcoming}</span></div>
+          <div className="um-stat-info"><h4>Upcoming</h4><span>{totals.upcoming ?? 0}</span></div>
         </div>
         <div className="um-stat-card">
           <div className="um-stat-icon sv-stat-arrived"><Check size={20} /></div>
-          <div className="um-stat-info"><h4>Arrived</h4><span>{counts.arrived}</span></div>
+          <div className="um-stat-info"><h4>Arrived</h4><span>{totals.arrived ?? 0}</span></div>
         </div>
         <div className="um-stat-card">
           <div className="um-stat-icon sv-stat-noshow"><AlertTriangle size={20} /></div>
-          <div className="um-stat-info"><h4>No-show</h4><span>{counts.no_show}</span></div>
+          <div className="um-stat-info"><h4>No-show</h4><span>{totals.no_show ?? 0}</span></div>
         </div>
       </div>
 
@@ -916,7 +882,7 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
         activeFilterSummary={reportSummary}
         fetchBlob={exportScheduledVisitsReport}
         onRangeChange={narrow(setRange)}
-        recordCount={rows.length}
+        recordCount={total}
         allowFuture
       />
 
@@ -926,7 +892,7 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
             <button key={t.key || 'all'} className={`um-role-tab ${status === t.key ? 'active' : ''}`}
               onClick={() => narrow(setStatus)(t.key)}>
               {t.label}
-              <span className="sv-tab-count">{counts[t.key]}</span>
+              <span className="sv-tab-count">{counts[t.key || 'all'] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -976,7 +942,6 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
               <tbody>
                 {shown.map(v => {
                   const st = visitState(v, today)
-                  const items = menuItems(v, st)
                   return (
                     <tr key={v.id} className={`sv-row sv-row--${st}`}>
                       <td><span className="sv-ref">SV-{v.id}</span></td>
@@ -1008,23 +973,7 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
                         {st === 'archived' && v.archive_reason && <span className="sv-sub">{v.archive_reason}</span>}
                       </td>
                       <td>
-                        <button className="um-action-btn" aria-label={`Actions for ${v.visitor_name}`}
-                          aria-haspopup="menu" aria-expanded={menu?.id === v.id}
-                          onClick={(e) => { e.stopPropagation(); toggleMenu(e, v, items.length) }}>
-                          <MoreVertical size={16} />
-                        </button>
-                        {menu?.id === v.id && createPortal(
-                          <div ref={menuRef} className="um-actions-dropdown" role="menu" style={menu.style}
-                            onClick={(e) => e.stopPropagation()}>
-                            {items.map(({ key, label, Icon, tone, run }) => (
-                              <button key={key} role="menuitem" className={`um-dropdown-item ${tone}`}
-                                onClick={() => { closeMenu(); run() }}>
-                                <Icon size={15} /> {label}
-                              </button>
-                            ))}
-                          </div>,
-                          document.body,
-                        )}
+                        <RowMenu label={`Actions for ${v.visitor_name}`} items={menuItems(v, st)} width={220} />
                       </td>
                     </tr>
                   )
@@ -1034,10 +983,10 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
           </div>
         )}
 
-        {!loading && rows.length > VISITS_PER_PAGE && (
+        {!loading && totalPages > 1 && (
           <div className="um-pagination">
             <span className="um-pagination-info">
-              Showing {(current - 1) * VISITS_PER_PAGE + 1} to {Math.min(current * VISITS_PER_PAGE, rows.length)} of {rows.length} visits
+              Showing {(current - 1) * VISITS_PER_PAGE + 1} to {Math.min(current * VISITS_PER_PAGE, total)} of {total} visits
             </span>
             <div className="um-pagination-controls">
               <button className="um-page-btn" disabled={current === 1} onClick={() => setPage(current - 1)}>

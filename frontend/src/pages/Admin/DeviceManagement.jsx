@@ -11,6 +11,7 @@ import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
 import { useFullscreen } from '../../hooks/useFullscreen'
+import RowMenu from '../../components/RowMenu/RowMenu'
 import './DeviceManagement.css'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -662,32 +663,25 @@ export default function DeviceManagement() {
                           )}
                         </td>
                         <td>
+                          {/* Actions behind one ⋮ menu, like User Management. A
+                              connection test's answer shows beside it for a few
+                              seconds, since the menu has closed by then. */}
                           <div className="dm-row-actions">
-                            {(() => {
-                              const ps = pingStates[cam.id]
-                              return (
-                                <button
-                                  className={`dm-ping-btn${ps === 'ok' ? ' dm-ping-ok' : ps === 'fail' ? ' dm-ping-fail' : ''}`}
-                                  title={ps === 'ok' ? 'Reachable' : ps === 'fail' ? 'Unreachable' : 'Test Connection'}
-                                  onClick={() => handlePing(cam)}
-                                  disabled={ps === 'testing'}
-                                >
-                                  {ps === 'testing'
-                                    ? <Loader2 size={15} className="dm-spin" />
-                                    : ps === 'ok'
-                                    ? <Wifi size={15} />
-                                    : ps === 'fail'
-                                    ? <WifiOff size={15} />
-                                    : <Activity size={15} />}
-                                </button>
-                              )
-                            })()}
-                            <button className="view-btn" title="Edit" onClick={() => setModal({ type: 'edit', camera: cam })}>
-                              <Pencil size={15} />
-                            </button>
-                            <button className="delete-btn" title="Remove" onClick={() => setModal({ type: 'delete', camera: cam })}>
-                              <Trash2 size={15} />
-                            </button>
+                            {pingStates[cam.id] && (
+                              <span className={`dm-ping-status dm-ping-status--${pingStates[cam.id]}`} role="status">
+                                {pingStates[cam.id] === 'testing' && <><Loader2 size={12} className="dm-spin" /> Testing…</>}
+                                {pingStates[cam.id] === 'ok' && <><Wifi size={12} /> Reachable</>}
+                                {pingStates[cam.id] === 'fail' && <><WifiOff size={12} /> Unreachable</>}
+                              </span>
+                            )}
+                            <RowMenu label={`Actions for ${cam.name}`} items={[
+                              { key: 'test', label: 'Test Connection', Icon: Activity, tone: 'view',
+                                disabled: pingStates[cam.id] === 'testing', onSelect: () => handlePing(cam) },
+                              { key: 'edit', label: 'Edit', Icon: Pencil, tone: 'edit',
+                                onSelect: () => setModal({ type: 'edit', camera: cam }) },
+                              { key: 'remove', label: 'Remove', Icon: Trash2, tone: 'danger',
+                                onSelect: () => setModal({ type: 'delete', camera: cam }) },
+                            ]} />
                           </div>
                         </td>
                       </tr>

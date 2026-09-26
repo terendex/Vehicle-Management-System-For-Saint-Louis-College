@@ -1,0 +1,66 @@
+/* Row action menu (⋮). Values are User Management's own (.um-action-btn,
+   .um-actions-dropdown, .um-dropdown-item), so a table using this reads the
+   same as the one the pattern came from. */
+
+.rm-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1.5px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #4A6B85;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.rm-trigger:hover,
+.rm-trigger--open {
+  background: #F4F8FB;
+  color: #03396C;
+  border-color: #BDD4E5;
+}
+
+.rm-menu {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: #FFFFFF;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(3, 57, 108, 0.12), 0 0 0 1px rgba(3, 57, 108, 0.05);
+  animation: rm-in 0.15s ease-out;
+}
+
+@keyframes rm-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.rm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #4A6B85;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.rm-item svg { flex-shrink: 0; }
+.rm-item:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.rm-item--view:hover:not(:disabled)   { background: #EAF2F8; color: #03396C; }
+.rm-item--edit:hover:not(:disabled)   { background: #FEF9E4; color: #8A6B00; }
+.rm-item--enable:hover:not(:disabled) { background: #E6F5EF; color: #0F7A5A; }
+.rm-item--danger:hover:not(:disabled) { background: #FCEDED; color: #C62828; }

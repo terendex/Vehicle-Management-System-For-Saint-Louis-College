@@ -5319,37 +5319,21 @@ def _parse_visit_date(value):
 from .scheduled_visits import VISIT_STATUS_LABELS, visit_status as _visit_status   # shared with the slip card
 
 
-def _filter_scheduled_visits(request):
-    """The CDSO's Scheduled Visits filters, applied in one place for the table
-    and its PDF report. Returns (queryset, [human description of each filter]).
+def _visit_search_filter(request):
+    """Everything in the CDSO's Scheduled Visits filters except the status tab:
+    (queryset, [human description of each filter]).
 
-      status     today | upcoming | arrived | no_show | archived; blank = every
-                 visit that is not archived (archived ones have their own tab)
       q          visitor, plate, purpose, supplier, or an SV-number
       category   one ScheduledVisit.Category value
       date_from, date_to   on the expected date, inclusive
+
+    Kept apart from the status so the tab counts can be taken over exactly
+    these rows — each tab then says how many it will show when clicked.
     """
     from datetime import datetime as _dt
     params = request.query_params
-    today = timezone.localdate()
     qs = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by')
     desc = []
-
-    status_f = (params.get('status') or '').strip()
-    if status_f == 'archived':
-        qs = qs.filter(archived_at__isnull=False)
-    else:
-        qs = qs.filter(archived_at__isnull=True)
-        if status_f == 'arrived':
-            qs = qs.filter(is_arrived=True)
-        elif status_f == 'today':
-            qs = qs.filter(is_arrived=False, expected_date=today)
-        elif status_f == 'upcoming':
-            qs = qs.filter(is_arrived=False, expected_date__gt=today)
-        elif status_f == 'no_show':
-            qs = qs.filter(is_arrived=False, expected_date__lt=today)
-    if status_f in VISIT_STATUS_LABELS:
-        desc.append(f"Status: {VISIT_STATUS_LABELS[status_f]}")
 
     category = (params.get('category') or '').strip()
     if category in ScheduledVisit.Category.values:
@@ -5383,10 +5367,34 @@ def _filter_scheduled_visits(request):
             match |= Q(pk=int(ref))
         qs = qs.filter(match)
         desc.append(f"Search: '{q}'")
+    return qs, desc
 
-    # Newest date first, like every other log in the system; the guard's panel
-    # has its own order.
-    return qs.order_by('-expected_date', 'visitor_name'), desc
+
+# Each status tab as a condition, so one filter serves the rows and the counts.
+def _visit_status_q(status, today):
+    live = Q(archived_at__isnull=True)
+    return {
+        '':         live,                    # "All" = every visit not archived
+        'today':    live & Q(is_arrived=False, expected_date=today),
+        'upcoming': live & Q(is_arrived=False, expected_date__gt=today),
+        'arrived':  live & Q(is_arrived=True),
+        'no_show':  live & Q(is_arrived=False, expected_date__lt=today),
+        'archived': Q(archived_at__isnull=False),
+    }.get(status, live)
+
+
+def _filter_scheduled_visits(request):
+    """The CDSO table's rows, and its PDF report's: the search filters plus the
+    status tab (today | upcoming | arrived | no_show | archived; blank = all
+    not archived). Returns (queryset, [human description of each filter])."""
+    qs, desc = _visit_search_filter(request)
+    status_f = (request.query_params.get('status') or '').strip()
+    qs = qs.filter(_visit_status_q(status_f, timezone.localdate()))
+    if status_f in VISIT_STATUS_LABELS:
+        desc.insert(0, f"Status: {VISIT_STATUS_LABELS[status_f]}")
+    # Last in, first out: the booking made most recently comes first, the way
+    # a log reads. pk breaks ties between bookings made in the same instant.
+    return qs.order_by('-created_at', '-pk'), desc
 
 
 class ScheduledVisitListCreateView(APIView):
@@ -5401,12 +5409,35 @@ class ScheduledVisitListCreateView(APIView):
             visits = (ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by')
                       .filter(expected_date__gte=timezone.localdate(), is_arrived=False,
                               archived_at__isnull=True))
-        elif request.query_params.get('all'):
-            # Everything, archived included — what the tab counts are taken from.
-            visits = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by').all()
-        else:
-            visits, _ = _filter_scheduled_visits(request)
-        return Response(ScheduledVisitSerializer(visits, many=True).data)
+            return Response(ScheduledVisitSerializer(visits, many=True).data)
+
+        visits, _ = _filter_scheduled_visits(request)
+        # Paged on the server when the table asks (?page=), like User
+        # Management: archived visits are kept for good, so the list only
+        # grows. Without ?page= it stays the plain array older callers read.
+        from config.pagination import DefaultPagination
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(visits, request, view=self)
+        if page is None:
+            return Response(ScheduledVisitSerializer(visits, many=True).data)
+
+        # The tab counts, in one query over the same search/category/dates —
+        # so each tab says how many it will show when clicked. The stat tiles
+        # take `totals`, over every visit, so a search does not make the day's
+        # numbers look smaller than they are.
+        today = timezone.localdate()
+        tabs = ('', 'today', 'upcoming', 'arrived', 'no_show', 'archived')
+        count_by = lambda qs: qs.aggregate(**{
+            (key or 'all'): Count('pk', filter=_visit_status_q(key, today)) for key in tabs})
+        searched, _ = _visit_search_filter(request)
+        return Response({
+            'count':    paginator.page.paginator.count,
+            'next':     paginator.get_next_link(),
+            'previous': paginator.get_previous_link(),
+            'results':  ScheduledVisitSerializer(page, many=True).data,
+            'counts':   count_by(searched),
+            'totals':   count_by(ScheduledVisit.objects.all()),
+        })
 
     def post(self, request):
         visitor_name = (request.data.get('visitor_name') or '').strip()
