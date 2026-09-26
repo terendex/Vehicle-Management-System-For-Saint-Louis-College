@@ -189,7 +189,10 @@ class AccessLog(models.Model):
     vehicle_color   = models.CharField(max_length=50, blank=True)
     vehicle_model   = models.CharField(max_length=100, blank=True)
     entry_note      = models.CharField(max_length=255, blank=True)
-    digital_id_used = models.CharField(max_length=50, blank=True)   # the ID the driver showed instead of a plate
+    # Never written or read anywhere; being removed in two steps. Nullable first,
+    # so a server already running code without this field can still insert rows
+    # before the column is dropped.
+    digital_id_used = models.CharField(max_length=50, blank=True, null=True)
     status         = models.CharField(max_length=20, choices=Status.choices)
     gate_id         = models.CharField(max_length=50, default='main')   # which gate; 'main' is the fallback for an unattributed scan
     denied_reason   = models.CharField(max_length=255, blank=True)      # the sentence shown to the guard when refused
