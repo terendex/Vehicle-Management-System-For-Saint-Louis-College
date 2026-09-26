@@ -14,3 +14,9 @@ class AccountsConfig(AppConfig):
         from .db_delete_rules import sync_fk_delete_rules
         post_migrate.connect(sync_fk_delete_rules, sender=self,
                              dispatch_uid='accounts.sync_fk_delete_rules')
+
+        # Same hook: refuse values outside a column's choices, so a typo made
+        # by hand in Neon errors instead of saving. See accounts/db_choice_checks.py.
+        from .db_choice_checks import sync_choice_checks
+        post_migrate.connect(sync_choice_checks, sender=self,
+                             dispatch_uid='accounts.sync_choice_checks')

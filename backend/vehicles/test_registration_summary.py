@@ -13,6 +13,7 @@ wrong), so PATCH has to reach the active row without archiving it.
 """
 from datetime import timedelta
 
+from django.db import connection
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.request import Request
@@ -20,6 +21,17 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from vehicles.models import RegistrationPeriod, VehicleRegistration
+
+
+# The database now refuses values outside the choices (accounts/db_choice_checks.py),
+# but those constraints are NOT VALID, so rows written before them can still hold
+# one. Lifting the two checks inside the test's own transaction recreates such a
+# legacy row; the rollback at the end of the test puts the checks back.
+def _allow_legacy_registration_values():
+    table = VehicleRegistration._meta.db_table
+    with connection.cursor() as cur:
+        for column in ('registrant_type', 'status'):
+            cur.execute(f'ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_{column}_valid')
 
 
 class RegistrationSummaryTests(TestCase):
@@ -167,6 +179,7 @@ class RegistrationSummaryTests(TestCase):
         """`choices` is not a database constraint, so a legacy row can carry a
         value neither enum lists. It must be surfaced, not dropped: a total that
         disagrees with the rows above it reads as a broken report."""
+        _allow_legacy_registration_values()
         VehicleRegistration.objects.filter(pk=self.make('student', 'pending').pk).update(
             registrant_type='visitor', status='withdrawn')
 
@@ -189,6 +202,7 @@ class RegistrationSummaryTests(TestCase):
         self.assertNotIn('other', [s['key'] for s in data['by_status']])
 
     def test_summary_pdf_renders_an_out_of_enum_row(self):
+        _allow_legacy_registration_values()
         VehicleRegistration.objects.filter(pk=self.make('student', 'pending').pk).update(
             registrant_type='visitor', status='withdrawn')
         res = self.client.get('/api/vehicles/registrations/report/summary-pdf/')
@@ -242,7 +256,7 @@ class RegistrationSummaryTests(TestCase):
     def test_non_admin_cannot_read_the_counts(self):
         owner = User.objects.create_user(
             email='summaryowner@slc.edu.ph', full_name='Summary Owner',
-            password='pw', role='owner')
+            password='pw', role='vehicle_owner')
         self.client.force_authenticate(owner)
         res = self.client.get('/api/vehicles/registrations/summary/')
         self.assertEqual(res.status_code, 403)
@@ -403,7 +417,7 @@ class RegistrationPeriodEditTests(TestCase):
     def test_non_admin_cannot_edit_a_period(self):
         owner = User.objects.create_user(
             email='periodowner@slc.edu.ph', full_name='Period Owner',
-            password='pw', role='owner')
+            password='pw', role='vehicle_owner')
         self.client.force_authenticate(owner)
         res = self.patch({'label': 'S.Y. 2099–2100'})
         self.assertEqual(res.status_code, 403)
