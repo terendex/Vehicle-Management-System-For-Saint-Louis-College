@@ -28,6 +28,7 @@ SUPPLIER_PASS_PREFIX = 'SLC-SUPPLIER-PASS:'
 NOPLATE_PREFIX       = 'SLC-NOPLATE:'
 EVENT_PREFIX         = 'SLC-EVENT:'
 EVENT_PASS_PREFIX    = 'SLC-EVENT-PASS:'
+SCHEDULED_PREFIX     = 'SLC-SCHEDULED:'
 
 KEY = True   # marks an important row, see the module docstring
 
@@ -37,7 +38,7 @@ ENTRY_FOOTER = ['SCAN QR AT THE GATE TO EXIT', 'RETURN THIS SLIP UPON EXIT']
 
 def parse_code(code):
     """('visitor' | 'supplier' | 'supplierpass' | 'noplate' | 'event' |
-    'eventpass', pk, extra) for a slip code, else None.
+    'eventpass' | 'scheduled', pk, extra) for a slip code, else None.
 
     `extra` is the third part of the code, and only two kinds carry one: a
     visitor slip's serial (SLC-VISITOR:{id}-{serial}) and an event pass's
@@ -47,7 +48,8 @@ def parse_code(code):
     code = (code or '').strip().upper()
     for prefix, kind in ((VISITOR_PREFIX, 'visitor'), (SUPPLIER_PREFIX, 'supplier'),
                          (SUPPLIER_PASS_PREFIX, 'supplierpass'), (NOPLATE_PREFIX, 'noplate'),
-                         (EVENT_PASS_PREFIX, 'eventpass'), (EVENT_PREFIX, 'event')):
+                         (EVENT_PASS_PREFIX, 'eventpass'), (EVENT_PREFIX, 'event'),
+                         (SCHEDULED_PREFIX, 'scheduled')):
         if code.startswith(prefix):
             body, extra = code[len(prefix):], ''
             if kind == 'visitor' and '-' in body:
@@ -109,6 +111,9 @@ def find(kind, pk, extra=''):
         return (AccessLog.objects.select_related('scanned_by', 'event')
                 .filter(pk=pk, status=AccessLog.Status.AUTHORIZED,
                         entrant_category=AccessLog.Category.EVENT).first())
+    if kind == 'scheduled':
+        from vehicles.models import ScheduledVisit
+        return ScheduledVisit.objects.select_related('supplier', 'created_by').filter(pk=pk).first()
     if kind == 'eventpass':
         # The identifier is compared in the form the event stores and the gate
         # reads, so a pass printed for “ABC 1234” still opens as ABC1234.
@@ -409,8 +414,60 @@ def event_pass_slip(pass_):
     }
 
 
+def expected_visit_slip(visit):
+    """The Expected Visit card, printed from the CDSO's Scheduled Visits table
+    — for the visitor to bring, or for the gate to keep on hand.
+
+    It is notice, not a pass: nobody is admitted on it. Its QR names the
+    booking, and scanning it at the gate opens the check-in for it — the
+    visitor pass is issued, and the visit marked arrived, from there. So the
+    guard reads the booking off the card instead of typing it in."""
+    from vehicles.scheduled_visits import visit_status
+    expected = visit.expected_date
+    when = f"{expected.strftime('%b')} {expected.day}, {expected.year}"   # fits the bold row on 48mm
+    who = [['Visitor', visit.visitor_name, KEY], ['Category', visit.get_category_display()]]
+    if visit.supplier and visit.supplier.company_name != visit.visitor_name:
+        who.append(['Company', visit.supplier.company_name])
+    visit_rows = [['Expected', when, KEY], ['Day', expected.strftime('%A')]]
+    if visit.purpose:
+        visit_rows.append(['Purpose', visit.purpose])
+    if not visit.plate_number:
+        visit_rows.append(['Plate', 'Recorded at the gate'])
+    return {
+        'kind':             'scheduled',
+        'id':               visit.pk,
+        'code':             f'{SCHEDULED_PREFIX}{visit.pk}',
+        'reference':        f'SV-{visit.pk}',
+        'title':            'EXPECTED VISIT',
+        'headline':         visit.plate_number or f'SV-{visit.pk}',
+        'plate_number':     visit.plate_number,
+        'name':             visit.visitor_name,
+        'state':            visit_status(visit),
+        'expected_date':    expected.isoformat(),
+        'expected_label':   f"{expected.strftime('%A')}, {when}",
+        'entered_at':       None,
+        'expires_at':       None,
+        'exited_at':        None,
+        'printed_at':       None,
+        'minutes_inside':   0,
+        'overstay_minutes': 0,
+        'sections': [
+            who,
+            visit_rows,
+            # The reference is the headline already when there is no plate.
+            [*([['Reference', f'SV-{visit.pk}']] if visit.plate_number else []),
+             ['Arranged by', visit.created_by.full_name if visit.created_by else 'CDSO'],
+             ['Printed', _when(timezone.now())]],
+        ],
+        # Each line fits the 48mm roll without wrapping.
+        'footer': ['SHOW THIS CARD AT THE GATE', 'ON THE EXPECTED DATE', 'NOT A PASS BY ITSELF'],
+    }
+
+
 def slip_data(obj):
-    from vehicles.models import SupplierPlate
+    from vehicles.models import ScheduledVisit, SupplierPlate
+    if isinstance(obj, ScheduledVisit):
+        return expected_visit_slip(obj)
     if isinstance(obj, VisitorPass):
         return visitor_slip(obj)
     if isinstance(obj, SupplierPlate):

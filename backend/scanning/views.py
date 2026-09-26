@@ -1320,6 +1320,10 @@ def _slip_from_request(request, any_copy=False):
     # `extra` is the code's third part: a visitor slip's serial, an event pass's
     # organizer plate, '' for the rest.
     kind, pk, extra = parsed
+    # An Expected Visit card names a visitor and why they are coming. Gate
+    # staff and the CDSO read it; a vehicle owner's account has no business to.
+    if kind == 'scheduled' and getattr(request.user, 'role', None) not in ('admin', 'security'):
+        return None, Response({'error': 'Only gate staff can open an Expected Visit card.'}, status=403)
     obj = slips.find(kind, pk, extra)            # the row itself: a VisitorPass, a SupplierPlate, or an AccessLog entry
     if not obj:
         return None, Response({'error': 'No slip matches that QR — it may have been deleted.'}, status=404)
@@ -1497,7 +1501,14 @@ class SlipExitView(APIView):
         gate_id = (request.data.get('gate_id')
                    or getattr(request.user, 'gate_assignment', None)
                    or 'main')
-        from vehicles.models import SupplierPlate
+        from vehicles.models import ScheduledVisit, SupplierPlate
+        # An Expected Visit card is a booking, not an entry: there is nothing
+        # on it to exit. The visitor leaves on the visitor slip issued at
+        # check-in.
+        if isinstance(obj, ScheduledVisit):
+            return Response({'error': 'An Expected Visit card is not an entry — the visitor exits on '
+                                      'the visitor slip issued when they were checked in.',
+                             'slip': slip_data(obj)}, status=400)
         # A supplier's QR is on a standing pass, not on one visit, so there is
         # no single exit it could close. Refused with an explanation rather
         # than silently doing nothing.

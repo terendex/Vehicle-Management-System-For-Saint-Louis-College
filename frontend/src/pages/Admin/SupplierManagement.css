@@ -744,30 +744,6 @@
 .sv-row--arrived td,
 .sv-row--archived td { color: #5C7B92; }
 
-.sv-actions { display: flex; gap: 6px; }
-.sv-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 30px;
-  height: 30px;
-  padding: 0 7px;
-  border-radius: 8px;
-  border: 1px solid #D3E1EC;
-  background: #FFFFFF;
-  color: #3E5B72;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.sv-icon-btn:hover { background: #EEF4F9; border-color: #BDD4E5; color: #03396C; }
-.sv-icon-btn--on   { background: #E6F5EF; border-color: #B5E0CD; color: #0F7A5A; }
-.sv-icon-btn--text { padding: 0 10px; }
-
 /* Status badges — shared by the table cells. */
 .sp-visit-badge {
   display: inline-block;

@@ -80,3 +80,26 @@ def is_supplier_plate(plate):
     plate = _normalize_plate(plate)
     return bool(plate) and SupplierPlate.objects.filter(
         plate_number=plate, supplier__is_active=True).exists()
+
+
+# Where a visit stands. The same words the CDSO table's tabs, the report and
+# the Expected Visit card use, decided here once so none of them can file a
+# visit differently.
+VISIT_STATUS_LABELS = {
+    'today':    'Expected today',
+    'upcoming': 'Upcoming',
+    'arrived':  'Arrived',
+    'no_show':  'No-show',
+    'archived': 'Archived',
+}
+
+
+def visit_status(visit, today=None):
+    today = today or timezone.localdate()
+    if visit.archived_at:
+        return 'archived'
+    if visit.is_arrived:
+        return 'arrived'
+    if visit.expected_date < today:
+        return 'no_show'
+    return 'today' if visit.expected_date == today else 'upcoming'

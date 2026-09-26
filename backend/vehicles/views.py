@@ -5316,25 +5316,7 @@ def _parse_visit_date(value):
     return parsed, None
 
 
-# Where a visit stands. The same words the CDSO table's tabs use, decided here
-# once so the table and the PDF report can never file a visit differently.
-VISIT_STATUS_LABELS = {
-    'today':    'Expected today',
-    'upcoming': 'Upcoming',
-    'arrived':  'Arrived',
-    'no_show':  'No-show',
-    'archived': 'Archived',
-}
-
-
-def _visit_status(visit, today):
-    if visit.archived_at:
-        return 'archived'
-    if visit.is_arrived:
-        return 'arrived'
-    if visit.expected_date < today:
-        return 'no_show'
-    return 'today' if visit.expected_date == today else 'upcoming'
+from .scheduled_visits import VISIT_STATUS_LABELS, visit_status as _visit_status   # shared with the slip card
 
 
 def _filter_scheduled_visits(request):

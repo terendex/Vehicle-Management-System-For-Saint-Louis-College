@@ -1555,6 +1555,50 @@ export default function SecurityEntryManagement() {
   }
   const isSlipCode = (s) => /^SLC-(VISITOR|SUPPLIER|NOPLATE|EVENT):/i.test((s || '').trim())
 
+  // An Expected Visit card the CDSO printed. It admits nobody: scanning it
+  // opens the check-in for its booking, so the visitor pass is issued against
+  // it with the name and purpose read off the booking. Any other day — or a
+  // booking already used, cancelled, or a supplier the plate scan admits —
+  // says so instead. Returns true when the card was handled.
+  const isExpectedCard = (s) => /^SLC-SCHEDULED:\d+$/i.test((s || '').trim())
+  const openExpectedCard = async (code) => {
+    const id = Number(code.trim().split(':')[1])
+    let todays = expected
+    try {
+      todays = (await getExpectedVisitsToday()).data ?? []
+      setExpected(todays)
+    } catch { /* fall back to the list on screen */ }
+    const visit = todays.find(v => v.id === id)
+    if (visit && !visit.is_arrived && !visit.auto_admit) {
+      setCheckIn(visit)
+      return true
+    }
+    if (visit?.auto_admit) {
+      await notify.info(`${visit.visitor_name} is on the supplier roster. Scan the vehicle's plate — that admits it and marks the visit arrived.`,
+        { title: 'Scan the plate' })
+      return true
+    }
+    if (visit?.is_arrived) {
+      await notify.info(`${visit.visitor_name} was already checked in${visit.pass_reference ? ` on ${visit.pass_reference}` : ''}.`,
+        { title: 'Already checked in' })
+      return true
+    }
+    // Not on today's list: ask the card itself what it is for.
+    try {
+      const { data } = await lookupSlip(code.trim())
+      const message = {
+        upcoming: `This card is for ${data.expected_label}. Check ${data.name} in on that day, or issue a walk-in visitor pass today.`,
+        no_show:  `This visit was booked for ${data.expected_label} and missed. Ask the CDSO to reschedule it, or issue a walk-in visitor pass.`,
+        archived: `The CDSO cancelled this visit (${data.reference}). Issue a walk-in visitor pass if they should come in.`,
+        arrived:  `${data.name} was already checked in for this visit.`,
+      }[data.state] || 'This card is not for today.'
+      await notify.warning(message, { title: 'Not expected today' })
+    } catch (err) {
+      await notify.error(err?.response?.data?.error || 'Could not read that Expected Visit card.', { title: 'Card not recognised' })
+    }
+    return true
+  }
+
   // Run the normal plate entry/exit check. Rules are applied server-side by
   // check_entry(): the first scan logs an entry, a re-scan while the vehicle is
   // inside logs the exit. Returns the response data so callers can react.
@@ -1672,10 +1716,19 @@ export default function SecurityEntryManagement() {
   const isStandingPassQr = (raw) => /\|(SUPPLIER|EVENT):/i.test(raw || '')
 
   // Camera scanner read a QR. Route by payload type:
+  //  • SLC-SCHEDULED:{id} → an Expected Visit card: open the check-in for its booking
   //  • SLC-VISITOR / SLC-SUPPLIER / SLC-EVENT / SLC-NOPLATE:{id} → open the slip (exit / reprint from it)
   //  • VEHICLE:{plate}|ID:{n}, |SUPPLIER:{n}, |EVENT:{n} → plate entry / exit (rules applied)
   const handleQrDetected = async (data) => {
     const upper = (data || '').trim().toUpperCase()
+
+    if (isExpectedCard(upper)) {
+      setExitScanBusy(true)
+      const ok = await openExpectedCard(upper)
+      setExitScanBusy(false)
+      if (ok) setShowExitScanner(false)
+      return
+    }
 
     if (isSlipCode(upper)) {
       setExitScanBusy(true)
@@ -1712,6 +1765,13 @@ export default function SecurityEntryManagement() {
     // Visitor / no-plate slip QR scanned into the lookup box (USB scanner or
     // typed) opens the slip. A visitor's plate or name typed here gets to the
     // same slip — via the plate check or the name picker.
+    if (isExpectedCard(raw)) {
+      setLoading(true)
+      await openExpectedCard(raw)
+      setPlateInput('')
+      setLoading(false)
+      return
+    }
     if (isSlipCode(raw)) {
       setLoading(true)
       await openSlip(raw)

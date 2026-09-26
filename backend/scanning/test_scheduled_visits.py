@@ -1,5 +1,6 @@
 """Scheduled visits at the gate: the guard's Expected Today feed, check-in
 through a visitor pass, the arrival tick, and the slip block."""
+import os
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -315,3 +316,51 @@ class ScheduledVisitTableTests(TestCase):
         guard = _user('guard@slc.edu.ph', 'security')
         self.client.force_authenticate(user=guard)
         self.assertEqual(self.client.get('/api/vehicles/scheduled-visits/report/pdf/').status_code, 403)
+
+
+
+class ExpectedVisitCardTests(TestCase):
+    """The Expected Visit thermal card printed from the CDSO table."""
+
+    def setUp(self):
+        self.admin = _user('cdso@slc.edu.ph', 'admin')
+        self.guard = _user('guard@slc.edu.ph', 'security', gate_assignment='gate1')
+        self.client = APIClient()
+        self.visit = ScheduledVisit.objects.create(
+            visitor_name='DR. HELEN OCAMPO', category='guest', purpose='Board meeting',
+            expected_date=timezone.localdate() + timedelta(days=2), created_by=self.admin)
+        self.code = f'SLC-SCHEDULED:{self.visit.pk}'
+
+    def test_card_reads_as_an_expected_visit(self):
+        self.client.force_authenticate(user=self.admin)
+        slip = self.client.get('/api/scan/slip/', {'code': self.code}).data
+        self.assertEqual(slip['title'], 'EXPECTED VISIT')
+        self.assertEqual(slip['headline'], f'SV-{self.visit.pk}')   # no plate yet
+        self.assertEqual(slip['state'], 'upcoming')
+        rows = [r for section in slip['sections'] for r in section]
+        self.assertIn(['Visitor', 'DR. HELEN OCAMPO', True], rows)
+        self.assertIn(['Plate', 'Recorded at the gate'], rows)
+        self.assertIn(['Arranged by', 'CDSO'], rows)
+        out = os.environ.get('SCENARIO_OUT')
+        if out:
+            from scanning.slip_printer import render_slip
+            render_slip(slip).save(os.path.join(out, 'slip_expected_visit.png'))
+
+    def test_guard_can_scan_it_but_an_owner_cannot(self):
+        self.client.force_authenticate(user=self.guard)
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': self.code}).status_code, 200)
+        owner = _user('owner@slc.edu.ph', 'vehicle_owner', owner_type='student')
+        self.client.force_authenticate(user=owner)
+        self.assertEqual(self.client.get('/api/scan/slip/', {'code': self.code}).status_code, 403)
+
+    def test_prints_on_the_thermal_printer(self):
+        self.client.force_authenticate(user=self.admin)
+        with patch('scanning.slip_printer.find_printer', return_value='POS58 Printer'),              patch('scanning.slip_printer.send_raw') as send:
+            resp = self.client.post('/api/scan/slip/print/', {'code': self.code}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        send.assert_called_once()
+
+    def test_card_is_not_an_exit(self):
+        self.client.force_authenticate(user=self.guard)
+        resp = self.client.post('/api/scan/slip/exit/', {'code': self.code}, format='json')
+        self.assertEqual(resp.status_code, 400)

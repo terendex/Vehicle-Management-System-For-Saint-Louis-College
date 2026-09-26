@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
   Printer, Monitor, CalendarDays, Archive, ArchiveRestore, Search, ChevronLeft, ChevronRight,
+  MoreVertical, RotateCcw,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
@@ -160,24 +162,22 @@ function AddSupplierModal({ onClose, onCreated }) {
   )
 }
 
-// ── Print Supplier Pass modal ─────────────────────────────────────────
-// A standing pass for one plate. Its QR carries the plate (VEHICLE:{plate}),
-// so the guard scans it at the gate like a registered vehicle's QR: the first
-// scan logs the entry, the next the exit. The slip comes from the server
-// (scanning/slips.py) so the preview, the thermal print and the browser print
-// all say the same thing.
-function PrintPassModal({ supplier, plate, onClose }) {
+// ── Print a thermal slip — Supplier Pass or Expected Visit card ────────
+// The slip comes from the server (scanning/slips.py) so the preview, the
+// thermal print and the browser print all say the same thing. `noun` names it
+// in every message ("Supplier Pass"), `subject` says whose it is.
+function PrintSlipModal({ code, noun, subject, warning, hint, onClose }) {
   const [slip, setSlip]   = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy]   = useState('')   // 'thermal' | 'browser' | ''
 
   useEffect(() => {
     let cancelled = false
-    lookupSlip(`SLC-SUPPLIER-PASS:${plate.id}`)
+    lookupSlip(code)
       .then(({ data }) => { if (!cancelled) setSlip(data) })
-      .catch(err => { if (!cancelled) setError(err?.response?.data?.error || 'Could not load the pass.') })
+      .catch(err => { if (!cancelled) setError(err?.response?.data?.error || `Could not load the ${noun}.`) })
     return () => { cancelled = true }
-  }, [plate.id])
+  }, [code, noun])
 
   const asking = useRef(false)   // a double-click must not confirm once and print twice
 
@@ -186,8 +186,8 @@ function PrintPassModal({ supplier, plate, onClose }) {
     asking.current = true
     try {
       const go = await notify.confirm({
-        title: 'Print Supplier Pass?',
-        message: `Print the Supplier Pass for ${plate.plate_number} (${supplier.company_name}) on the thermal printer?`,
+        title: `Print ${noun}?`,
+        message: `Print the ${noun} for ${subject} on the thermal printer?`,
         confirmLabel: 'Print',
       })
       if (!go) return
@@ -196,14 +196,14 @@ function PrintPassModal({ supplier, plate, onClose }) {
     try {
       await printSlipOnServer(slip.code)
       onClose()
-      await notify.success(`Supplier Pass for ${plate.plate_number} printed on the thermal printer.`, { title: 'Pass printed' })
+      await notify.success(`${noun} for ${subject} printed on the thermal printer.`, { title: `${noun} printed` })
     } catch (err) {
       const noPrinter = err?.response?.status === 503
       await notify.error(
         noPrinter
           ? 'This server has no thermal printer connected. Use “Print from This Computer” instead.'
-          : (err?.response?.data?.error || 'The pass did not print — the printer could not be reached.'),
-        { title: 'Pass not printed' },
+          : (err?.response?.data?.error || `The ${noun} did not print — the printer could not be reached.`),
+        { title: `${noun} not printed` },
       )
     } finally { setBusy('') }
   }
@@ -214,7 +214,7 @@ function PrintPassModal({ supplier, plate, onClose }) {
     setBusy('')
     if (!opened) {
       await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
-        { title: 'Pass not printed' })
+        { title: `${noun} not printed` })
     }
   }
 
@@ -222,22 +222,17 @@ function PrintPassModal({ supplier, plate, onClose }) {
     <div className="sp-overlay" onClick={onClose}>
       <div className="sp-modal sp-modal--print" onClick={e => e.stopPropagation()}>
         <div className="sp-modal-head">
-          <h2 className="sp-modal-title">Print Supplier Pass</h2>
+          <h2 className="sp-modal-title">Print {noun}</h2>
           <button className="sp-modal-close" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="sp-modal-form">
           {error ? (
             <p className="sp-modal-body" style={{ color: '#C62828' }}>{error}</p>
           ) : !slip ? (
-            <div className="sp-loading"><Loader2 size={22} className="sp-spinner" /><span>Loading pass…</span></div>
+            <div className="sp-loading"><Loader2 size={22} className="sp-spinner" /><span>Loading {noun}…</span></div>
           ) : (
             <>
-              {!supplier.is_active && (
-                <p className="sp-pass-warn">
-                  <AlertTriangle size={14} /> {supplier.company_name} is inactive. The pass will print, but the
-                  gate will not admit this plate until the supplier is activated.
-                </p>
-              )}
+              {warning && <p className="sp-pass-warn"><AlertTriangle size={14} /> {warning}</p>}
               <div className="sp-pass-preview" aria-label="Pass preview">
                 <div className="sp-pass-title">{slip.title}</div>
                 <div className="sp-pass-plate">{slip.headline}</div>
@@ -249,9 +244,7 @@ function PrintPassModal({ supplier, plate, onClose }) {
                 <div className="sp-pass-qr"><QRCodeSVG value={slip.qr || slip.code} size={116} level="M" /></div>
                 {(slip.footer || []).map(line => <div key={line} className="sp-pass-foot">{line}</div>)}
               </div>
-              <p className="sp-field-hint" style={{ margin: 0 }}>
-                The guard scans this QR at the gate — first scan records the entry, the next records the exit.
-              </p>
+              <p className="sp-field-hint" style={{ margin: 0 }}>{hint}</p>
             </>
           )}
           <div className="sp-modal-actions">
@@ -267,6 +260,23 @@ function PrintPassModal({ supplier, plate, onClose }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// A standing pass for one plate. Its QR carries the plate (VEHICLE:{plate}),
+// so the guard scans it at the gate like a registered vehicle's QR: the first
+// scan logs the entry, the next the exit.
+function PrintPassModal({ supplier, plate, onClose }) {
+  return (
+    <PrintSlipModal
+      code={`SLC-SUPPLIER-PASS:${plate.id}`}
+      noun="Supplier Pass"
+      subject={`${plate.plate_number} (${supplier.company_name})`}
+      warning={supplier.is_active ? '' : `${supplier.company_name} is inactive. The pass will print, but the `
+        + 'gate will not admit this plate until the supplier is activated.'}
+      hint="The guard scans this QR at the gate — first scan records the entry, the next records the exit."
+      onClose={onClose}
+    />
   )
 }
 
@@ -741,6 +751,26 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   const [range, setRange]       = useState({ from: '', to: '' })
   const [page, setPage]         = useState(1)
   const [action, setAction]     = useState(null)  // { visit, mode: 'reschedule' | 'archive' }
+  const [printing, setPrinting] = useState(null)  // the visit whose Expected Visit card is being printed
+  const [menu, setMenu]         = useState(null)  // { id, style } — the open row menu
+
+  // Row actions sit behind a ⋮ menu, like User Management's. It is portalled
+  // to <body> at fixed coordinates so the table card cannot clip it, and any
+  // scroll or resize closes it rather than leave it floating off its row.
+  const menuRef   = useRef(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
+  useEffect(() => {
+    if (!menu) return
+    const onDocClick = (e) => { if (!menuRef.current?.contains(e.target)) closeMenu() }
+    window.addEventListener('click', onDocClick)
+    window.addEventListener('resize', closeMenu)
+    window.addEventListener('scroll', closeMenu, true)
+    return () => {
+      window.removeEventListener('click', onDocClick)
+      window.removeEventListener('resize', closeMenu)
+      window.removeEventListener('scroll', closeMenu, true)
+    }
+  }, [menu, closeMenu])
 
   // Everything that narrows the table, as the server takes it. The report bar
   // adds its own date range on top, so it is left out of `filters`.
@@ -795,6 +825,52 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   }
 
   const today = localToday()
+
+  // What a row's menu offers, by where the visit stands.
+  const menuItems = (v, st) => {
+    if (st === 'archived') {
+      return [{ key: 'restore', label: 'Restore', Icon: ArchiveRestore, tone: 'enable', run: () => restore(v) }]
+    }
+    const items = []
+    // A card for someone still to come. A no-show's date has passed, so it
+    // is rescheduled first and printed for the new day.
+    if (st === 'today' || st === 'upcoming') {
+      items.push({ key: 'print', label: 'Print Expected Visit Card', Icon: Printer, tone: 'view', run: () => setPrinting(v) })
+    }
+    // A hand correction — the gate marks arrivals itself.
+    items.push(v.is_arrived
+      ? { key: 'unarrive', label: 'Undo Arrived', Icon: RotateCcw, tone: 'edit', run: () => toggleArrived(v) }
+      : { key: 'arrive', label: 'Mark Arrived', Icon: Check, tone: 'enable', run: () => toggleArrived(v) })
+    if (!v.is_arrived) {
+      items.push({ key: 'reschedule', label: 'Reschedule', Icon: CalendarDays, tone: 'view',
+        run: () => setAction({ visit: v, mode: 'reschedule' }) })
+    }
+    items.push({ key: 'archive', label: 'Archive', Icon: Archive, tone: 'disable',
+      run: () => setAction({ visit: v, mode: 'archive' }) })
+    return items
+  }
+
+  const MENU_WIDTH = 220
+  const toggleMenu = (e, v, count) => {
+    if (menu?.id === v.id) { closeMenu(); return }
+    const rect   = e.currentTarget.getBoundingClientRect()
+    const height = count * 38 + (count - 1) * 4 + 16   // item + gap + padding
+    const gap    = 8
+    const openUp = rect.bottom + gap + height > window.innerHeight - 8 && rect.top - gap - height > 8
+    const left   = Math.max(8, Math.min(rect.right - MENU_WIDTH, window.innerWidth - MENU_WIDTH - 8))
+    setMenu({
+      id: v.id,
+      style: {
+        position: 'fixed',
+        left: `${left}px`,
+        width: `${MENU_WIDTH}px`,
+        ...(openUp
+          ? { bottom: `${window.innerHeight - rect.top + gap}px`, transformOrigin: 'bottom right' }
+          : { top: `${rect.bottom + gap}px`, transformOrigin: 'top right' }),
+      },
+    })
+  }
+
   const counts = { '': 0, today: 0, upcoming: 0, arrived: 0, no_show: 0, archived: 0 }
   all.forEach(v => {
     const st = visitState(v, today)
@@ -849,7 +925,6 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
           {VISIT_TABS.map(t => (
             <button key={t.key || 'all'} className={`um-role-tab ${status === t.key ? 'active' : ''}`}
               onClick={() => narrow(setStatus)(t.key)}>
-              {t.key === 'archived' && <Archive size={13} style={{ marginRight: 4, verticalAlign: -2 }} />}
               {t.label}
               <span className="sv-tab-count">{counts[t.key]}</span>
             </button>
@@ -901,6 +976,7 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
               <tbody>
                 {shown.map(v => {
                   const st = visitState(v, today)
+                  const items = menuItems(v, st)
                   return (
                     <tr key={v.id} className={`sv-row sv-row--${st}`}>
                       <td><span className="sv-ref">SV-{v.id}</span></td>
@@ -932,34 +1008,23 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
                         {st === 'archived' && v.archive_reason && <span className="sv-sub">{v.archive_reason}</span>}
                       </td>
                       <td>
-                        <div className="sv-actions">
-                          {st === 'archived' ? (
-                            <button className="sv-icon-btn sv-icon-btn--text" onClick={() => restore(v)}
-                              title="Put it back on the active list">
-                              <ArchiveRestore size={14} /> Restore
-                            </button>
-                          ) : (
-                            <>
-                              {/* A hand correction — the gate marks arrivals itself. */}
-                              <button className={`sv-icon-btn${v.is_arrived ? ' sv-icon-btn--on' : ''}`}
-                                onClick={() => toggleArrived(v)}
-                                title={v.is_arrived ? 'Undo — mark as not arrived' : 'Mark arrived by hand (the gate does this when the slip prints)'}
-                                aria-label={v.is_arrived ? 'Mark as not arrived' : 'Mark arrived'}>
-                                <Check size={14} />
+                        <button className="um-action-btn" aria-label={`Actions for ${v.visitor_name}`}
+                          aria-haspopup="menu" aria-expanded={menu?.id === v.id}
+                          onClick={(e) => { e.stopPropagation(); toggleMenu(e, v, items.length) }}>
+                          <MoreVertical size={16} />
+                        </button>
+                        {menu?.id === v.id && createPortal(
+                          <div ref={menuRef} className="um-actions-dropdown" role="menu" style={menu.style}
+                            onClick={(e) => e.stopPropagation()}>
+                            {items.map(({ key, label, Icon, tone, run }) => (
+                              <button key={key} role="menuitem" className={`um-dropdown-item ${tone}`}
+                                onClick={() => { closeMenu(); run() }}>
+                                <Icon size={15} /> {label}
                               </button>
-                              {!v.is_arrived && (
-                                <button className="sv-icon-btn" onClick={() => setAction({ visit: v, mode: 'reschedule' })}
-                                  title="Reschedule — move this booking to another date" aria-label="Reschedule">
-                                  <CalendarDays size={14} />
-                                </button>
-                              )}
-                              <button className="sv-icon-btn" onClick={() => setAction({ visit: v, mode: 'archive' })}
-                                title="Archive — keep it on record, off the gate's list" aria-label="Archive">
-                                <Archive size={14} />
-                              </button>
-                            </>
-                          )}
-                        </div>
+                            ))}
+                          </div>,
+                          document.body,
+                        )}
                       </td>
                     </tr>
                   )
@@ -993,6 +1058,15 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
       {action && (
         <VisitActionModal visit={action.visit} mode={action.mode}
           onClose={() => setAction(null)} onSaved={reload} />
+      )}
+      {printing && (
+        <PrintSlipModal
+          code={`SLC-SCHEDULED:${printing.id}`}
+          noun="Expected Visit Card"
+          subject={`${printing.visitor_name} (SV-${printing.id})`}
+          hint="Give it to the visitor, or keep it at the gate. On the day, the guard scans its QR to open the check-in — the visitor pass is issued from there."
+          onClose={() => setPrinting(null)}
+        />
       )}
     </>
   )
