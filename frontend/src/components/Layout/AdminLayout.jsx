@@ -46,7 +46,7 @@ function buildNavGroups(isAdmin) {
         { name: 'Vehicle Registration', path: '/admin/vehicles',   icon: <Car size={18} />   },
         { name: 'User Management',      path: '/admin/users',      icon: <Users size={18} /> },
         { name: 'Device Management',    path: '/admin/devices',    icon: <Video size={18} /> },
-        { name: 'Suppliers',            path: '/admin/suppliers',  icon: <Truck size={18} /> },
+        { name: 'Visits and Suppliers', path: '/admin/suppliers',  icon: <Truck size={18} /> },
       ],
     })
   }

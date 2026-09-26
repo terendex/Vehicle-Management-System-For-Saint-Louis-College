@@ -4,7 +4,7 @@ import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
-  VideoOff, RefreshCw, Printer, Ticket, Timer, ShieldOff,
+  VideoOff, RefreshCw, Printer, Ticket, Timer, ShieldOff, CalendarClock,
 } from 'lucide-react'
 import notify, { toast, useFeedbackStore } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -21,7 +21,7 @@ import {
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
   getOverstaying, acknowledgeOverstay,
 } from '../../api/scanning'
-import { getSystemSettings } from '../../api/vehicles'
+import { getSystemSettings, getExpectedVisitsToday } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useAuthStore from '../../stores/authStore'
@@ -149,6 +149,12 @@ function fmtShort(total) {
   return h ? `${h}h ${m}m` : `${m}m`
 }
 
+// "9:14 AM" — when a scheduled visitor arrived.
+function fmtClock(ts) {
+  try { return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }
+  catch { return '' }
+}
+
 // Time-left / overstay info for an active visitor pass
 function passTimeInfo(p) {
   if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
@@ -167,12 +173,47 @@ const feedbackOpen = () => useFeedbackStore.getState().queue.length > 0
 // already printed from this tab, so a re-rendered dialog never prints twice.
 const autoPrintedSlips = new Set()
 
+// Today's booking still waiting on this plate, if any. Plates are compared
+// without spaces — the server stores them that way, a scan may not.
+const compactPlate = (p) => (p || '').replace(/[\s-]/g, '').toUpperCase()
+function findExpectedVisit(expected, plate) {
+  const want = compactPlate(plate)
+  if (!want) return null
+  return expected.find(v => !v.is_arrived && compactPlate(v.plate_number) === want) || null
+}
+
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
-function VisitorPassModal({ plate, offices, onClose, onCreated }) {
-  const [visitorName, setVisitorName] = useState('')
+// `scheduled` is the CDSO's booking when the guard checks someone in from
+// Expected Today (or a scanned plate matched one): its name and purpose fill
+// the form, the pass is linked to it, and its slip prints the booking. From
+// the panel there is no scanned plate, so the plate field opens for typing —
+// pre-filled when the booking has one on file.
+//
+// Without one, `expected` offers today's still-waiting bookings to pick from.
+// A scan can only match a booking by plate, and a visitor booked without one
+// — or arriving in another car — would otherwise go through as a walk-in and
+// leave their booking a false no-show.
+function VisitorPassModal({ plate: scannedPlate, scheduled: fixedScheduled, expected = [], offices, onClose, onCreated }) {
+  const candidates = fixedScheduled ? [] : expected.filter(v => !v.is_arrived && !v.auto_admit)
+  const [pickedId, setPickedId] = useState('')
+  const scheduled = fixedScheduled || candidates.find(v => String(v.id) === pickedId) || null
+  const [plateInput, setPlateInput]   = useState(() => scannedPlate
+    || (fixedScheduled?.plate_number ? formatPlateNumber(fixedScheduled.plate_number) : ''))
+  const plate = scannedPlate || plateInput.trim()
+  const [visitorName, setVisitorName] = useState(() => (fixedScheduled?.visitor_name || '').toUpperCase())
   const [conduction, setConduction]   = useState('')
   const [officeId, setOfficeId] = useState('')
-  const [purpose, setPurpose]   = useState('')
+  const [purpose, setPurpose]   = useState(() => fixedScheduled?.purpose || '')
+
+  // Picking a booking fills the form from it; going back to walk-in leaves
+  // what was typed, so a wrong pick costs nothing.
+  const pickScheduled = (id) => {
+    setPickedId(id)
+    const v = candidates.find(c => String(c.id) === id)
+    if (!v) return
+    setVisitorName(v.visitor_name.toUpperCase())
+    setPurpose(v.purpose || '')
+  }
   // Typeable strings; the pass defaults to 0 hr 15 min.
   const [hours, setHours]       = useState('0')
   const [minutes, setMinutes]   = useState('15')
@@ -258,6 +299,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
         return
       }
       const problems = [...fieldProblems(e.currentTarget)]
+      if (!scannedPlate && !isValidPlateNumber(plate)) problems.push('Enter a valid license plate, e.g. ABC 1234.')
       if (!visitorName.trim()) problems.push("Enter the visitor's name.")
       if (conduction.trim() && !isValidConductionNumber(conduction)) {
         problems.push('The conduction number should be 5–12 letters and digits, or left blank.')
@@ -281,6 +323,7 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
         plate_number: plate, visitor_name: visitorName.trim(),
         conduction_number: conduction.trim(), office: officeId || null,
         purpose, allowed_duration: durationNum,
+        scheduled_visit: scheduled?.id || null,
       })
       // The printer takes a few seconds; say so instead of a stuck "Creating…".
       setPrinting(true)
@@ -335,20 +378,52 @@ function VisitorPassModal({ plate, offices, onClose, onCreated }) {
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="em-modal">
         <div className="em-modal-head">
-          <span className="em-modal-title"><UserPlus size={17} /> Create Visitor Pass</span>
+          <span className="em-modal-title">
+            {scheduled ? <><CalendarClock size={17} /> Check In Scheduled Visitor</> : <><UserPlus size={17} /> Create Visitor Pass</>}
+          </span>
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} noValidate>
           <div className="em-modal-body">
+            {candidates.length > 0 && (
+              <div className="em-field">
+                <label className="em-label">Scheduled Visitor <span style={{ color: '#64839C', fontWeight: 400 }}>(if expected today)</span></label>
+                <select className="em-select" value={pickedId} onChange={(e) => pickScheduled(e.target.value)}>
+                  <option value="">Walk-in — not scheduled</option>
+                  {candidates.map(v => (
+                    <option key={v.id} value={String(v.id)}>
+                      {v.visitor_name}{v.plate_number ? ` (${formatPlateNumber(v.plate_number)})` : ''}{v.purpose ? ` — ${v.purpose}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {scheduled && (
+              <div className="em-scheduled-note">
+                <CalendarClock size={14} style={{ flexShrink: 0 }} />
+                <span>
+                  Expected today · SV-{scheduled.id}
+                  {scheduled.created_by_name && <> · arranged by {scheduled.created_by_name}</>}
+                  {scheduled.supplier_name && <> · for {scheduled.supplier_name}</>}.
+                  {' '}The slip prints the booking, and the visit is marked arrived once it prints.
+                </span>
+              </div>
+            )}
             <div className="em-field">
               <label className="em-label">License Plate</label>
-              <input className="em-input" value={plate} readOnly />
+              {scannedPlate ? (
+                <input className="em-input" value={scannedPlate} readOnly />
+              ) : (
+                <input className="em-input" value={plateInput} required autoFocus
+                  placeholder="e.g. ABC 1234" maxLength={20}
+                  onChange={(e) => setPlateInput(formatPlateNumber(e.target.value))} />
+              )}
             </div>
             <div className="em-field">
               <label className="em-label">Visitor's Name</label>
               {/* Printed on the slip, and typed at the exit when the slip QR is
                   not scanned. Upper-cased like every other stored name. */}
-              <input className="em-input" value={visitorName} required autoFocus
+              <input className="em-input" value={visitorName} required autoFocus={!!scannedPlate}
                 placeholder="e.g. JUAN DELA CRUZ" maxLength={150}
                 onChange={(e) => setVisitorName(e.target.value.toUpperCase())} />
             </div>
@@ -866,7 +941,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
   )
 }
 
-function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDismiss, queued = 0 }) {
+function ResultModal({ result, offices, expected = [], onPassCreated, onOverride, onDeny, onDismiss, queued = 0 }) {
   const [showVisitor,  setShowVisitor]  = useState(false)
   const [showOverride, setShowOverride] = useState(false)
   const [showDeny,     setShowDeny]     = useState(false)
@@ -931,6 +1006,12 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
   const vehicle   = result.vehicle
   const isVisitor = result.status === 'unknown' || result.status === 'no_pass'
   const isDeniable = ['denied', 'wrong_day', 'disabled'].includes(result.status)
+  // An unregistered plate the CDSO booked for today: the guard is told who it
+  // is before deciding, and the pass is issued against the booking.
+  const expectedVisit = isVisitor ? findExpectedVisit(expected, result.plate_number) : null
+  // No plate match, but people are still due: the pass form offers them.
+  const stillDue = isVisitor && !expectedVisit
+    ? expected.filter(v => !v.is_arrived && !v.auto_admit).length : 0
   const todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' })
 
   return (
@@ -1078,6 +1159,31 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                 )}
               </div>
             )}
+            {expectedVisit && (
+              <div className="em-result-rows em-expected-rows">
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Expected</span>
+                  <span className="em-expected-pill"><CalendarClock size={10} /> Scheduled today · SV-{expectedVisit.id}</span>
+                </div>
+                <div className="em-result-row">
+                  <span className="em-result-row-label">Visitor</span>
+                  <span className="em-result-row-value">{expectedVisit.visitor_name}</span>
+                </div>
+                {expectedVisit.purpose && (
+                  <div className="em-result-row">
+                    <span className="em-result-row-label">Purpose</span>
+                    <span className="em-result-row-value">{expectedVisit.purpose}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {stillDue > 0 && (
+              <p className="em-expected-hint">
+                <CalendarClock size={12} style={{ flexShrink: 0 }} />
+                {stillDue === 1 ? '1 scheduled visitor is' : `${stillDue} scheduled visitors are`} still expected today.
+                If this is one of them, choose them in the visitor pass form.
+              </p>
+            )}
             {supplierSlip && (
               <div className="em-result-rows">
                 {isEventSlip ? (
@@ -1121,8 +1227,11 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
                 </button>
               )}
               {isVisitor && (
-                <button className="em-btn em-btn-secondary" style={{ width: '100%' }} onClick={() => setShowVisitor(true)}>
-                  <UserPlus size={14} /> Create Visitor Pass
+                <button className={`em-btn ${expectedVisit ? 'em-btn-primary' : 'em-btn-secondary'}`} style={{ width: '100%' }}
+                  onClick={() => setShowVisitor(true)}>
+                  {expectedVisit
+                    ? <><CalendarClock size={14} /> Check In Scheduled Visitor</>
+                    : <><UserPlus size={14} /> Create Visitor Pass</>}
                 </button>
               )}
               {isVisitor && (
@@ -1159,7 +1268,7 @@ function ResultModal({ result, offices, onPassCreated, onOverride, onDeny, onDis
           under the success message and a second press issued a duplicate pass
           and logged the visitor in twice. */}
       {showVisitor && (
-        <VisitorPassModal plate={result.plate_number} offices={offices}
+        <VisitorPassModal plate={result.plate_number} scheduled={expectedVisit} expected={expected} offices={offices}
           onClose={() => setShowVisitor(false)}
           onCreated={() => { onPassCreated?.(); onDismiss?.() }} />
       )}
@@ -1189,6 +1298,8 @@ export default function SecurityEntryManagement() {
   const [logs, setLogs]               = useState([])
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
+  const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
+  const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
   const [overstaying, setOverstaying] = useState([])    // still inside, past their rule
   const [ackBusy, setAckBusy]         = useState(null)  // plate currently being acknowledged
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
@@ -1394,8 +1505,13 @@ export default function SecurityEntryManagement() {
   const refreshUnrecognized = () =>
     getUnrecognizedInside(gateId).then(r => setUnrecognized(r.data ?? [])).catch(() => {})
 
+  // Who the CDSO booked for today. Refetched with everything else, so a visit
+  // added at the office, or ticked off by another gate, shows up here live.
+  const refreshExpected = () =>
+    getExpectedVisitsToday().then(r => setExpected(r.data ?? [])).catch(() => {})
+
   const refreshAll = () => {
-    refreshLogs(); refreshPasses(); refreshUnrecognized(); refreshOverstaying()
+    refreshLogs(); refreshPasses(); refreshUnrecognized(); refreshOverstaying(); refreshExpected()
   }
 
   // Instant refresh on new gate scans / visitor-pass changes
@@ -1405,6 +1521,7 @@ export default function SecurityEntryManagement() {
     refreshOverstaying()
     refreshPasses()
     refreshUnrecognized()
+    refreshExpected()
     const t = setInterval(() => { refreshPasses(); refreshOverstaying() }, 30000)
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -2037,6 +2154,49 @@ export default function SecurityEntryManagement() {
             )}
 
 
+            {/* Expected today — visits the CDSO scheduled. Shown only on a day
+                that has any. Checking one in issues the visitor pass against
+                the booking; a supplier plate needs nothing, the scan admits it
+                and ticks it off. */}
+            {expected.length > 0 && (
+              <section className="cm-panel">
+                <div className="cm-panel-head">
+                  <span className="cm-panel-title"><CalendarClock size={14} /> Expected Today</span>
+                  <div className="cm-panel-end">
+                    <span className="cm-count">{expected.filter(v => !v.is_arrived).length}</span>
+                  </div>
+                </div>
+                <div className="em-side-list">
+                  {expected.map(v => (
+                    <div key={v.id} className={`em-expected-row${v.is_arrived ? ' arrived' : ''}`}>
+                      <div className="em-expected-main">
+                        <span className="em-expected-name">{v.visitor_name}</span>
+                        <span className="em-visitor-sub">
+                          {v.plate_number ? formatPlateNumber(v.plate_number) : 'Plate not on file'}
+                          {v.supplier_name && ` · ${v.supplier_name}`}
+                          {v.purpose && ` · ${v.purpose}`}
+                        </span>
+                      </div>
+                      {v.is_arrived ? (
+                        <span className="em-expected-state done" title={v.pass_reference ? `Checked in on ${v.pass_reference}` : 'Arrived'}>
+                          <CheckCircle size={11} /> {v.arrived_at ? fmtClock(v.arrived_at) : 'Arrived'}
+                        </span>
+                      ) : v.auto_admit ? (
+                        <span className="em-expected-state" title="On the supplier roster — scanning the plate admits it and marks it arrived">
+                          <ScanLine size={11} /> On scan
+                        </span>
+                      ) : (
+                        <button type="button" className="em-expected-checkin" onClick={() => setCheckIn(v)}
+                          title="Issue the visitor pass for this booking and print the slip">
+                          <UserPlus size={12} /> Check In
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {/* Active visitors — time remaining / overstay */}
             <section className="cm-panel">
               <div className="cm-panel-head">
@@ -2110,11 +2270,21 @@ export default function SecurityEntryManagement() {
             key={scanQueue[0].id}
             result={scanQueue[0].result}
             offices={offices}
+            expected={expected}
             onPassCreated={refreshAll}
             onOverride={refreshAll}
             onDeny={refreshAll}
             onDismiss={() => removeFromQueue(scanQueue[0].id)}
             queued={scanQueue.length - 1}
+          />
+        )}
+
+        {checkIn && (
+          <VisitorPassModal
+            scheduled={checkIn}
+            offices={offices}
+            onClose={() => setCheckIn(null)}
+            onCreated={refreshAll}
           />
         )}
 

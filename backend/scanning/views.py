@@ -1235,9 +1235,24 @@ class VisitorPassView(APIView):
         except (TypeError, ValueError):
             allowed_duration = 60                # unparseable falls back to an hour rather than refusing the visitor
 
+        # The visit the CDSO scheduled for this person. Named when the guard
+        # checked them in from Expected Today; otherwise found by plate, so a
+        # scheduled visitor who was simply scanned in is still linked. Only
+        # today's, only one still waiting — anything else is ignored rather
+        # than refused: the schedule is notice, it never blocks a pass.
+        from vehicles.scheduled_visits import live_visits, open_visit_for_plate
+        scheduled = None
+        scheduled_id = request.data.get('scheduled_visit')
+        if scheduled_id:
+            scheduled = live_visits().filter(
+                pk=scheduled_id, expected_date=timezone.localdate(), is_arrived=False).first()
+        if scheduled is None:
+            scheduled = open_visit_for_plate(plate_number)
+
         now = timezone.now()                    # one instant for both entered_at and expires_at, so the window is exact
         pass_ = VisitorPass.objects.create(
             vehicle=vehicle,
+            scheduled_visit=scheduled,
             plate_number=plate_number,
             visitor_name=visitor_name,
             conduction_number=conduction_number,
@@ -1264,7 +1279,8 @@ class VisitorPassView(APIView):
             f"Visitor pass issued | Plate: {plate_number} | "
             + (f"Conduction: {conduction_number} | " if conduction_number else "")
             + f"Visitor: {visitor_name or 'N/A'} | "
-            f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
+            + (f"Scheduled visit: SV-{scheduled.pk} | " if scheduled else "")
+            + f"Purpose: {pass_.purpose or 'N/A'} | Office: {office_name} | "
             f"Duration: {allowed_duration} min | Gate: {_gate_label(gate_id)} | Guard: {guard_name}",
         )
 
@@ -1540,6 +1556,12 @@ class VisitorPassPrintedView(APIView):
             gate_id=gate_id,
             scanned_by=request.user,
         )
+        # The entry is logged, so the visit it was checked in from has arrived.
+        # (The AccessLog signal already ticks off a visit on the same plate;
+        # this covers one scheduled without a plate, or under another.)
+        if pass_.scheduled_visit_id:
+            from vehicles.scheduled_visits import mark_arrived
+            mark_arrived(pass_.scheduled_visit, pass_.printed_at, pass_.plate_number)
         _audit(
             request,
             AuditLog.Action.VISITOR_ISSUED,

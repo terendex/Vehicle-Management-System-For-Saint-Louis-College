@@ -458,12 +458,29 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 
 class ScheduledVisitSerializer(serializers.ModelSerializer):
-    supplier_name = serializers.CharField(source='supplier.company_name', read_only=True, default=None)
+    supplier_name   = serializers.CharField(source='supplier.company_name', read_only=True, default=None)
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default=None)
+    archived_by_name = serializers.CharField(source='archived_by.full_name', read_only=True, default=None)
+    # True when the plate is on an active supplier's roster: the gate admits it
+    # on a scan and ticks the visit off, so the guard has no pass to issue.
+    auto_admit      = serializers.SerializerMethodField()
+    # The visitor pass that checked this visit in (VP-{id}), when there is one.
+    pass_reference  = serializers.SerializerMethodField()
 
     class Meta:
         model  = ScheduledVisit
         fields = [
             'id', 'visitor_name', 'category', 'supplier', 'supplier_name',
-            'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'created_at',
+            'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'arrived_at',
+            'created_by_name', 'auto_admit', 'pass_reference',
+            'archived_at', 'archived_by_name', 'archive_reason', 'created_at',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'arrived_at', 'archived_at', 'archive_reason', 'created_at']
+
+    def get_auto_admit(self, obj):
+        from .scheduled_visits import is_supplier_plate
+        return is_supplier_plate(obj.plate_number)
+
+    def get_pass_reference(self, obj):
+        pass_ = obj.visitor_passes.order_by('-pk').first()
+        return f'VP-{pass_.pk}' if pass_ else None

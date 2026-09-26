@@ -700,3 +700,56 @@
 }
 
 .sp-panel[hidden] { display: none; }
+
+/* ── Scheduled visit states ──────────────────────────────────── */
+
+.sp-visit-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  border-radius: 20px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.sp-visit-badge--today   { color: #084A85; background: #EAF2F8; border: 1px solid #BDD4E5; }
+.sp-visit-badge--arrived { color: #0F7A5A; background: #E8F6F0; border: 1px solid #B5E0CD; }
+.sp-visit-badge--noshow  { color: #8A6B00; background: #FDF6DC; border: 1px solid #F0D9A0; }
+
+/* What already happened steps back so what is still to come reads first. */
+.sp-visit--arrived,
+.sp-visit--no_show { opacity: 0.72; }
+
+.sp-visit-badge--archived { color: #4A6B85; background: #EEF4F9; border: 1px solid #D3E1EC; }
+.sp-visit--archived { opacity: 0.8; }
+
+/* Active / Archived switch above the visit list. */
+.sp-visit-views {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.sp-visit-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #4A6B85;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sp-visit-view:hover:not(.sp-visit-view--on) { background: #F4F8FB; color: #0B2340; }
+.sp-visit-view--on { background: #03396C; border-color: #03396C; color: #FFFFFF; }
+.sp-visit-view-count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: rgba(3, 57, 108, 0.08);
+}
+.sp-visit-view--on .sp-visit-view-count { background: rgba(255, 255, 255, 0.2); }
+
+.sp-visit-modal .sp-modal-form { display: flex; flex-direction: column; gap: 14px; }

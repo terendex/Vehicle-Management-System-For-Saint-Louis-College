@@ -169,6 +169,19 @@ def _duration(minutes):
     return f'{hours} hr {mins} min' if mins else f'{hours} hr'
 
 
+def _scheduled_rows(visit, purpose_shown=''):
+    """The block a slip gets when its holder was expected: the booking's
+    reference, who arranged it, and what for, so the guard at the exit and the
+    office being visited can tell a scheduled visitor from a walk-in.
+    `purpose_shown` is the purpose already on the slip — the booking's is left
+    out when it only repeats it."""
+    rows = [['Scheduled Visit', f'SV-{visit.pk}', KEY],
+            ['Arranged by', visit.created_by.full_name if visit.created_by else 'CDSO']]
+    if visit.purpose and visit.purpose.strip().lower() != (purpose_shown or '').strip().lower():
+        rows.append(['Booked for', visit.purpose])
+    return rows
+
+
 def visitor_slip(pass_):
     now = timezone.now()
     end = pass_.exited_at or now
@@ -202,6 +215,7 @@ def visitor_slip(pass_):
              ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
              ['Purpose', pass_.purpose or 'N/A'],
              ['Duration', _duration(pass_.allowed_duration)]],
+            *([_scheduled_rows(pass_.scheduled_visit, pass_.purpose)] if pass_.scheduled_visit else []),
             issued,
         ],
     }
@@ -212,6 +226,14 @@ def supplier_slip(entry):
     end = exit_log.scanned_at if exit_log else timezone.now()
     roster = supplier_plate_for(entry)
     supplier = roster.supplier if roster else None
+    # A supplier needs no pass, but the CDSO may still have booked the trip.
+    # Matched on the plate and the day it came in, not on is_arrived — the
+    # entry being printed is the one that ticked it off.
+    from vehicles.scheduled_visits import live_visits
+    visit = (live_visits().select_related('created_by')
+             .filter(plate_number=entry.plate_number,
+                     expected_date=timezone.localtime(entry.scanned_at).date())
+             .order_by('pk').first()) if entry.plate_number else None
     return {
         'kind':             'supplier',
         'id':               entry.pk,
@@ -231,6 +253,7 @@ def supplier_slip(entry):
         'sections': [
             [['Company', supplier.company_name if supplier else 'N/A', KEY],
              ['Category', supplier.get_category_display() if supplier else 'N/A']],
+            *([_scheduled_rows(visit)] if visit else []),
             [['Entered', _when(entry.scanned_at), KEY],
              ['Guard', entry.scanned_by.full_name if entry.scanned_by else 'N/A']],
         ],

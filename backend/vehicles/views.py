@@ -5296,13 +5296,33 @@ class RegistrationSummaryReportPdfView(APIView):
 
 
 # The last group in this file: who the CDSO is expecting, and when.
+
+def _parse_visit_date(value):
+    """(date, None) or (None, 400 response) — shared by scheduling and
+    rescheduling, so both accept and refuse exactly the same dates."""
+    if not value:
+        return None, Response({'expected_date': 'Expected date is required.'}, status=400)
+    # Parsed here, like every other date in this file, so a malformed one
+    # is a 400 rather than a ValidationError escaping the save as a 500.
+    try:
+        from datetime import datetime as _dt
+        parsed = _dt.strptime(str(value), '%Y-%m-%d').date()
+    except ValueError:
+        return None, Response({'expected_date': 'Enter the date as YYYY-MM-DD.'}, status=400)
+    # Scheduling is for what is coming. A past date would land straight in
+    # the list as a no-show nobody could ever check in.
+    if parsed < timezone.localdate():
+        return None, Response({'expected_date': 'The expected date cannot be in the past.'}, status=400)
+    return parsed, None
+
+
 class ScheduledVisitListCreateView(APIView):
     """Advance coordination for visitors/suppliers — lets CDSO log who is
     expected on a given day, before they show up at the gate."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        visits = ScheduledVisit.objects.select_related('supplier').all()   # the supplier's name renders on every row, so join it in
+        visits = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by').all()   # the names render on every row, so join them in
         # Any truthy value turns the filter on — the caller is the CDSO screen
         # sending `?upcoming=1`, so the parameter's value is never inspected.
         upcoming_only = request.query_params.get('upcoming')
@@ -5310,22 +5330,20 @@ class ScheduledVisitListCreateView(APIView):
             # Two conditions, because "upcoming" means both: still to come, and
             # not already ticked off. Someone expected today who has not turned
             # up yet is still upcoming, which is why it is >= and not >.
-            visits = visits.filter(expected_date__gte=timezone.localdate(), is_arrived=False)
+            visits = visits.filter(expected_date__gte=timezone.localdate(), is_arrived=False,
+                                   archived_at__isnull=True)
         return Response(ScheduledVisitSerializer(visits, many=True).data)   # soonest first, from the model's ordering
 
     def post(self, request):
         visitor_name = (request.data.get('visitor_name') or '').strip()
-        expected_date = request.data.get('expected_date')   # taken raw — see the note on the create below
+        expected_date = request.data.get('expected_date')   # parsed below
         category = request.data.get('category') or ScheduledVisit.Category.OTHER
 
         if not visitor_name:
             return Response({'visitor_name': 'Name is required.'}, status=400)
-        # Presence only. Whether it is a DATE is never checked here, unlike
-        # every other date in this file, which is parsed with strptime and
-        # answered with a 400 — see _clean_period_payload just above, or
-        # _parse_event_time. The consequence is spelled out at the create.
-        if not expected_date:
-            return Response({'expected_date': 'Expected date is required.'}, status=400)
+        expected_date, error = _parse_visit_date(expected_date)
+        if error:
+            return error
         if category not in ScheduledVisit.Category.values:
             return Response({'category': 'Invalid category.'}, status=400)
 
@@ -5342,14 +5360,9 @@ class ScheduledVisitListCreateView(APIView):
             supplier=supplier,
             plate_number=_normalize_plate(request.data.get('plate_number') or ''),   # normalised so a gate scan can match it; blank is allowed, the vehicle may not be known yet
             purpose=(request.data.get('purpose') or '').strip(),
-            # expected_date reaches the DateField as whatever was posted. A
-            # well-formed "YYYY-MM-DD" is converted for us; anything else —
-            # "21/09/2026", or a word — raises django.core.exceptions
-            # .ValidationError here, which DRF does not translate, so the
-            # caller gets a 500 rather than the 400 every other date input in
-            # this file returns. Recorded, not changed: this pass comments code.
             expected_date=expected_date,
             notes=(request.data.get('notes') or '').strip(),
+            created_by=request.user,
         )
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Scheduled visit added | {visitor_name} expected {expected_date} | By: {request.user.full_name}")
@@ -5362,17 +5375,65 @@ class ScheduledVisitDetailView(APIView):
 
     def patch(self, request, pk):
         visit = get_object_or_404(ScheduledVisit, pk=pk)
-        # Only is_arrived is honoured. Anything else in the payload — a new
-        # date, a different name — is read and ignored, so a visit is corrected
-        # by deleting it and logging it again rather than by editing it.
+        # Three things can change: archived, the date (a reschedule) and
+        # is_arrived. Anything else in the payload — a different name, a new
+        # plate — is read and ignored; a booking for someone else is a new one.
+
+        # Archive / restore. In place of deleting: the booking stays on record
+        # with who archived it, when, and why, and can be brought back.
+        if 'archived' in request.data:
+            archive = request.data['archived'] in (True, 'true', 'True', '1', 1)
+            if archive and not visit.archived_at:
+                visit.archived_at = timezone.now()
+                visit.archived_by = request.user
+                visit.archive_reason = (request.data.get('archive_reason') or '').strip()[:255]
+                visit.save(update_fields=['archived_at', 'archived_by', 'archive_reason'])
+                audit(request, AuditLog.Action.RECORD_UPDATED,
+                      f"Scheduled visit archived | {visit.visitor_name} (SV-{visit.pk}, {visit.expected_date}) | "
+                      f"Reason: {visit.archive_reason or 'N/A'} | By: {request.user.full_name}")
+            elif not archive and visit.archived_at:
+                visit.archived_at = None
+                visit.archived_by = None
+                visit.archive_reason = ''
+                visit.save(update_fields=['archived_at', 'archived_by', 'archive_reason'])
+                audit(request, AuditLog.Action.RECORD_UPDATED,
+                      f"Scheduled visit restored | {visit.visitor_name} (SV-{visit.pk}, {visit.expected_date}) | "
+                      f"By: {request.user.full_name}")
+
+        # Rescheduling — the visitor cannot make it, or did not come. The same
+        # booking moves, keeping its SV number, so the guard's Expected Today
+        # and the slip carry it on the new day. Not once they have arrived:
+        # that visit happened, and moving it would rewrite when.
+        if 'expected_date' in request.data:
+            if visit.archived_at:
+                return Response({'expected_date': 'This visit is archived. Restore it before rescheduling.'},
+                                status=400)
+            if visit.is_arrived:
+                return Response({'expected_date': 'This visit has already arrived and cannot be rescheduled.'},
+                                status=400)
+            new_date, error = _parse_visit_date(request.data.get('expected_date'))
+            if error:
+                return error
+            if new_date != visit.expected_date:
+                old_date = visit.expected_date
+                visit.expected_date = new_date
+                visit.save(update_fields=['expected_date'])
+                audit(request, AuditLog.Action.RECORD_UPDATED,
+                      f"Scheduled visit rescheduled | {visit.visitor_name} (SV-{visit.pk}) | "
+                      f"{old_date} → {new_date} | By: {request.user.full_name}")
+
+        # Normally the gate ticks a visit off (see vehicles/scheduled_visits.py);
+        # this is the CDSO's hand correction, for someone who came in some way
+        # the gate could not match, or a mistaken tick.
         if 'is_arrived' in request.data:
-            visit.is_arrived = bool(request.data['is_arrived'])
-        # Saved unconditionally, so a PATCH naming nothing still writes the row
-        # back unchanged. And no audit line is written — the only staff write
-        # in this section without one (every Supplier, SupplierPlate, period
-        # and ScheduledVisit endpoint around it audits), so ticking somebody
-        # off as arrived leaves no trace of who did it. Recorded, not changed.
-        visit.save()
+            arrived = request.data['is_arrived'] in (True, 'true', 'True', '1', 1)
+            if arrived != visit.is_arrived:
+                visit.is_arrived = arrived
+                visit.arrived_at = timezone.now() if arrived else None
+                visit.save(update_fields=['is_arrived', 'arrived_at'])
+                audit(request, AuditLog.Action.RECORD_UPDATED,
+                      f"Scheduled visit marked {'arrived' if arrived else 'not arrived'} | "
+                      f"{visit.visitor_name} ({visit.expected_date}) | By: {request.user.full_name}")
         return Response(ScheduledVisitSerializer(visit).data)
 
     def delete(self, request, pk):
@@ -5385,3 +5446,19 @@ class ScheduledVisitDetailView(APIView):
         audit(request, AuditLog.Action.RECORD_DELETED,
               f"Scheduled visit removed | {desc} | By: {request.user.full_name}")
         return Response(status=204)
+
+
+# What the gate reads: today's expected visitors, for the guard's Expected
+# Today panel and the "expected" banner on a scan result.
+class ExpectedVisitsTodayView(APIView):
+    """GET /vehicles/scheduled-visits/today/ — read-only, for gate staff.
+
+    Separate from the CDSO's list rather than a relaxed permission on it: the
+    guard sees today and nothing else, and cannot add, tick or remove."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if getattr(request.user, 'role', None) not in ('admin', 'security'):
+            return Response({'detail': 'Gate staff only.'}, status=403)
+        from .scheduled_visits import expected_today
+        return Response(ScheduledVisitSerializer(expected_today(), many=True).data)

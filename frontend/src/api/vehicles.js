@@ -51,3 +51,5 @@ export const getScheduledVisits    = (upcomingOnly) => api.get('/vehicles/schedu
 export const createScheduledVisit  = (data)     => api.post('/vehicles/scheduled-visits/', data)
 export const patchScheduledVisit   = (id, data) => api.patch(`/vehicles/scheduled-visits/${id}/`, data)
 export const deleteScheduledVisit  = (id)       => api.delete(`/vehicles/scheduled-visits/${id}/`)
+// Today's expected visitors — read-only, for the guard's Expected Today panel
+export const getExpectedVisitsToday = ()       => api.get('/vehicles/scheduled-visits/today/')

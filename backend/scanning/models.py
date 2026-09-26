@@ -95,6 +95,13 @@ class VisitorPass(models.Model):
         Office, on_delete=models.SET_NULL, null=True, blank=True,   # office being visited (optional)
     )
     purpose    = models.TextField(blank=True)
+    # The visit the CDSO scheduled for this person, when the guard checked them
+    # in from Expected Today (or the plate matched one). Printing the slip marks
+    # it arrived; the slip prints its reference.
+    scheduled_visit = models.ForeignKey(
+        'vehicles.ScheduledVisit', on_delete=models.SET_NULL,   # removing the schedule keeps the pass
+        null=True, blank=True, related_name='visitor_passes',
+    )
     status     = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     issued_by  = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL,     # keep the pass if the guard's account is removed

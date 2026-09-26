@@ -1213,6 +1213,23 @@ class ScheduledVisit(models.Model):
     expected_date = models.DateField()
     notes         = models.TextField(blank=True)
     is_arrived    = models.BooleanField(default=False)   # ticked off when they turn up
+    # Set by the gate (scheduled_visits.mark_arrived), not typed: the moment
+    # the entry was logged. Blank on a visit ticked off by hand before this
+    # field existed, or unticked since.
+    arrived_at    = models.DateTimeField(null=True, blank=True)
+    created_by    = models.ForeignKey(               # printed on the gate slip as "Arranged by"
+        'accounts.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+',
+    )
+    # Archived instead of deleted, so a cancelled or abandoned booking stays on
+    # record. An archived visit is off the guard's Expected Today and never
+    # matched at the gate; restoring it clears all three.
+    archived_at    = models.DateTimeField(null=True, blank=True)
+    archived_by    = models.ForeignKey(
+        'accounts.User', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+',
+    )
+    archive_reason = models.CharField(max_length=255, blank=True)
     created_at    = models.DateTimeField(auto_now_add=True)
 
     class Meta:

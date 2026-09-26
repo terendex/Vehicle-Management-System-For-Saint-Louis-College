@@ -175,8 +175,8 @@ export const HELP_FIGURES = {
   },
   "cdso-suppliers": {
     src: img22, width: 1600, height: 1000,
-    title: "Supplier Management",
-    caption: "Management › Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.",
+    title: "Visits and Suppliers",
+    caption: "Management › Visits and Suppliers, Suppliers tab. Supplier vehicles are admitted automatically when their plate is scanned.",
     callouts: [{"n": 1, "label": "Add Supplier", "desc": "Register a supplier company and its plates.", "box": {"x": 87.375, "y": 2.889, "w": 10.819, "h": 5.599}, "badge": {"x": 87.375, "y": 2.889}}, {"n": 2, "label": "Supplier card", "desc": "Company name and how many plates it has registered.", "box": {"x": 19.861, "y": 14.599, "w": 78.333, "h": 9.918}, "badge": {"x": 19.861, "y": 14.599}}, {"n": 3, "label": "Category", "desc": "Delivery, maintenance, vendor, contractor or other.", "box": {"x": 30.256, "y": 19.295, "w": 7.639, "h": 3.556}, "badge": {"x": 30.256, "y": 22.851}}, {"n": 4, "label": "Active", "desc": "Click to deactivate a supplier; its vehicles stop being admitted automatically.", "box": {"x": 84.631, "y": 17.184, "w": 6.688, "h": 4.747}, "badge": {"x": 84.631, "y": 17.184}}],
   },
   "cdso-operations-center": {

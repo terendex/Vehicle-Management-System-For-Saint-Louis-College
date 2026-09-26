@@ -552,3 +552,96 @@
   color: #3E5B72;
 }
 .em-duration-part .em-input { min-width: 0; }
+
+/* ─── Expected Today (scheduled visits) ────────────────────────────
+   The same row shape as Active Visitors beside it. Blue for "expected",
+   since it is notice rather than a warning; arrived rows fade back so the
+   ones still to come stand out. */
+
+.em-expected-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #F4F8FC;
+  border: 1px solid #C9DCEC;
+}
+.em-expected-row.arrived { background: #F7FAFC; border-color: #E1EAF1; opacity: 0.7; }
+
+.em-expected-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.em-expected-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0B2340;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.em-expected-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #2E4C63;
+}
+.em-expected-state.done { color: #0F7A5A; }
+
+.em-expected-checkin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: none;
+  background: #03396C;
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.em-expected-checkin:hover { background: #052C52; }
+
+/* In the scan result, and at the top of the check-in form. */
+.em-expected-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #EAF2F8;
+  border: 1px solid #BDD4E5;
+  color: #084A85;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.em-scheduled-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 11px;
+  margin-bottom: 12px;
+  border-radius: 8px;
+  background: #EAF2F8;
+  border: 1px solid #BDD4E5;
+  color: #084A85;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Scan result: the plate matched no booking, but some are still due. */
+.em-expected-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #084A85;
+}
