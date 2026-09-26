@@ -81,6 +81,8 @@ urlpatterns = [
     path('suppliers/<int:pk>/plates/<int:plate_pk>/', views.SupplierPlateView.as_view(),   name='supplier-plate-delete'),
 
     # Scheduled visits — advance coordination for visitors/suppliers (admin only)
+    path('scheduled-visits/report/excel/', views.ScheduledVisitReportExcelView.as_view(), name='scheduled-visit-report-excel'),
+    path('scheduled-visits/report/pdf/', views.ScheduledVisitReportPdfView.as_view(), name='scheduled-visit-report-pdf'),
     path('scheduled-visits/today/',  views.ExpectedVisitsTodayView.as_view(),     name='scheduled-visit-today'),
     path('scheduled-visits/',        views.ScheduledVisitListCreateView.as_view(), name='scheduled-visit-list'),
     path('scheduled-visits/<int:pk>/', views.ScheduledVisitDetailView.as_view(),   name='scheduled-visit-detail'),

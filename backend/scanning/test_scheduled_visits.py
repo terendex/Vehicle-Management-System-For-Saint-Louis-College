@@ -218,8 +218,9 @@ class ScheduledVisitGateTests(TestCase):
         self.assertEqual(resp.data['archived_by_name'], 'CDSO')
         self.assertEqual(resp.data['archive_reason'], 'Visitor cancelled')
         self.assertTrue(ScheduledVisit.objects.filter(pk=visit.pk).exists())
-        listed = self.client.get('/api/vehicles/scheduled-visits/').data
-        self.assertEqual([v['id'] for v in listed], [visit.pk])   # still on the CDSO's list
+        listed = self.client.get('/api/vehicles/scheduled-visits/', {'status': 'archived'}).data
+        self.assertEqual([v['id'] for v in listed], [visit.pk])   # still on record, under Archived
+        self.assertEqual(self.client.get('/api/vehicles/scheduled-visits/').data, [])   # off the active list
         self.assertTrue(AuditLog.objects.filter(details__contains='Scheduled visit archived').exists())
 
     def test_archived_visit_is_invisible_to_the_gate(self):
@@ -243,3 +244,74 @@ class ScheduledVisitGateTests(TestCase):
         self.assertIsNone(resp.data['archived_at'])
         self.assertEqual(resp.data['archive_reason'], '')
         self.assertEqual(self._reschedule(visit, self.today + timedelta(days=1)).status_code, 200)
+
+
+class ScheduledVisitTableTests(TestCase):
+    """The CDSO table's filters, and the PDF report taken from the same filter."""
+
+    def setUp(self):
+        self.admin = _user('cdso@slc.edu.ph', 'admin')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+        today = timezone.localdate()
+        mk = lambda name, days, **kw: ScheduledVisit.objects.create(
+            visitor_name=name, expected_date=today + timedelta(days=days), created_by=self.admin, **kw)
+        self.today    = mk('TODAY GUEST', 0, category='guest', plate_number='TDY1234')
+        self.later    = mk('LATER CONTRACTOR', 3, category='contractor', purpose='Roof inspection')
+        self.arrived  = mk('ARRIVED GUEST', 0, category='guest', is_arrived=True, arrived_at=timezone.now())
+        self.noshow   = mk('NOSHOW GUEST', -2, category='guest')
+        self.archived = mk('ARCHIVED JOB', 1, category='maintenance', archived_at=timezone.now(),
+                           archived_by=self.admin, archive_reason='Postponed')
+
+    def names(self, **params):
+        resp = self.client.get('/api/vehicles/scheduled-visits/', params)
+        self.assertEqual(resp.status_code, 200)
+        return sorted(v['visitor_name'] for v in resp.data)
+
+    def test_status_tabs(self):
+        self.assertEqual(self.names(), ['ARRIVED GUEST', 'LATER CONTRACTOR', 'NOSHOW GUEST', 'TODAY GUEST'])
+        self.assertEqual(self.names(status='today'), ['TODAY GUEST'])
+        self.assertEqual(self.names(status='upcoming'), ['LATER CONTRACTOR'])
+        self.assertEqual(self.names(status='arrived'), ['ARRIVED GUEST'])
+        self.assertEqual(self.names(status='no_show'), ['NOSHOW GUEST'])
+        self.assertEqual(self.names(status='archived'), ['ARCHIVED JOB'])
+        self.assertEqual(len(self.names(all=1)), 5)
+
+    def test_search_category_and_dates(self):
+        self.assertEqual(self.names(q='roof'), ['LATER CONTRACTOR'])
+        self.assertEqual(self.names(q='tdy 1234'), ['TODAY GUEST'])
+        self.assertEqual(self.names(q=f'SV-{self.noshow.pk}'), ['NOSHOW GUEST'])
+        self.assertEqual(self.names(category='contractor'), ['LATER CONTRACTOR'])
+        today = timezone.localdate()
+        self.assertEqual(self.names(date_from=str(today), date_to=str(today)), ['ARRIVED GUEST', 'TODAY GUEST'])
+        self.assertEqual(len(self.names(date_from='not-a-date')), 4)   # half-typed filter narrows nothing
+
+    def test_pdf_report_follows_the_filter(self):
+        resp = self.client.get('/api/vehicles/scheduled-visits/report/pdf/', {'status': 'no_show'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp['Content-Type'], 'application/pdf')
+        body = b''.join(resp.streaming_content) if resp.streaming else resp.content
+        self.assertTrue(body.startswith(b'%PDF'))
+
+    def test_pdf_rows_match_the_table(self):
+        with patch('report_utils.branded_pdf_response') as build:
+            from django.http import HttpResponse
+            build.return_value = HttpResponse(b'%PDF')
+            self.client.get('/api/vehicles/scheduled-visits/report/pdf/', {'status': 'archived'})
+        kw = build.call_args.kwargs
+        self.assertEqual(len(kw['rows']), 1)
+        self.assertEqual(kw['rows'][0][1], f'SV-{self.archived.pk}')
+        self.assertEqual(kw['rows'][0][7], 'Archived — Postponed')
+        self.assertIn('Status: Archived', kw['subtitle'])
+        self.assertEqual(sum(kw['col_widths_mm']), 267)
+        self.assertEqual(len(kw['col_widths_mm']), len(kw['headers']))
+
+    def test_excel_report_follows_the_filter(self):
+        resp = self.client.get('/api/vehicles/scheduled-visits/report/excel/', {'status': 'upcoming'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('spreadsheetml', resp['Content-Type'])
+
+    def test_guard_cannot_download_report(self):
+        guard = _user('guard@slc.edu.ph', 'security')
+        self.client.force_authenticate(user=guard)
+        self.assertEqual(self.client.get('/api/vehicles/scheduled-visits/report/pdf/').status_code, 403)

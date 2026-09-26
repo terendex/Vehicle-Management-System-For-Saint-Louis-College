@@ -47,9 +47,14 @@ export const deleteSupplier  = (id)         => api.delete(`/vehicles/suppliers/$
 export const addSupplierPlate    = (id, data) => api.post(`/vehicles/suppliers/${id}/plates/`, data)
 export const deleteSupplierPlate = (id, plateId) => api.delete(`/vehicles/suppliers/${id}/plates/${plateId}/`)
 
-export const getScheduledVisits    = (upcomingOnly) => api.get('/vehicles/scheduled-visits/', { params: upcomingOnly ? { upcoming: 1 } : {} })
+// params: status (today|upcoming|arrived|no_show|archived), q, category,
+// date_from, date_to — the same filter the report takes. { all: 1 } for counts.
+export const getScheduledVisits    = (params = {}) => api.get('/vehicles/scheduled-visits/', { params })
 export const createScheduledVisit  = (data)     => api.post('/vehicles/scheduled-visits/', data)
 export const patchScheduledVisit   = (id, data) => api.patch(`/vehicles/scheduled-visits/${id}/`, data)
 export const deleteScheduledVisit  = (id)       => api.delete(`/vehicles/scheduled-visits/${id}/`)
 // Today's expected visitors — read-only, for the guard's Expected Today panel
 export const getExpectedVisitsToday = ()       => api.get('/vehicles/scheduled-visits/today/')
+// Branded Scheduled Visits report (format: 'pdf' | 'excel'), same params as the table
+export const exportScheduledVisitsReport = (format, params = {}) =>
+  api.get(`/vehicles/scheduled-visits/report/${format}/`, { params, responseType: 'blob' }).then(r => r.data)

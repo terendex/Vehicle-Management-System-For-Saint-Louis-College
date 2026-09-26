@@ -26,7 +26,9 @@ import './ReportExportBar.css'
 // only, so a table showing rows could hand back an empty report and read as
 // the export being broken. Optional: a screen that does not pass it behaves
 // exactly as before.
-export default function ReportExportBar({ label = 'Report', fetchBlob, extraReports = [], filters = {}, activeFilterSummary = '', onRangeChange, recordCount }) {
+// `allowFuture` lifts the "no later than today" cap on both boxes, for a
+// report on things that have not happened yet (scheduled visits).
+export default function ReportExportBar({ label = 'Report', fetchBlob, extraReports = [], filters = {}, activeFilterSummary = '', onRangeChange, recordCount, allowFuture = false }) {
   const [from, setFrom] = useState('')
   const [to, setTo]     = useState('')
   const [busy, setBusy] = useState(null) // 'pdf' | 'excel' | null
@@ -106,7 +108,7 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
           type="date"
           className="report-bar-date"
           value={from}
-          max={to || today}
+          max={to || (allowFuture ? undefined : today)}
           onChange={(e) => {
             const v = e.target.value
             const nextTo = (v && to && v > to) ? v : to
@@ -123,7 +125,7 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
           className="report-bar-date"
           value={to}
           min={from || undefined}
-          max={today}
+          max={allowFuture ? undefined : today}
           onChange={(e) => {
             const v = e.target.value
             const nextFrom = (v && from && v < from) ? v : from

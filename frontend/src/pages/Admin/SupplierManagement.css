@@ -701,55 +701,93 @@
 
 .sp-panel[hidden] { display: none; }
 
-/* ── Scheduled visit states ──────────────────────────────────── */
+/* ── Scheduled Visits table ──────────────────────────────────────
+   Built from User Management's table (UserManagement.css); what follows is
+   only what that page does not have. */
 
+.sv-stats { margin-bottom: 16px; }
+.um-stat-icon.sv-stat-today    { background: #EAF2F8; color: #084A85; }
+.um-stat-icon.sv-stat-upcoming { background: #F1EEFB; color: #5B3FA8; }
+.um-stat-icon.sv-stat-arrived  { background: #E6F5EF; color: #0F7A5A; }
+.um-stat-icon.sv-stat-noshow   { background: #FDF6DC; color: #8A6B00; }
+
+.sv-tab-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #E4EDF4;
+  color: #4A6B85;
+  font-size: 11px;
+  font-weight: 700;
+}
+.um-role-tab.active .sv-tab-count { background: #03396C; color: #FFFFFF; }
+
+.sv-ref {
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5C7B92;
+  white-space: nowrap;
+}
+.sv-name  { display: block; font-weight: 600; color: #0B2340; }
+.sv-sub   { display: block; margin-top: 2px; font-size: 11px; color: #6B8CA6; }
+.sv-plate {
+  font-family: ui-monospace, 'Courier New', monospace;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.sv-muted   { color: #9DB3C4; }
+.sv-purpose { max-width: 260px; }
+
+/* What already happened steps back so what is still to come reads first. */
+.sv-row--arrived td,
+.sv-row--archived td { color: #5C7B92; }
+
+.sv-actions { display: flex; gap: 6px; }
+.sv-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 8px;
+  border: 1px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #3E5B72;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.sv-icon-btn:hover { background: #EEF4F9; border-color: #BDD4E5; color: #03396C; }
+.sv-icon-btn--on   { background: #E6F5EF; border-color: #B5E0CD; color: #0F7A5A; }
+.sv-icon-btn--text { padding: 0 10px; }
+
+/* Status badges — shared by the table cells. */
 .sp-visit-badge {
+  display: inline-block;
   font-size: 0.7rem;
   font-weight: 700;
   border-radius: 20px;
   padding: 1px 8px;
   white-space: nowrap;
 }
-.sp-visit-badge--today   { color: #084A85; background: #EAF2F8; border: 1px solid #BDD4E5; }
-.sp-visit-badge--arrived { color: #0F7A5A; background: #E8F6F0; border: 1px solid #B5E0CD; }
-.sp-visit-badge--noshow  { color: #8A6B00; background: #FDF6DC; border: 1px solid #F0D9A0; }
-
-/* What already happened steps back so what is still to come reads first. */
-.sp-visit--arrived,
-.sp-visit--no_show { opacity: 0.72; }
-
+.sp-visit-badge--today    { color: #084A85; background: #EAF2F8; border: 1px solid #BDD4E5; }
+.sp-visit-badge--upcoming { color: #5B3FA8; background: #F1EEFB; border: 1px solid #D6CCF2; }
+.sp-visit-badge--arrived  { color: #0F7A5A; background: #E8F6F0; border: 1px solid #B5E0CD; }
+.sp-visit-badge--noshow   { color: #8A6B00; background: #FDF6DC; border: 1px solid #F0D9A0; }
 .sp-visit-badge--archived { color: #4A6B85; background: #EEF4F9; border: 1px solid #D3E1EC; }
-.sp-visit--archived { opacity: 0.8; }
 
-/* Active / Archived switch above the visit list. */
-.sp-visit-views {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
+/* Schedule Visit dialog: two fields to a row where they are short. */
+.sv-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 520px) {
+  .sv-form-row { grid-template-columns: 1fr; }
 }
-.sp-visit-view {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid #D3E1EC;
-  background: #FFFFFF;
-  color: #4A6B85;
-  font-size: 0.8rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-}
-.sp-visit-view:hover:not(.sp-visit-view--on) { background: #F4F8FB; color: #0B2340; }
-.sp-visit-view--on { background: #03396C; border-color: #03396C; color: #FFFFFF; }
-.sp-visit-view-count {
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: rgba(3, 57, 108, 0.08);
-}
-.sp-visit-view--on .sp-visit-view-count { background: rgba(255, 255, 255, 0.2); }
 
+/* Reschedule / Archive dialog. */
 .sp-visit-modal .sp-modal-form { display: flex; flex-direction: column; gap: 14px; }

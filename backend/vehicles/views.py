@@ -5316,23 +5316,115 @@ def _parse_visit_date(value):
     return parsed, None
 
 
+# Where a visit stands. The same words the CDSO table's tabs use, decided here
+# once so the table and the PDF report can never file a visit differently.
+VISIT_STATUS_LABELS = {
+    'today':    'Expected today',
+    'upcoming': 'Upcoming',
+    'arrived':  'Arrived',
+    'no_show':  'No-show',
+    'archived': 'Archived',
+}
+
+
+def _visit_status(visit, today):
+    if visit.archived_at:
+        return 'archived'
+    if visit.is_arrived:
+        return 'arrived'
+    if visit.expected_date < today:
+        return 'no_show'
+    return 'today' if visit.expected_date == today else 'upcoming'
+
+
+def _filter_scheduled_visits(request):
+    """The CDSO's Scheduled Visits filters, applied in one place for the table
+    and its PDF report. Returns (queryset, [human description of each filter]).
+
+      status     today | upcoming | arrived | no_show | archived; blank = every
+                 visit that is not archived (archived ones have their own tab)
+      q          visitor, plate, purpose, supplier, or an SV-number
+      category   one ScheduledVisit.Category value
+      date_from, date_to   on the expected date, inclusive
+    """
+    from datetime import datetime as _dt
+    params = request.query_params
+    today = timezone.localdate()
+    qs = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by')
+    desc = []
+
+    status_f = (params.get('status') or '').strip()
+    if status_f == 'archived':
+        qs = qs.filter(archived_at__isnull=False)
+    else:
+        qs = qs.filter(archived_at__isnull=True)
+        if status_f == 'arrived':
+            qs = qs.filter(is_arrived=True)
+        elif status_f == 'today':
+            qs = qs.filter(is_arrived=False, expected_date=today)
+        elif status_f == 'upcoming':
+            qs = qs.filter(is_arrived=False, expected_date__gt=today)
+        elif status_f == 'no_show':
+            qs = qs.filter(is_arrived=False, expected_date__lt=today)
+    if status_f in VISIT_STATUS_LABELS:
+        desc.append(f"Status: {VISIT_STATUS_LABELS[status_f]}")
+
+    category = (params.get('category') or '').strip()
+    if category in ScheduledVisit.Category.values:
+        qs = qs.filter(category=category)
+        desc.append(f"Category: {ScheduledVisit.Category(category).label}")
+
+    # Unparseable dates are ignored rather than refused: a filter box half
+    # typed should narrow nothing, not break the table.
+    bounds = {}
+    for key in ('date_from', 'date_to'):
+        try:
+            bounds[key] = _dt.strptime(params.get(key) or '', '%Y-%m-%d').date()
+        except ValueError:
+            pass
+    if 'date_from' in bounds:
+        qs = qs.filter(expected_date__gte=bounds['date_from'])
+    if 'date_to' in bounds:
+        qs = qs.filter(expected_date__lte=bounds['date_to'])
+    if bounds:
+        desc.append(f"Expected: {bounds.get('date_from', 'any date')} to {bounds.get('date_to', 'any date')}")
+
+    q = (params.get('q') or '').strip()
+    if q:
+        match = (Q(visitor_name__icontains=q) | Q(purpose__icontains=q)
+                 | Q(supplier__company_name__icontains=q))
+        plate = _normalize_plate(q)
+        if plate:
+            match |= Q(plate_number__icontains=plate)
+        ref = q.upper().removeprefix('SV-').removeprefix('SV')
+        if ref.isdigit():
+            match |= Q(pk=int(ref))
+        qs = qs.filter(match)
+        desc.append(f"Search: '{q}'")
+
+    # Newest date first, like every other log in the system; the guard's panel
+    # has its own order.
+    return qs.order_by('-expected_date', 'visitor_name'), desc
+
+
 class ScheduledVisitListCreateView(APIView):
     """Advance coordination for visitors/suppliers — lets CDSO log who is
     expected on a given day, before they show up at the gate."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
-        visits = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by').all()   # the names render on every row, so join them in
-        # Any truthy value turns the filter on — the caller is the CDSO screen
-        # sending `?upcoming=1`, so the parameter's value is never inspected.
-        upcoming_only = request.query_params.get('upcoming')
-        if upcoming_only:
-            # Two conditions, because "upcoming" means both: still to come, and
-            # not already ticked off. Someone expected today who has not turned
-            # up yet is still upcoming, which is why it is >= and not >.
-            visits = visits.filter(expected_date__gte=timezone.localdate(), is_arrived=False,
-                                   archived_at__isnull=True)
-        return Response(ScheduledVisitSerializer(visits, many=True).data)   # soonest first, from the model's ordering
+        # Any truthy value turns the filter on. Kept for older callers; the
+        # CDSO table sends status= instead.
+        if request.query_params.get('upcoming'):
+            visits = (ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by')
+                      .filter(expected_date__gte=timezone.localdate(), is_arrived=False,
+                              archived_at__isnull=True))
+        elif request.query_params.get('all'):
+            # Everything, archived included — what the tab counts are taken from.
+            visits = ScheduledVisit.objects.select_related('supplier', 'created_by', 'archived_by').all()
+        else:
+            visits, _ = _filter_scheduled_visits(request)
+        return Response(ScheduledVisitSerializer(visits, many=True).data)
 
     def post(self, request):
         visitor_name = (request.data.get('visitor_name') or '').strip()
@@ -5462,3 +5554,82 @@ class ExpectedVisitsTodayView(APIView):
             return Response({'detail': 'Gate staff only.'}, status=403)
         from .scheduled_visits import expected_today
         return Response(ScheduledVisitSerializer(expected_today(), many=True).data)
+
+
+# The CDSO's Scheduled Visits table, printed. Same filters, same order, so the
+# report is exactly the rows on screen.
+SCHEDULED_VISIT_REPORT_HEADERS = ['#', 'Ref', 'Visitor', 'Category', 'Expected', 'Plate',
+                                  'Purpose', 'Status', 'Arrived', 'Arranged by']
+
+
+def _scheduled_visit_report(request):
+    """(rows, subtitle) for both report formats, from the table's own filter."""
+    qs, desc = _filter_scheduled_visits(request)
+    today = timezone.localdate()
+    cat_labels = dict(ScheduledVisit.Category.choices)
+    rows = []
+    for i, v in enumerate(qs[:5000], start=1):
+        status_key = _visit_status(v, today)
+        status = VISIT_STATUS_LABELS[status_key]
+        if status_key == 'archived' and v.archive_reason:
+            status = f"Archived — {v.archive_reason}"
+        pass_ = v.visitor_passes.order_by('-pk').first()
+        arrived = '—'
+        if v.is_arrived:
+            arrived = (timezone.localtime(v.arrived_at).strftime('%b %d, %I:%M %p')
+                       if v.arrived_at else 'Yes')
+            if pass_:
+                arrived += f" · VP-{pass_.pk}"
+        rows.append([
+            i,
+            f"SV-{v.pk}",
+            v.visitor_name + (f" ({v.supplier.company_name})" if v.supplier and
+                              v.supplier.company_name != v.visitor_name else ''),
+            cat_labels.get(v.category, v.category),
+            v.expected_date.strftime('%b %d, %Y'),
+            v.plate_number or '—',
+            v.purpose or '—',
+            status,
+            arrived,
+            v.created_by.full_name if v.created_by else '—',
+        ])
+    return rows, ('; '.join(desc) if desc else 'All active visits') + f" · {len(rows)} entries"
+
+
+class ScheduledVisitReportPdfView(APIView):
+    """Download the (filtered) scheduled visits as a branded PDF report — admin only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from report_utils import branded_pdf_response, report_filename
+        rows, subtitle = _scheduled_visit_report(request)
+        return branded_pdf_response(
+            filename=report_filename('Scheduled Visits Report', 'pdf'),
+            report_title='Scheduled Visits Report',
+            subtitle=subtitle,
+            generated_by=getattr(request.user, 'full_name', ''),
+            generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),
+            headers=SCHEDULED_VISIT_REPORT_HEADERS,
+            rows=rows,
+            # Millimetres, summing to the 267 available on A4 landscape.
+            col_widths_mm=[9, 16, 40, 24, 25, 21, 43, 28, 30, 31],
+        )
+
+
+class ScheduledVisitReportExcelView(APIView):
+    """The same report as a branded Excel sheet — admin only."""
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from report_utils import branded_excel_response, report_filename
+        rows, subtitle = _scheduled_visit_report(request)
+        return branded_excel_response(
+            filename=report_filename('Scheduled Visits Report', 'xlsx'),
+            sheet_title='Scheduled Visits',
+            report_title='Scheduled Visits Report',
+            subtitle=(f"Generated {timezone.localtime().strftime('%B %d, %Y %I:%M %p')} "
+                      f"by {getattr(request.user, 'full_name', '')} · {subtitle}"),
+            headers=SCHEDULED_VISIT_REPORT_HEADERS,
+            rows=rows,
+            col_widths=[5, 10, 30, 16, 14, 12, 34, 22, 22, 20],
+        )

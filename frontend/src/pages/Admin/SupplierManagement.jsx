@@ -3,20 +3,24 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
-  Printer, Monitor, CalendarDays, Archive, ArchiveRestore,
+  Printer, Monitor, CalendarDays, Archive, ArchiveRestore, Search, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
 import PageTabs from '../../components/Tabs/PageTabs'
+import ReportExportBar from '../../components/ReportExportBar'
 import { lookupSlip, printSlipOnServer } from '../../api/scanning'
 import { printSlipInBrowser } from '../../utils/slipPrint'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import {
   getSuppliers, createSupplier, patchSupplier, deleteSupplier,
   addSupplierPlate, deleteSupplierPlate,
-  getScheduledVisits, createScheduledVisit, patchScheduledVisit,
+  getScheduledVisits, createScheduledVisit, patchScheduledVisit, exportScheduledVisitsReport,
 } from '../../api/vehicles'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
+// The Scheduled Visits table is User Management's table (stats, tabs, toolbar,
+// pager), so it takes that page's styles rather than a copy of them.
+import './UserManagement.css'
 import './SupplierManagement.css'
 
 const SUPPLIER_CATEGORIES = [
@@ -610,27 +614,24 @@ function VisitActionModal({ visit, mode, onClose, onSaved }) {
 
 const EMPTY_VISIT = { visitor_name: '', category: 'guest', supplier: '', plate_number: '', purpose: '', expected_date: '', notes: '' }
 
-function ScheduledVisitsSection({ suppliers }) {
-  const [visits, setVisits]   = useState([])
-  const [loading, setLoading] = useState(true)
-  const [form, setForm]       = useState(EMPTY_VISIT)
-  const [saving, setSaving]   = useState(false)
-  const [view, setView]       = useState('active')   // 'active' | 'archived'
-  const [action, setAction]   = useState(null)       // { visit, mode: 'reschedule' | 'archive' }
+// Booking a visit — opened from the page header's Schedule Visit button, the
+// way User Management opens Add User, so the table below keeps the page.
+function ScheduleVisitModal({ suppliers, onClose, onCreated }) {
+  const today = localToday()
+  const [form, setForm]     = useState(EMPTY_VISIT)
+  const [saving, setSaving] = useState(false)
+  const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }))
 
-  const load = () => {
-    getScheduledVisits()
-      .then(({ data }) => setVisits(data))
-      .catch(() => toast.error('Failed to load scheduled visits.'))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => { load() }, [])
-  useLiveUpdates(load, ['scheduledvisit'])
-
-  const handleAdd = async (e) => {
+  const submit = async (e) => {
     e.preventDefault()
-    if (!form.visitor_name.trim() || !form.expected_date) return
+    const problems = []
+    if (!form.visitor_name.trim()) problems.push("Enter the visitor's or company's name.")
+    if (!form.expected_date) problems.push('Pick the expected date.')
+    else if (form.expected_date < today) problems.push('The expected date cannot be in the past.')
+    if (form.plate_number.trim() && !isValidPlateNumber(form.plate_number)) {
+      problems.push('The plate should look like ABC 1234, or be left blank.')
+    }
+    if (await notify.validation(problems, { title: 'Visit not scheduled' })) return
     setSaving(true)
     try {
       const { data } = await createScheduledVisit({
@@ -638,27 +639,146 @@ function ScheduledVisitsSection({ suppliers }) {
         plate_number: formatPlateNumber(form.plate_number.trim()),
         supplier: form.supplier || null,
       })
-      setVisits(prev => [...prev, data].sort((a, b) => a.expected_date.localeCompare(b.expected_date)))
-      setForm(EMPTY_VISIT)
-      toast.success('Visit scheduled.')
+      toast.success(`${data.visitor_name} scheduled for ${data.expected_date}.`)
+      onCreated(data)
+      onClose()
     } catch (err) {
       const msg = err.response?.data
         ? Object.values(err.response.data).flat().join(' ')
-        : 'Failed to schedule visit.'
+        : 'Failed to schedule the visit.'
       toast.error(msg)
     } finally {
       setSaving(false)
     }
   }
 
-  const replaceVisit = (data) => setVisits(prev => prev.map(v => v.id === data.id ? data : v))
+  return (
+    <div className="sp-overlay" onClick={onClose}>
+      <div className="sp-modal" onClick={e => e.stopPropagation()}>
+        <div className="sp-modal-head">
+          <h2 className="sp-modal-title">Schedule Visit</h2>
+          <button className="sp-modal-close" onClick={onClose}><X size={16} /></button>
+        </div>
+        <form onSubmit={submit} className="sp-modal-form" noValidate>
+          <div className="sp-field">
+            <label className="sp-label">Name</label>
+            <input className="sp-text-input" value={form.visitor_name} onChange={set('visitor_name')}
+              placeholder="Visitor / company name" maxLength={200} autoFocus />
+          </div>
+          <div className="sv-form-row">
+            <div className="sp-field">
+              <label className="sp-label">Category</label>
+              <select className="sp-text-input" value={form.category} onChange={set('category')}>
+                {VISIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+            <div className="sp-field">
+              <label className="sp-label">Expected Date</label>
+              <input className="sp-text-input" type="date" min={today} value={form.expected_date} onChange={set('expected_date')} />
+            </div>
+          </div>
+          <div className="sv-form-row">
+            <div className="sp-field">
+              <label className="sp-label">Plate <span className="sp-label-optional">(optional)</span></label>
+              <input className="sp-text-input" value={form.plate_number} placeholder="e.g. ABC 1234" maxLength={20}
+                onChange={e => setForm(f => ({ ...f, plate_number: formatPlateNumber(e.target.value) }))} />
+            </div>
+            <div className="sp-field">
+              <label className="sp-label">Linked Supplier <span className="sp-label-optional">(optional)</span></label>
+              <select className="sp-text-input" value={form.supplier} onChange={set('supplier')}>
+                <option value="">— None —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.company_name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="sp-field">
+            <label className="sp-label">Purpose <span className="sp-label-optional">(optional)</span></label>
+            <input className="sp-text-input" value={form.purpose} onChange={set('purpose')}
+              placeholder="e.g. Quarterly AC maintenance" maxLength={255} />
+          </div>
+          <span className="sp-field-hint">
+            Gate staff see this visit in Expected Today on its date. No plate yet? The guard records it at check-in.
+          </span>
+          <div className="sp-modal-actions">
+            <button type="button" className="sp-btn sp-btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="sp-btn sp-btn-primary" disabled={saving}>
+              {saving ? <Loader2 size={14} className="sp-spinner" /> : <Plus size={14} />} Schedule
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// The table's status tabs. The keys are the server's `status` filter, so the
+// table, the tab counts and the PDF report all mean the same thing by each.
+const VISIT_TABS = [
+  { key: '',         label: 'All' },
+  { key: 'today',    label: 'Expected Today' },
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'arrived',  label: 'Arrived' },
+  { key: 'no_show',  label: 'No-show' },
+  { key: 'archived', label: 'Archived' },
+]
+const VISIT_STATE_LABEL = {
+  today: 'Expected today', upcoming: 'Upcoming', arrived: 'Arrived', no_show: 'No-show', archived: 'Archived',
+}
+const VISITS_PER_PAGE = 10
+
+const fmtDate = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
+  const [rows, setRows]         = useState([])   // the filtered table
+  const [all, setAll]           = useState([])   // everything, for the stats and tab counts
+  const [loading, setLoading]   = useState(true)
+  const [status, setStatus]     = useState('')
+  const [search, setSearch]     = useState('')
+  const [category, setCategory] = useState('')
+  const [range, setRange]       = useState({ from: '', to: '' })
+  const [page, setPage]         = useState(1)
+  const [action, setAction]     = useState(null)  // { visit, mode: 'reschedule' | 'archive' }
+
+  // Everything that narrows the table, as the server takes it. The report bar
+  // adds its own date range on top, so it is left out of `filters`.
+  const filters = {}
+  if (status) filters.status = status
+  if (search.trim()) filters.q = search.trim()
+  if (category) filters.category = category
+  const params = { ...filters }
+  if (range.from) params.date_from = range.from
+  if (range.to)   params.date_to   = range.to
+  const paramsKey = JSON.stringify(params)
+
+  const loadRows = () =>
+    getScheduledVisits(params)
+      .then(({ data }) => setRows(data))
+      .catch(() => toast.error('Failed to load scheduled visits.'))
+      .finally(() => setLoading(false))
+  const loadAll = () =>
+    getScheduledVisits({ all: 1 }).then(({ data }) => setAll(data)).catch(() => {})
+  const reload = () => { loadRows(); loadAll() }
+
+  // Debounced, so typing a name is one request rather than one per key.
+  useEffect(() => {
+    const t = setTimeout(loadRows, 250)
+    return () => clearTimeout(t)
+  }, [paramsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadAll() }, [])
+  useLiveUpdates(reload, ['scheduledvisit', 'visitorpass'])
+
+  // Any filter change starts back on page 1.
+  const narrow = (setter) => (value) => { setter(value); setPage(1) }
 
   const toggleArrived = async (visit) => {
     try {
-      const { data } = await patchScheduledVisit(visit.id, { is_arrived: !visit.is_arrived })
-      replaceVisit(data)
+      await patchScheduledVisit(visit.id, { is_arrived: !visit.is_arrived })
+      reload()
     } catch {
-      toast.error('Failed to update visit.')
+      toast.error('Failed to update the visit.')
     }
   }
 
@@ -666,164 +786,213 @@ function ScheduledVisitsSection({ suppliers }) {
   // record under Archived, and comes back with Restore.
   const restore = async (visit) => {
     try {
-      replaceVisit((await patchScheduledVisit(visit.id, { archived: false })).data)
+      await patchScheduledVisit(visit.id, { archived: false })
       toast.success(`${visit.visitor_name} restored.`)
+      reload()
     } catch {
       toast.error('Failed to restore the visit.')
     }
   }
 
   const today = localToday()
-  const archived = visits.filter(v => v.archived_at)
-    .sort((a, b) => b.archived_at.localeCompare(a.archived_at))
-  const active   = visits.filter(v => !v.archived_at)
-  // Still to come first (today, then later), then what already happened.
-  const upcoming = active.filter(v => ['today', 'upcoming'].includes(visitState(v, today)))
-  const past     = active.filter(v => ['arrived', 'no_show'].includes(visitState(v, today)))
-    .sort((a, b) => b.expected_date.localeCompare(a.expected_date))
-  const shown    = view === 'archived' ? archived : [...upcoming, ...past]
+  const counts = { '': 0, today: 0, upcoming: 0, arrived: 0, no_show: 0, archived: 0 }
+  all.forEach(v => {
+    const st = visitState(v, today)
+    counts[st] += 1
+    if (st !== 'archived') counts[''] += 1
+  })
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / VISITS_PER_PAGE))
+  const current    = Math.min(page, totalPages)
+  const shown      = rows.slice((current - 1) * VISITS_PER_PAGE, current * VISITS_PER_PAGE)
+
+  const tabLabel = VISIT_TABS.find(t => t.key === status)?.label
+  const reportSummary = [
+    status && tabLabel,
+    category && categoryLabel(VISIT_CATEGORIES, category),
+    search.trim() && `“${search.trim()}”`,
+  ].filter(Boolean).join(' · ')
 
   return (
     <>
-      <form onSubmit={handleAdd} className="sp-modal-form" noValidate style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
-        <div className="sp-field">
-          <label className="sp-label">Name</label>
-          <input className="sp-text-input" value={form.visitor_name} onChange={e => setForm(f => ({ ...f, visitor_name: e.target.value }))} placeholder="Visitor / company name" required />
+      <div className="um-stats-bar sv-stats">
+        <div className="um-stat-card">
+          <div className="um-stat-icon sv-stat-today"><CalendarClock size={20} /></div>
+          <div className="um-stat-info"><h4>Expected Today</h4><span>{counts.today}</span></div>
         </div>
-        <div className="sp-field">
-          <label className="sp-label">Category</label>
-          <select className="sp-text-input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-            {VISIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
+        <div className="um-stat-card">
+          <div className="um-stat-icon sv-stat-upcoming"><CalendarDays size={20} /></div>
+          <div className="um-stat-info"><h4>Upcoming</h4><span>{counts.upcoming}</span></div>
         </div>
-        <div className="sp-field">
-          <label className="sp-label">Linked Supplier <span className="sp-label-optional">(optional)</span></label>
-          <select className="sp-text-input" value={form.supplier} onChange={e => setForm(f => ({ ...f, supplier: e.target.value }))}>
-            <option value="">— None —</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.company_name}</option>)}
-          </select>
+        <div className="um-stat-card">
+          <div className="um-stat-icon sv-stat-arrived"><Check size={20} /></div>
+          <div className="um-stat-info"><h4>Arrived</h4><span>{counts.arrived}</span></div>
         </div>
-        <div className="sp-field">
-          <label className="sp-label">Expected Date</label>
-          <input className="sp-text-input" type="date" min={today} value={form.expected_date} onChange={e => setForm(f => ({ ...f, expected_date: e.target.value }))} required />
+        <div className="um-stat-card">
+          <div className="um-stat-icon sv-stat-noshow"><AlertTriangle size={20} /></div>
+          <div className="um-stat-info"><h4>No-show</h4><span>{counts.no_show}</span></div>
         </div>
-        <div className="sp-field">
-          <label className="sp-label">Plate <span className="sp-label-optional">(optional)</span></label>
-          <input className="sp-text-input" value={form.plate_number} onChange={e => setForm(f => ({ ...f, plate_number: e.target.value }))} placeholder="e.g. AAA 0000" />
-        </div>
-        <div className="sp-field" style={{ gridColumn: 'span 2' }}>
-          <label className="sp-label">Purpose <span className="sp-label-optional">(optional)</span></label>
-          <input className="sp-text-input" value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))} placeholder="e.g. Quarterly AC maintenance" />
-        </div>
-        <div className="sp-field" style={{ alignSelf: 'end' }}>
-          <button type="submit" className="sp-btn sp-btn-primary" disabled={saving}>
-            {saving ? <Loader2 size={14} className="sp-spinner" /> : <Plus size={14} />}
-            Schedule
-          </button>
-        </div>
-      </form>
+      </div>
 
-      {loading ? (
-        <div className="sp-loading"><Loader2 size={24} className="sp-spinner" /><span>Loading scheduled visits…</span></div>
-      ) : (
-        <>
-        <div className="sp-visit-views" role="tablist" aria-label="Scheduled visit views">
-          <button type="button" role="tab" aria-selected={view === 'active'}
-            className={`sp-visit-view${view === 'active' ? ' sp-visit-view--on' : ''}`} onClick={() => setView('active')}>
-            Active <span className="sp-visit-view-count">{active.length}</span>
-          </button>
-          <button type="button" role="tab" aria-selected={view === 'archived'}
-            className={`sp-visit-view${view === 'archived' ? ' sp-visit-view--on' : ''}`} onClick={() => setView('archived')}>
-            <Archive size={13} /> Archived <span className="sp-visit-view-count">{archived.length}</span>
-          </button>
+      <ReportExportBar
+        label="Scheduled Visits Report"
+        filters={filters}
+        activeFilterSummary={reportSummary}
+        fetchBlob={exportScheduledVisitsReport}
+        onRangeChange={narrow(setRange)}
+        recordCount={rows.length}
+        allowFuture
+      />
+
+      <div className="um-table-container">
+        <div className="um-role-tabs">
+          {VISIT_TABS.map(t => (
+            <button key={t.key || 'all'} className={`um-role-tab ${status === t.key ? 'active' : ''}`}
+              onClick={() => narrow(setStatus)(t.key)}>
+              {t.key === 'archived' && <Archive size={13} style={{ marginRight: 4, verticalAlign: -2 }} />}
+              {t.label}
+              <span className="sv-tab-count">{counts[t.key]}</span>
+            </button>
+          ))}
         </div>
-        {shown.length === 0 ? (
-        <div className="sp-empty-state">
-          <CalendarClock size={36} className="sp-empty-icon" />
-          <p>{view === 'archived' ? 'No archived visits.' : 'No visits scheduled yet.'}</p>
+
+        <div className="um-table-toolbar">
+          <div className="um-search-wrapper">
+            <Search size={16} />
+            <input className="um-search-input" type="text" value={search}
+              placeholder="Search by name, plate, purpose, supplier or SV number…"
+              onChange={e => narrow(setSearch)(e.target.value)} />
+          </div>
+          <div className="um-filter-group">
+            <select className="um-form-select" value={category} onChange={e => narrow(setCategory)(e.target.value)}>
+              <option value="">All Categories</option>
+              {VISIT_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
         </div>
+
+        {loading ? (
+          <div className="um-loading"><div className="um-spinner" /><p>Loading scheduled visits…</p></div>
+        ) : rows.length === 0 ? (
+          <div className="um-empty">
+            <CalendarClock size={48} />
+            <h3>{status === 'archived' ? 'No archived visits' : 'No visits found'}</h3>
+            <p>
+              {search || category || status || range.from || range.to
+                ? 'Try a different filter.'
+                : 'Click "Schedule Visit" to book the first one.'}
+            </p>
+          </div>
         ) : (
-        <div className="sp-list">
-          {shown.map(v => {
-            const state = visitState(v, today)
-            return (
-            <div key={v.id} className={`sp-card sp-visit sp-visit--${state}`}>
-              <div className="sp-card-head">
-                <div className="sp-card-meta">
-                  <div className="sp-card-name-row">
-                    <CalendarClock size={16} className="sp-card-icon" />
-                    <span className="sp-card-name">{v.visitor_name}</span>
-                    {state === 'today' && <span className="sp-visit-badge sp-visit-badge--today">Expected today</span>}
-                    {state === 'arrived' && (
-                      <span className="sp-visit-badge sp-visit-badge--arrived">
-                        Arrived{v.arrived_at && ` ${fmtArrival(v.arrived_at)}`}{v.pass_reference && ` · ${v.pass_reference}`}
-                      </span>
-                    )}
-                    {state === 'no_show' && <span className="sp-visit-badge sp-visit-badge--noshow">No-show</span>}
-                    {state === 'archived' && (
-                      <span className="sp-visit-badge sp-visit-badge--archived">
-                        {v.is_arrived ? 'Arrived · archived' : 'Archived'}
-                      </span>
-                    )}
-                  </div>
-                  <div className="sp-card-sub">
-                    {categoryLabel(VISIT_CATEGORIES, v.category)} · Expected {v.expected_date}
-                    {v.supplier_name && <> · {v.supplier_name}</>}
-                    {v.plate_number && <> · {formatPlateNumber(v.plate_number)}</>}
-                    {v.purpose && <> · {v.purpose}</>}
-                    {v.auto_admit && <> · admitted on plate scan</>}
-                    {v.created_by_name && <> · by {v.created_by_name}</>}
-                  </div>
-                  {state === 'archived' && (
-                    <div className="sp-card-sub">
-                      Archived {new Date(v.archived_at).toLocaleDateString()}
-                      {v.archived_by_name && <> by {v.archived_by_name}</>}
-                      {v.archive_reason && <> — {v.archive_reason}</>}
-                    </div>
-                  )}
-                </div>
-                <div className="sp-card-actions">
-                  {state === 'archived' ? (
-                    <button className="sp-status-btn" onClick={() => restore(v)} title="Put it back on the active list">
-                      <ArchiveRestore size={13} /> Restore
-                    </button>
-                  ) : (
-                    <>
-                      {/* A hand correction — the gate marks arrivals itself. */}
-                      <button
-                        className={`sp-status-btn${v.is_arrived ? ' sp-status-btn--on' : ''}`}
-                        onClick={() => toggleArrived(v)}
-                        title={v.is_arrived ? 'Undo — mark as not arrived' : 'Mark arrived by hand (the gate does this when the slip prints)'}
-                      >
-                        <Check size={13} /> {v.is_arrived ? 'Arrived' : 'Mark Arrived'}
-                      </button>
-                      {/* Any visit still to happen can move — a no-show, or one
-                          whose visitor cannot make the day. */}
-                      {!v.is_arrived && (
-                        <button className="sp-status-btn" onClick={() => setAction({ visit: v, mode: 'reschedule' })}
-                          title="Move this booking to another date">
-                          <CalendarDays size={13} /> Reschedule
-                        </button>
-                      )}
-                      <button className="sp-expand-btn" onClick={() => setAction({ visit: v, mode: 'archive' })}
-                        title="Archive — keep it on record, off the gate's list" aria-label="Archive">
-                        <Archive size={15} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-            )
-          })}
-        </div>
+          <div className="um-table-scroll">
+            <table className="um-table sv-table">
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Visitor</th>
+                  <th>Category</th>
+                  <th>Expected</th>
+                  <th>Plate</th>
+                  <th>Purpose</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map(v => {
+                  const st = visitState(v, today)
+                  return (
+                    <tr key={v.id} className={`sv-row sv-row--${st}`}>
+                      <td><span className="sv-ref">SV-{v.id}</span></td>
+                      <td>
+                        <span className="sv-name">{v.visitor_name}</span>
+                        <span className="sv-sub">
+                          {v.supplier_name && v.supplier_name !== v.visitor_name ? `${v.supplier_name} · ` : ''}
+                          by {v.created_by_name || 'CDSO'}
+                        </span>
+                      </td>
+                      <td>{categoryLabel(VISIT_CATEGORIES, v.category)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(v.expected_date)}</td>
+                      <td>
+                        {v.plate_number
+                          ? <span className="sv-plate">{formatPlateNumber(v.plate_number)}</span>
+                          : <span className="sv-muted">—</span>}
+                        {v.auto_admit && <span className="sv-sub">admitted on scan</span>}
+                      </td>
+                      <td className="sv-purpose">{v.purpose || <span className="sv-muted">—</span>}</td>
+                      <td>
+                        <span className={`sp-visit-badge sp-visit-badge--${st === 'no_show' ? 'noshow' : st}`}>
+                          {VISIT_STATE_LABEL[st]}
+                        </span>
+                        {v.is_arrived && v.arrived_at && (
+                          <span className="sv-sub">
+                            {fmtArrival(v.arrived_at)}{v.pass_reference && ` · ${v.pass_reference}`}
+                          </span>
+                        )}
+                        {st === 'archived' && v.archive_reason && <span className="sv-sub">{v.archive_reason}</span>}
+                      </td>
+                      <td>
+                        <div className="sv-actions">
+                          {st === 'archived' ? (
+                            <button className="sv-icon-btn sv-icon-btn--text" onClick={() => restore(v)}
+                              title="Put it back on the active list">
+                              <ArchiveRestore size={14} /> Restore
+                            </button>
+                          ) : (
+                            <>
+                              {/* A hand correction — the gate marks arrivals itself. */}
+                              <button className={`sv-icon-btn${v.is_arrived ? ' sv-icon-btn--on' : ''}`}
+                                onClick={() => toggleArrived(v)}
+                                title={v.is_arrived ? 'Undo — mark as not arrived' : 'Mark arrived by hand (the gate does this when the slip prints)'}
+                                aria-label={v.is_arrived ? 'Mark as not arrived' : 'Mark arrived'}>
+                                <Check size={14} />
+                              </button>
+                              {!v.is_arrived && (
+                                <button className="sv-icon-btn" onClick={() => setAction({ visit: v, mode: 'reschedule' })}
+                                  title="Reschedule — move this booking to another date" aria-label="Reschedule">
+                                  <CalendarDays size={14} />
+                                </button>
+                              )}
+                              <button className="sv-icon-btn" onClick={() => setAction({ visit: v, mode: 'archive' })}
+                                title="Archive — keep it on record, off the gate's list" aria-label="Archive">
+                                <Archive size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
-        </>
-      )}
 
+        {!loading && rows.length > VISITS_PER_PAGE && (
+          <div className="um-pagination">
+            <span className="um-pagination-info">
+              Showing {(current - 1) * VISITS_PER_PAGE + 1} to {Math.min(current * VISITS_PER_PAGE, rows.length)} of {rows.length} visits
+            </span>
+            <div className="um-pagination-controls">
+              <button className="um-page-btn" disabled={current === 1} onClick={() => setPage(current - 1)}>
+                <ChevronLeft size={16} />
+              </button>
+              <span className="um-page-current">Page {current} of {totalPages}</span>
+              <button className="um-page-btn" disabled={current === totalPages} onClick={() => setPage(current + 1)}>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showSchedule && (
+        <ScheduleVisitModal suppliers={suppliers} onClose={onCloseSchedule} onCreated={reload} />
+      )}
       {action && (
         <VisitActionModal visit={action.visit} mode={action.mode}
-          onClose={() => setAction(null)} onSaved={replaceVisit} />
+          onClose={() => setAction(null)} onSaved={reload} />
       )}
     </>
   )
@@ -849,6 +1018,7 @@ export default function SupplierManagement() {
   const [suppliers, setSuppliers]     = useState([])
   const [pageLoading, setPageLoading] = useState(true)
   const [showAdd, setShowAdd]         = useState(false)
+  const [showSchedule, setShowSchedule] = useState(false)
 
   const loadSuppliers = () => {
     getSuppliers()
@@ -876,9 +1046,13 @@ export default function SupplierManagement() {
             <h1 className="sp-title">Visits and Suppliers</h1>
             <p className="sp-subtitle">{PAGE_BLURB[tab]}</p>
           </div>
-          {tab === 'suppliers' && (
+          {tab === 'suppliers' ? (
             <button className="sp-btn sp-btn-primary" onClick={() => setShowAdd(true)}>
               <Plus size={15} /> Add Supplier
+            </button>
+          ) : (
+            <button className="sp-btn sp-btn-primary" onClick={() => setShowSchedule(true)}>
+              <Plus size={15} /> Schedule Visit
             </button>
           )}
         </div>
@@ -920,7 +1094,8 @@ export default function SupplierManagement() {
         </div>
 
         <div className="sp-panel" hidden={tab !== 'visits'}>
-          <ScheduledVisitsSection suppliers={suppliers} />
+          <ScheduledVisitsSection suppliers={suppliers}
+            showSchedule={showSchedule} onCloseSchedule={() => setShowSchedule(false)} />
         </div>
       </div>
 
