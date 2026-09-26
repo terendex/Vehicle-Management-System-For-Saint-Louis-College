@@ -688,3 +688,15 @@
     flex: 1 1 100%;
   }
 }
+
+/* ── Page tabs (Suppliers / Scheduled Visits) ────────────────── */
+
+/* .sp-page's flex gap already spaces the strip from the panel. */
+.sp-page > .pt-tabs { margin-bottom: 0; }
+
+.sp-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-panel[hidden] { display: none; }

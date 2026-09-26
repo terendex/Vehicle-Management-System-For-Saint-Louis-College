@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
+import PageTabs from '../../components/Tabs/PageTabs'
 import { lookupSlip, printSlipOnServer } from '../../api/scanning'
 import { printSlipInBrowser } from '../../utils/slipPrint'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -567,16 +568,7 @@ function ScheduledVisitsSection({ suppliers }) {
   const past     = visits.filter(v => v.is_arrived || v.expected_date < today)
 
   return (
-    <div className="sp-page" style={{ marginTop: 32 }}>
-      <div className="sp-header">
-        <div>
-          <h2 className="sp-title" style={{ fontSize: 18 }}>Scheduled Visits</h2>
-          <p className="sp-subtitle">
-            Coordinate visitors and suppliers ahead of time so gate staff know who to expect.
-          </p>
-        </div>
-      </div>
-
+    <>
       <form onSubmit={handleAdd} className="sp-modal-form" noValidate style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 20 }}>
         <div className="sp-field">
           <label className="sp-label">Name</label>
@@ -657,12 +649,27 @@ function ScheduledVisitsSection({ suppliers }) {
           ))}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
 // ── Main page ─────────────────────────────────────────────────────────
+/* Tabbed the same way System Settings and Parking Space Management are:
+   managing the supplier roster and booking a visit are separate jobs, and the
+   visits used to sit below the whole supplier list. */
+const PAGE_TABS = [
+  { id: 'suppliers', label: 'Suppliers',        icon: Truck },
+  { id: 'visits',    label: 'Scheduled Visits', icon: CalendarClock },
+]
+
+const PAGE_BLURB = {
+  suppliers: 'Register supplier companies and their license plates. Supplier vehicles are '
+           + 'automatically permitted entry when scanned at the gate.',
+  visits:    'Coordinate visitors and suppliers ahead of time so gate staff know who to expect.',
+}
+
 export default function SupplierManagement() {
+  const [tab, setTab]                 = useState('suppliers')
   const [suppliers, setSuppliers]     = useState([])
   const [pageLoading, setPageLoading] = useState(true)
   const [showAdd, setShowAdd]         = useState(false)
@@ -691,42 +698,55 @@ export default function SupplierManagement() {
         <div className="sp-header">
           <div>
             <h1 className="sp-title">Supplier Management</h1>
-            <p className="sp-subtitle">
-              Register supplier companies and their license plates. Supplier vehicles are automatically
-              permitted entry when scanned at the gate.
-            </p>
+            <p className="sp-subtitle">{PAGE_BLURB[tab]}</p>
           </div>
-          <button className="sp-btn sp-btn-primary" onClick={() => setShowAdd(true)}>
-            <Plus size={15} /> Add Supplier
-          </button>
+          {tab === 'suppliers' && (
+            <button className="sp-btn sp-btn-primary" onClick={() => setShowAdd(true)}>
+              <Plus size={15} /> Add Supplier
+            </button>
+          )}
         </div>
 
-        {pageLoading ? (
-          <div className="sp-loading">
-            <Loader2 size={28} className="sp-spinner" />
-            <span>Loading suppliers…</span>
-          </div>
-        ) : suppliers.length === 0 ? (
-          <div className="sp-empty-state">
-            <Truck size={40} className="sp-empty-icon" />
-            <p>No suppliers registered yet.</p>
-            <p className="sp-empty-hint">Add a supplier to allow their vehicles automatic entry.</p>
-          </div>
-        ) : (
-          <div className="sp-list">
-            {suppliers.map(s => (
-              <SupplierCard
-                key={s.id}
-                supplier={s}
-                onUpdated={handleUpdated}
-                onDeleted={handleDeleted}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        <PageTabs
+          id="sp"
+          ariaLabel="Supplier sections"
+          tabs={PAGE_TABS}
+          active={tab}
+          onChange={setTab}
+        />
 
-      <ScheduledVisitsSection suppliers={suppliers} />
+        {/* Both panels stay mounted and are hidden, so a half-filled visit form
+            survives a trip to the Suppliers tab and back. */}
+        <div className="sp-panel" hidden={tab !== 'suppliers'}>
+          {pageLoading ? (
+            <div className="sp-loading">
+              <Loader2 size={28} className="sp-spinner" />
+              <span>Loading suppliers…</span>
+            </div>
+          ) : suppliers.length === 0 ? (
+            <div className="sp-empty-state">
+              <Truck size={40} className="sp-empty-icon" />
+              <p>No suppliers registered yet.</p>
+              <p className="sp-empty-hint">Add a supplier to allow their vehicles automatic entry.</p>
+            </div>
+          ) : (
+            <div className="sp-list">
+              {suppliers.map(s => (
+                <SupplierCard
+                  key={s.id}
+                  supplier={s}
+                  onUpdated={handleUpdated}
+                  onDeleted={handleDeleted}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="sp-panel" hidden={tab !== 'visits'}>
+          <ScheduledVisitsSection suppliers={suppliers} />
+        </div>
+      </div>
 
       {showAdd && (
         <AddSupplierModal
