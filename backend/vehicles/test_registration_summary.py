@@ -30,6 +30,7 @@ from vehicles.models import RegistrationPeriod, VehicleRegistration
 def _allow_legacy_registration_values():
     table = VehicleRegistration._meta.db_table
     with connection.cursor() as cur:
+        cur.execute('SET CONSTRAINTS ALL IMMEDIATE')   # flush deferred FK checks; ALTER refuses while any are pending
         for column in ('registrant_type', 'status'):
             cur.execute(f'ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_{column}_valid')
 
