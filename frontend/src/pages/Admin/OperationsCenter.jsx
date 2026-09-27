@@ -4,11 +4,12 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff, Check, RotateCcw,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
-import { toast } from '../../components/Feedback/notify'
-import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
+import notify, { toast } from '../../components/Feedback/notify'
+import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses,
+         getCrossGate, reviewCrossGate, reviewAllCrossGate } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { displayStatus } from '../../utils/logStatus'
 import { useCameraContext } from '../../context/CameraContext'
@@ -71,12 +72,12 @@ function passTimeInfo(p) {
 // ─── Pager (matches the violations table pagination) ──────────────────────────
 const LIST_PAGE_SIZE = 8
 
-function Pager({ page, totalPages, total, onPage }) {
-  if (totalPages <= 1) return null
+function Pager({ page, totalPages, total, onPage, pageSize = LIST_PAGE_SIZE, always = false }) {
+  if (!always && totalPages <= 1) return null
   return (
     <div className="oc-pager">
       <span className="oc-pager-info">
-        Showing {(page - 1) * LIST_PAGE_SIZE + 1}–{Math.min(page * LIST_PAGE_SIZE, total)} of {total}
+        Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}
       </span>
       <div className="oc-pager-controls">
         <button className="oc-pager-btn" disabled={page === 1} onClick={() => onPage(page - 1)}>
@@ -496,6 +497,184 @@ function CameraMonitor() {
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
+// ─── Cross-gate records ─────────────────────────────────────────────────────────
+// A vehicle that came in at one gate and left by another. Usually fine — the
+// campus has more than one gate — but it is also what a swapped or mis-set gate
+// posting looks like, so each one waits for the CDSO to look at it. Reviewing
+// clears it from the open count (the tab badge and the stat card); the record
+// stays, with who reviewed it and when, under Reviewed. Paged on the server,
+// across every day, newest exit first.
+const RECORDS_PAGE_SIZE = 10
+const RECORD_FILTERS = [
+  { key: 'open',     label: 'Open' },
+  { key: 'reviewed', label: 'Reviewed' },
+  { key: 'all',      label: 'All' },
+]
+
+function fmtStay(min) {
+  if (min == null) return '—'
+  if (min < 60) return `${min} min`
+  return `${Math.floor(min / 60)}h ${min % 60}m`
+}
+
+function CrossGateRecords({ gateLabel, refreshKey, onChanged }) {
+  const [status, setStatus] = useState('open')
+  const [page, setPage]     = useState(1)
+  const [data, setData]     = useState({ results: [], count: 0, counts: {} })
+  const [busy, setBusy]     = useState(null)   // a row id, or 'all'
+
+  const load = useCallback(() => {
+    getCrossGate({ status, page, page_size: RECORDS_PAGE_SIZE })
+      .then(r => setData(r.data ?? { results: [], count: 0, counts: {} }))
+      .catch(() => {})
+  }, [status, page])
+
+  useEffect(() => { load() }, [load, refreshKey])
+
+  const counts     = data.counts ?? {}
+  const total      = data.count ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / RECORDS_PAGE_SIZE))
+
+  // Reviewing (or reopening) the last row of a filtered page empties it, and
+  // the server answers a page past the end with a 404 — step back instead.
+  const afterChange = () => {
+    if (status !== 'all' && data.results.length === 1 && page > 1) setPage(p => p - 1)
+    else load()
+    onChanged?.()
+  }
+
+  const review = async (row, reviewed) => {
+    setBusy(row.id)
+    try {
+      await reviewCrossGate(row.id, reviewed)
+      afterChange()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not update the record.')
+    } finally { setBusy(null) }
+  }
+
+  const reviewAll = async () => {
+    if (!(await notify.confirm({
+      title: 'Mark all reviewed?',
+      message: `${counts.open} open cross-gate record${counts.open === 1 ? '' : 's'} will be marked reviewed under your name.`,
+      confirmLabel: 'Mark all reviewed',
+    }))) return
+    setBusy('all')
+    try {
+      const { data: res } = await reviewAllCrossGate()
+      toast.success(`${res.reviewed} record${res.reviewed === 1 ? '' : 's'} marked reviewed.`)
+      setPage(1)
+      load()
+      onChanged?.()
+    } catch (err) {
+      toast.error(err?.response?.data?.error || 'Could not mark them reviewed.')
+    } finally { setBusy(null) }
+  }
+
+  return (
+    <div className="oc-section">
+      <div className="oc-section-head">
+        <ArrowRightLeft size={15} />
+        <span>Cross-Gate Records</span>
+        {counts.open > 0 && <span className="oc-flag-count">{counts.open}</span>}
+      </div>
+      <p className="oc-xg-note">
+        Vehicles that came in at one gate and left by another. Usually fine — mark each
+        reviewed once you have checked the gates were set up right.
+      </p>
+
+      <div className="oc-xg-toolbar">
+        <div className="oc-xg-filters" role="tablist" aria-label="Cross-gate records">
+          {RECORD_FILTERS.map(f => (
+            <button key={f.key} type="button" role="tab" aria-selected={status === f.key}
+              className={`oc-xg-filter${status === f.key ? ' active' : ''}`}
+              onClick={() => { setStatus(f.key); setPage(1) }}>
+              {f.label} <span className="oc-xg-filter-n">{counts[f.key] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+        {counts.open > 0 && (
+          <button type="button" className="oc-xg-review-all" disabled={busy === 'all'} onClick={reviewAll}>
+            <Check size={13} /> {busy === 'all' ? 'Marking…' : 'Mark all reviewed'}
+          </button>
+        )}
+      </div>
+
+      <div className="oc-guard-table-wrap">
+        {data.results.length === 0 ? (
+          <div className="oc-clear">
+            <CheckCircle size={18} />
+            <span>{status === 'open' ? 'No open cross-gate records' : 'No cross-gate records'}</span>
+          </div>
+        ) : (
+          <table className="oc-guard-table oc-xg-table">
+            <thead>
+              <tr>
+                <th>Plate</th>
+                <th>Owner</th>
+                <th>In</th>
+                <th>Out</th>
+                <th>Inside</th>
+                <th>Status</th>
+                <th aria-label="Action" />
+              </tr>
+            </thead>
+            <tbody>
+              {data.results.map(r => (
+                <tr key={r.id}>
+                  <td className="oc-log-plate">{r.plate_number || '—'}</td>
+                  <td className="oc-xg-owner">{r.owner_name}</td>
+                  <td>
+                    <span className="oc-xg-gate">{gateLabel(r.entry_gate) || r.entry_gate}</span>
+                    <span className="oc-xg-time">{fmt(r.entered_at)}</span>
+                  </td>
+                  <td>
+                    <span className="oc-xg-gate out">{gateLabel(r.exit_gate) || r.exit_gate}</span>
+                    <span className="oc-xg-time">{fmt(r.exited_at)}</span>
+                  </td>
+                  <td className="oc-xg-stay">{fmtStay(r.duration_minutes)}</td>
+                  <td>
+                    {r.reviewed_at ? (
+                      <>
+                        <span className="oc-xg-pill reviewed"><CheckCircle size={11} /> Reviewed</span>
+                        <span className="oc-xg-time">
+                          {r.reviewed_by_name ? `${r.reviewed_by_name} · ` : ''}{fmt(r.reviewed_at)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="oc-xg-pill open"><AlertTriangle size={11} /> Open</span>
+                    )}
+                  </td>
+                  <td className="oc-xg-action">
+                    {r.reviewed_at ? (
+                      <button type="button" className="oc-xg-btn" disabled={busy === r.id}
+                        onClick={() => review(r, false)} title="Put it back on the open list">
+                        <RotateCcw size={12} /> Reopen
+                      </button>
+                    ) : (
+                      <button type="button" className="oc-xg-btn primary" disabled={busy === r.id}
+                        onClick={() => review(r, true)}>
+                        <Check size={12} /> Mark reviewed
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {total > 0 && (
+          <div className="oc-xg-pager">
+            <Pager page={page} totalPages={totalPages} total={total} onPage={setPage}
+              pageSize={RECORDS_PAGE_SIZE} always />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+
 /* The three jobs this screen carries.
 
    It used to show all of them at once: a live camera feed with its lens and
@@ -504,6 +683,7 @@ function CameraMonitor() {
    most of a screen tall each, on a page whose first purpose is watching a
    video — so the feed was squeezed into a letterboxed strip and everything
    else was below the fold.
+
 
    Split the way System Settings splits its groups, and along the line the work
    divides: watching the gates live, checking who is on duty, and reading back
@@ -519,7 +699,7 @@ export default function OperationsCenter() {
   const { gates, gateIds, gateLabel } = useGates()
   const [currentShifts, setCurrentShifts] = useState({})
   const [logsByGate,    setLogsByGate]    = useState({})
-  const [crossFlags,    setCrossFlags]    = useState([])
+  const [crossOpen,     setCrossOpen]     = useState(0)   // cross-gate records nobody has reviewed
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
   const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
@@ -527,7 +707,6 @@ export default function OperationsCenter() {
   const [lastRefresh,   setLastRefresh]   = useState(null)
   const [tab,           setTab]           = useState('live')
   const [shiftPage,     setShiftPage]     = useState(1)
-  const [flagPage,      setFlagPage]      = useState(1)
 
   // gateIds is a fresh array each render; key the callback on its contents so
   // load() is only rebuilt when the gate list actually changes.
@@ -551,7 +730,7 @@ export default function OperationsCenter() {
 
       if (monitorRes.status === 'fulfilled') {
         const d = monitorRes.value.data
-        setCrossFlags(d?.cross_gate_flags ?? [])
+        setCrossOpen(d?.cross_gate_open ?? 0)
         setGuards(d?.guards ?? [])
       }
 
@@ -608,11 +787,6 @@ export default function OperationsCenter() {
   const shiftPageSafe   = Math.min(shiftPage, shiftTotalPages)
   const pagedShifts     = sortedShifts.slice((shiftPageSafe - 1) * LIST_PAGE_SIZE, shiftPageSafe * LIST_PAGE_SIZE)
 
-  const sortedFlags    = [...crossFlags].sort((a, b) => new Date(b.exited_at) - new Date(a.exited_at))
-  const flagTotalPages = Math.max(1, Math.ceil(sortedFlags.length / LIST_PAGE_SIZE))
-  const flagPageSafe   = Math.min(flagPage, flagTotalPages)
-  const pagedFlags     = sortedFlags.slice((flagPageSafe - 1) * LIST_PAGE_SIZE, flagPageSafe * LIST_PAGE_SIZE)
-
   return (
     <>
       <div className="oc-page">
@@ -653,7 +827,7 @@ export default function OperationsCenter() {
           <div className="oc-stat-card">
             <div className="oc-stat-icon amber"><AlertTriangle size={18} /></div>
             <div>
-              <p className="oc-stat-val">{crossFlags.length}</p>
+              <p className="oc-stat-val">{crossOpen}</p>
               <p className="oc-stat-lbl">Cross-Gate Flags</p>
             </div>
           </div>
@@ -670,7 +844,7 @@ export default function OperationsCenter() {
           id="oc"
           ariaLabel="Operations sections"
           tabs={TABS.map(t => (
-            t.id === 'records' ? { ...t, count: crossFlags.length } : t
+            t.id === 'records' ? { ...t, count: crossOpen } : t
           ))}
           active={tab}
           onChange={setTab}
@@ -833,40 +1007,8 @@ export default function OperationsCenter() {
           </div>
         </div>
 
-        {/* Cross-gate flags */}
-        <div className="oc-section">
-          <div className="oc-section-head">
-            <ArrowRightLeft size={15} />
-            <span>Cross-Gate Discrepancies</span>
-            {crossFlags.length > 0 && <span className="oc-flag-count">{crossFlags.length}</span>}
-          </div>
-          <div className="oc-card">
-            {crossFlags.length === 0 ? (
-              <div className="oc-clear">
-                <CheckCircle size={18} />
-                <span>No discrepancies detected</span>
-              </div>
-            ) : (
-              <>
-                <div className="oc-flags-list">
-                  {pagedFlags.map((f, i) => (
-                    <div key={i} className="oc-flag-item">
-                      <AlertTriangle size={13} className="oc-flag-icon" />
-                      <div>
-                        <span className="oc-log-plate">{f.plate_number}</span>
-                        <span className="oc-flag-route">
-                          Entered {gateLabel(f.entry_gate)} → Exited {gateLabel(f.exit_gate)}
-                        </span>
-                        <div className="oc-flag-times">{fmt(f.entered_at)} · {fmt(f.exited_at)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <Pager page={flagPageSafe} totalPages={flagTotalPages} total={sortedFlags.length} onPage={setFlagPage} />
-              </>
-            )}
-          </div>
-        </div>
+        {/* Cross-gate records — reviewable, paged, every day */}
+        <CrossGateRecords gateLabel={gateLabel} refreshKey={lastRefresh} onChanged={load} />
 
         {/* Accounts serving a violation penalty — barred from entering and
             from parking until the term runs out or the CDSO lifts it. */}

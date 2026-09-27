@@ -23,6 +23,11 @@ urlpatterns = [
     path('logs/export/',            views.VehicleLogExportView.as_view(),    name='vehicle-log-export'),
     path('logs/export-pdf/',        views.VehicleLogPdfExportView.as_view(), name='vehicle-log-export-pdf'),
     path('guard-monitor/',          views.GuardMonitorView.as_view(),      name='guard-monitor'),
+    # Vehicles that left by a different gate from the one they came in by,
+    # for the CDSO to review (Operations Center → Gate Records).
+    path('cross-gate/',             views.CrossGateListView.as_view(),     name='cross-gate'),
+    path('cross-gate/review-all/',  views.CrossGateReviewView.as_view(),   name='cross-gate-review-all'),
+    path('cross-gate/<int:pk>/review/', views.CrossGateReviewView.as_view(), name='cross-gate-review'),
     path('ml/samples/',             views.MLTrainingSampleList.as_view(),  name='ml-samples'),
     path('ml/samples/<int:pk>/',    views.MLTrainingSampleReview.as_view(), name='ml-sample-review'),
     path('ml/stats/',               views.MLStatsView.as_view(),           name='ml-stats'),

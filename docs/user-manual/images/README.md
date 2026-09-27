@@ -261,8 +261,8 @@ Management › Suppliers. Supplier vehicles are admitted automatically when thei
 
 Operations › Operations Center. Watch all gates, guards and cameras at once.
 
-1. **Live summary**: Guards on duty, recent entries, cross-gate flags and total guards.
-2. **Screen tabs**: Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate discrepancies and confiscated accounts).
+1. **Live summary**: Guards on duty, recent entries, cross-gate records still to review, and total guards.
+2. **Screen tabs**: Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate records to review and confiscated accounts). The number on Gate Records is how many cross-gate records are still open.
 3. **Camera Monitor**: View-only camera pictures. Plate detection runs on the guard terminals. (Sample picture shown.)
 4. **Gate column**: Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.
 5. **Refresh**: Reloads the screen.
@@ -282,10 +282,10 @@ Guard shifts: who is on duty at which gate.
 
 ![Operations Center: gate records](02-cdso-admin/11-operations-gate-records.png)
 
-Visitors still on campus, cross-gate discrepancies and confiscated accounts.
+Visitors still on campus, cross-gate records to review and confiscated accounts.
 
 1. **Active Visitors**: Visitor passes still inside, with the office visited, who issued the pass, and time left (or how long they have overstayed).
-2. **Cross-Gate Discrepancies**: Vehicles that entered through one gate and left through another, so both gates’ records can be checked.
+2. **Cross-Gate Records**: Vehicles that came in by one gate and left by another, newest first, with both gates and times. Mark each reviewed once the gates are checked — or Mark all reviewed — and it leaves the open count. Open, Reviewed and All filter the table; the pager moves through older records.
 3. **Confiscated accounts**: Owners serving a violation penalty and when it ends.
 4. **Lift**: Ends a confiscation early. The violations themselves stay on record.
 

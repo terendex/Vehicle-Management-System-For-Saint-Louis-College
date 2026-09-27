@@ -98,6 +98,10 @@ export const visitorQrExit = (qr_data, gate_id) =>
 
 // Admin: live guard activity monitor (now includes gate + shift + cross-gate data)
 export const getGuardMonitor = () => api.get('/scan/guard-monitor/')
+// Cross-gate records (Operations Center → Gate Records): list, review, reopen.
+export const getCrossGate = (params) => api.get('/scan/cross-gate/', { params })
+export const reviewCrossGate = (id, reviewed = true) => api.post(`/scan/cross-gate/${id}/review/`, { reviewed })
+export const reviewAllCrossGate = (data = {}) => api.post('/scan/cross-gate/review-all/', data)
 
 // QR code scan login — exchanges guard's QR token for JWT (registered at /api/auth/qr-login/)
 // THE live guard badge sign-in. Note the URL: /auth/qr-login/, which

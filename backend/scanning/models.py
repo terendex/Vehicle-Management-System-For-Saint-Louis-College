@@ -220,6 +220,14 @@ class AccessLog(models.Model):
         'vehicles.ScheduledVisit', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='entries',
     )
+    # Cross-gate review, on an EXIT row. A vehicle that left by a different
+    # gate from the one it came in by is flagged in the Operations Center; the
+    # CDSO marks it reviewed, which takes it out of the open count. Kept, not
+    # deleted, so the record says who looked at it and when.
+    reviewed_at    = models.DateTimeField(null=True, blank=True)
+    reviewed_by    = models.ForeignKey(
+        'accounts.User', null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
     snapshot       = models.ImageField(upload_to='snapshots/', blank=True)   # the frame the camera captured, when there is one
     scanned_at     = models.DateTimeField(auto_now_add=True)
     scanned_by     = models.ForeignKey(
