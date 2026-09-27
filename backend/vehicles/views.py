@@ -1182,25 +1182,17 @@ class AttributeDoubleParkingView(APIView):
             return Response({'error': 'zone_id, space_ids and plate_number are required.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        vehicle = Vehicle.resolve(plate)             # plate first, then conduction number
+        vehicle = _vehicle_to_cite(plate)
         if vehicle is None:
-            return Response({'error': 'No vehicle found for that plate or conduction number.'},
-                            status=status.HTTP_404_NOT_FOUND)   # nothing to attribute the violation to
+            return Response({'error': NO_VEHICLE_TO_CITE}, status=status.HTTP_404_NOT_FOUND)
 
         # Clear the alert, so the card disappears from every guard screen.
         thread = parking_camera.get_thread(int(zone_id))
         if thread is not None:
             thread.pop_alert(space_ids)
 
-        from scanning.views import _auto_log_violation   # the shared "raise a violation" helper
-        from violations.models import Violation
-        gate_id = getattr(request.user, 'gate_assignment', None) or 'main'   # attribute it to the guard's gate
-        _auto_log_violation(
-            vehicle,
-            f"Double parking attributed by guard {request.user.full_name}",   # names who decided, in the record
-            gate_id=gate_id,
-            vtype=Violation.Type.DOUBLE_PARKING,
-        )
+        issued = _issue_double_parking(
+            request, vehicle, f"Double parking attributed by guard {request.user.full_name}")   # names who decided, in the record
 
         try:
             # Tell every open screen at once, so the alert card clears without
@@ -1210,8 +1202,99 @@ class AttributeDoubleParkingView(APIView):
         except Exception:
             logger.exception("double-parking attribution broadcast failed")   # the violation still stands
 
-        return Response({'status': 'attributed',
-                         'plate_number': vehicle.plate_number or vehicle.conduction_number or plate})
+        return Response(_double_parking_response('attributed', vehicle, plate, issued))
+
+
+# The Issue Violation button on the guard's Parking screen: double parking the
+# guard saw for themselves, with no camera alert behind it (a zone with no
+# camera, or one the detector missed). Double parking only — the gate raises
+# unauthorized entry, time exceed and activity-while-confiscated on its own,
+# and the older fine-era types are no longer issued.
+class ReportDoubleParkingView(APIView):
+    permission_classes = [IsSecurityRole]
+
+    def post(self, request):
+        plate = _normalize_plate(request.data.get('plate_number'))
+        if not plate:
+            return Response({'error': 'plate_number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        vehicle = _vehicle_to_cite(plate)
+        if vehicle is None:
+            return Response({'error': NO_VEHICLE_TO_CITE}, status=status.HTTP_404_NOT_FOUND)
+
+        zone_name = ParkingZone.objects.filter(pk=request.data.get('zone_id') or 0) \
+                                       .values_list('name', flat=True).first()
+        notes = ' '.join((request.data.get('notes') or '').split())[:500]   # one tidy line
+        message = (f"Double parking reported by guard {request.user.full_name}"
+                   + (f" in {zone_name}" if zone_name else '')
+                   + (f": {notes}" if notes else ''))
+        issued = _issue_double_parking(request, vehicle, message)
+        return Response(_double_parking_response('reported', vehicle, plate, issued))
+
+
+NO_VEHICLE_TO_CITE = ('No vehicle found for that plate or conduction number, and it did not '
+                      'come through a gate today. Check the plate as written on the vehicle.')
+
+
+def _vehicle_to_cite(plate):
+    """The Vehicle a double-parking violation is issued against, or None.
+
+    A registered or gate-created (visitor) vehicle resolves directly. A
+    supplier plate, or one the gate admitted today (an event organizer, an
+    open-campus entry), has no Vehicle row, so one is made unowned and
+    unauthorized to carry the record — as _check_stay_limit does for an
+    overstaying supplier. A plate that is neither is one nobody can show was on
+    campus, and a violation is not pinned on it.
+    """
+    vehicle = Vehicle.resolve(plate)
+    if vehicle is not None:
+        return vehicle
+    from scanning.models import AccessLog
+    from time_utils import day_range
+    from .models import SupplierPlate
+    start, end = day_range(timezone.localdate())
+    on_campus = (
+        SupplierPlate.objects.filter(plate_number=plate, supplier__is_active=True).exists()
+        or AccessLog.objects.filter(plate_number=plate, status=AccessLog.Status.AUTHORIZED,
+                                    scanned_at__gte=start, scanned_at__lt=end).exists()
+    )
+    if not on_campus:
+        return None
+    vehicle, _ = Vehicle.objects.get_or_create(
+        plate_number=plate, defaults={'vehicle_type': 'car', 'is_authorized': False})
+    return vehicle
+
+
+def _issue_double_parking(request, vehicle, message):
+    """Issue it through the one shared path, so a guard's report obeys the same
+    rules as the camera's: one strike per account (or visitor) per day, the
+    offence ladder and its confiscation, the owner's email."""
+    from scanning.views import _auto_log_violation
+    from violations.models import Violation
+    issued = _auto_log_violation(
+        vehicle, message,
+        gate_id=getattr(request.user, 'gate_assignment', None) or 'main',   # attribute it to the guard's gate
+        vtype=Violation.Type.DOUBLE_PARKING,
+        issued_by=request.user,
+    )
+    if not issued.get('already_recorded'):
+        audit(request, AuditLog.Action.RECORD_CREATED,
+              f"Violation issued | Plate: {vehicle.plate_number or vehicle.conduction_number} | "
+              f"Type: Double Parking | Offense: {issued.get('offense_number')} | "
+              f"By: {request.user.full_name}")
+    return issued
+
+
+def _double_parking_response(status_word, vehicle, plate, issued):
+    # `violation` is what the guard's result dialog reads; `already_recorded`
+    # tells it that the day's strike was already spent, so nothing new was
+    # issued — which the old response did not say, and the screen reported a
+    # violation that was never written.
+    return {
+        'status':           status_word,
+        'plate_number':     vehicle.plate_number or vehicle.conduction_number or plate,
+        'already_recorded': bool(issued.get('already_recorded')),
+        'violation':        None if issued.get('already_recorded') else issued,
+    }
 
 
 # The CDSO's review queue: the applications waiting for a decision.

@@ -345,7 +345,7 @@ Edit Parking Slots mode: draw and adjust bays over the zone’s reference image.
 
 Events reserve part of campus parking and note organizer plates.
 
-1. **Event Mode overrides**: Parking Override lets guards admit vehicles when a zone is full; Entry Override lets them admit plates that would be denied. Click the switch to turn each on or off.
+1. **Event Mode**: Entry Override lets guards admit plates that would be denied; click the switch to turn it on or off. Zone Capacity Overrides set a temporary capacity per zone — leave one blank to use its bays.
 2. **Add Event**: Create an event: name, date, times, how much parking it takes, and organizer plates.
 3. **Event card**: Date, time, organizer plates, and how much of campus parking the event holds.
 4. **Event actions**: Activate the event, reschedule it, show its details, or delete it.
@@ -379,8 +379,8 @@ Operations › Vehicle Log. Every gate scan, entry and exit, across all gates.
 2. **Date range**: Quick ranges, or pick exact start and end dates.
 3. **Search**: Find a plate, owner or guard.
 4. **Gate, status and category filters**: Narrow the log; Clear filters resets them.
-5. **Log table**: Time, plate, owner, gate, decision and the guard on duty.
-6. **Exit**: When the vehicle left and how long it stayed, or "Still inside".
+5. **Log table**: Time, plate, owner, the gate it came in by, decision and the guard on duty.
+6. **Exit**: When the vehicle left, by which gate, and how long it stayed — or "Still inside". A vehicle can leave by a different gate than it came in.
 
 ### Rule Constraints: entry rules
 
@@ -516,7 +516,7 @@ The guard’s main screen at the gate. Plates are read automatically from the en
 4. **Check Plate — Entry / Exit**: Checks the typed plate. A vehicle already inside is logged out; otherwise its entry is checked against its pass and schedule.
 5. **Scan QR**: Scan the QR code on the owner’s vehicle pass, or on any printed slip — a visitor slip, a supplier or event pass, or the entry slip given to a vehicle with no plate. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up cannot let a vehicle out by accident.
 6. **No Plate?**: Record a vehicle with no plate or conduction sticker by describing it. Its entry slip prints on the thermal printer for the driver to keep.
-7. **Recent Scans**: Latest decisions at this gate. The chips count entries by category.
+7. **Recent Entries**: Latest decisions at this gate, plus the plates and names you looked up. The chips count entries by category.
 8. **Active Visitors**: Visitor passes still inside, with time left. +30m extends a pass.
 9. **Confiscated accounts**: Owners serving a violation penalty. They may not enter or park.
 10. **Shift controls**: On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.
@@ -577,7 +577,7 @@ Watch parking zones, see free spaces and act on parking offences.
 4. **Legend**: Free, Occupied and Double parking. The bays refresh every 8 seconds.
 5. **Campus-wide figures**: Free, Parked and Capacity for this vehicle type across campus, from the parking cameras. On campus beside them counts gate entry and exit scans instead, parked or not, so the two are counted differently and will not agree. Held appears where an event is reserving spaces.
 6. **Bays in this zone**: How many bays the camera sees taken, with the zone’s own status: Monitoring, Camera off, or Not set up — which means an admin has not finished the zone’s setup, so those bay colours may be out of date.
-7. **Issue Violation / Override Parking**: Record a parking offence, or let a vehicle park when the area is full (event mode).
+7. **Issue Violation**: Record a vehicle parked across two bays (double parking).
 
 ### Issuing a parking violation
 
@@ -585,20 +585,20 @@ Watch parking zones, see free spaces and act on parking offences.
 
 The violation form opened from the parking monitor.
 
-1. **License Plate**: The plate of the offending vehicle. Required.
-2. **Violation Type**: Choose the offence, e.g. No Sticker, Double Parking or Time Exceed.
+1. **Plate or Conduction No.**: The plate or conduction number of the double-parked vehicle. Required.
+2. **Double Parking**: This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.
 3. **Notes**: Optional details that help the CDSO review it.
-4. **Issue Violation**: Records the violation against the vehicle’s owner and counts toward the offence ladder. Cancel closes without saving.
+4. **Issue Violation**: Records the violation against the vehicle’s owner and applies the penalty. If they already have one today, it says so and records nothing new. Cancel closes without saving.
 
 ### Vehicle Log (gate)
 
 ![Vehicle Log (gate)](03-security-guard/06-vehicle-log.png)
 
-Every scan recorded at your gate.
+Every scan at your gate, with the gate each visit came in and left by.
 
 1. **Status filter**: Show all scans or only one decision: Authorized, Denied, Wrong Day, Visitor or Exited.
 2. **Date and refresh**: Pick another day, or reload the list.
-3. **Scan entry**: Plate, decision, owner, guard on duty and time. Exits show when the vehicle left and how long it stayed.
+3. **Scan entry**: Plate, decision, owner, guard on duty and time, then the gate it came in by and the gate it left by, with how long it stayed (or Still inside).
 
 
 ## Vehicle Owner

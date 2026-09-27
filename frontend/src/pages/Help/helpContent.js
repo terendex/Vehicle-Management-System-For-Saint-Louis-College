@@ -227,7 +227,7 @@ export const HELP_TOPICS = [
       { type: 'p', text: 'When a plate is checked, the result appears in the middle of the screen. Compare the owner and vehicle with the car in front of you, then Acknowledge — or Override Entry with a reason if it should be let in anyway.' },
       { type: 'figure', id: 'guard-plate-check-result' },
       { type: 'p', text: 'Scan QR reads more than an owner\'s pass. A visitor slip, a supplier or event pass, and the entry slip given to a vehicle with no plate all scan here. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up can never let a vehicle out by accident.' },
-      { type: 'p', text: 'Expected Today lists the visitors the CDSO scheduled for today. Check In issues the visitor pass with their name and purpose already filled in, and prints the slip; type the plate if the booking has none. When a scheduled visitor’s plate is scanned instead, the result says Expected and its button reads Check In Scheduled Visitor. Rows marked On scan are suppliers — scanning the plate is all they need. Scanning an Expected Visit card (the CDSO’s printed card with a QR) opens the same check-in; a card for another day, or for a visit already checked in or cancelled, says so instead. A scheduled visitor booked without a plate, or arriving in a different car, will not match on the scan: the result notes that visitors are still expected, and the visitor pass form has a Scheduled Visitor list to choose them from.' },
+      { type: 'p', text: 'Expected Today lists the visitors the CDSO scheduled for today. Check In issues the visitor pass with their name and purpose already filled in, and prints the slip; type the plate if the booking has none. When a scheduled visitor’s plate is scanned instead, the result says Expected and its button reads Check In Scheduled Visitor. Rows marked On scan are suppliers — scanning the plate is all they need. A vehicle booked for today is not turned away by the day or hours rules: the scan admits it and the result says the schedule rule was waived. A confiscated or suspended account is still refused. Scanning an Expected Visit card (the CDSO’s printed card with a QR) opens the same check-in; a card for another day, or for a visit already checked in or cancelled, says so instead. A scheduled visitor booked without a plate, or arriving in a different car, will not match on the scan: the result notes that visitors are still expected, and the visitor pass form has a Scheduled Visitor list to choose them from.' },
       { type: 'p', text: 'Two more panels appear on the right only when they have something in them. Unrecognized Vehicles Inside lists the no-plate vehicles still on campus, with a Slip button to reprint or exit from, and a Log Exit button. Overstaying lists vehicles past the maximum stay their entry rule allows, with how far over they are.' },
       { type: 'note', text: 'Acknowledge on an overstaying vehicle issues the Time Exceed violation there and then. They may still leave, but may not return until the confiscation ends. A vehicle already recorded today is marked as such instead.' },
       { type: 'note', text: 'If the same plate is read twice within the deduplication window (set by the CDSO), the second scan is ignored to avoid duplicate log rows.' },
@@ -259,7 +259,7 @@ export const HELP_TOPICS = [
       { type: 'steps', items: [
         'Press "No Plate?" on the Entry Management screen.',
         'Fill in what you can see: the driver\'s name, who is entering, the vehicle type and its colour. Make and model, and a note, are optional.',
-        'Press Record Entry. The system gives the vehicle a reference like NP-214 that stands in for the plate in Recent Scans, the Vehicle Log and reports.',
+        'Press Record Entry. The system gives the vehicle a reference like NP-214 that stands in for the plate in Recent Entries, the Vehicle Log and reports.',
         'Its entry slip prints on the thermal printer. Hand it to the driver — scanning that slip when they leave is the quickest way to close the entry.',
         'The vehicle now counts as inside campus, the same as any scanned entry.',
         'When it leaves, scan its slip, or find it in the "Unrecognized Vehicles Inside" panel on the right and press "Log Exit".',
@@ -280,11 +280,10 @@ export const HELP_TOPICS = [
       { type: 'p', text: 'Free, Parked and Capacity come from the parking cameras across every zone of that vehicle type. On campus is a different count — gate entry and exit scans, parked or not — so it is normally the higher of the two. Held appears when an event is reserving spaces.' },
       { type: 'note', text: 'Each zone shows its own status: Monitoring, Camera off, or Not set up. “Not set up” means an admin has not finished that zone\'s setup, so its bay colours may be out of date — check before sending anyone to a bay it shows as free.' },
       { type: 'steps', items: [
-        'To record a parking offence, press Issue Violation.',
-        'Type the plate, choose the violation type, add any notes, and press Issue Violation.',
+        'To record a vehicle parked across two bays, press Issue Violation. It issues Double Parking only; the gate records the other offences itself.',
+        'Type the plate or conduction number, add any notes (which bays), and press Issue Violation. The result says which offence it is and how long the owner loses campus access. Only one offence is counted per owner per day, so a second report that day records nothing new.',
       ] },
       { type: 'figure', id: 'guard-issue-violation' },
-      { type: 'note', text: 'Override Parking is only available while the CDSO has event mode switched on. It lets a vehicle park when its area is full.' },
     ],
   },
   {
@@ -293,7 +292,7 @@ export const HELP_TOPICS = [
     category: 'Security',
     roles: ['security'],
     body: [
-      { type: 'p', text: 'The Vehicle Log lists all scans recorded at your gate. Filter by decision, or pick another date (you cannot pick a future date).' },
+      { type: 'p', text: 'The Vehicle Log lists all scans recorded at your gate. Each visit shows the gate it came in by and the gate it left by, so a vehicle that entered at another gate and left by yours is listed too. Filter by decision, or pick another date (you cannot pick a future date).' },
       { type: 'figure', id: 'guard-vehicle-log' },
     ],
   },
@@ -399,7 +398,7 @@ export const HELP_TOPICS = [
       { type: 'p', text: 'Management › Visits and Suppliers has two tabs. Suppliers holds the supplier companies and their plates, which are admitted automatically when scanned at the gate, within the supplier delivery window. Scheduled Visits books the visitors and suppliers expected on a given date: press Schedule Visit, fill in who, when and why, and add a plate if it is known.' },
       { type: 'p', text: 'The Scheduled Visits table works like User Management. The tiles count visits expected today, upcoming, arrived and no-shows. The tabs above the table narrow it by status (All, Expected Today, Upcoming, Arrived, No-show, Archived), the search box finds a visitor, plate, purpose, supplier or SV number, and the category list narrows it further. The Scheduled Visits Report bar prints exactly what the table shows — the same tab, search and category — to PDF or Excel, and its two date boxes narrow both the table and the report to a range of expected dates, future dates included.' },
       { type: 'p', text: 'Each row’s ⋮ menu holds its actions: Print Expected Visit Card, Mark Arrived (or Undo Arrived), Reschedule, and Archive — or Restore on an archived visit. The Expected Visit card prints on the thermal printer with the visitor, the date, the purpose and a QR. Give it to the visitor or keep it at the gate: on the day, the guard scans it to open the check-in. It is notice, not a pass — nobody is let in on the card alone.' },
-      { type: 'p', text: 'On its date, a booking appears in the guard’s Expected Today panel. The guard checks the visitor in from there, or from the scan result when their plate is read, which fills the visitor pass from the booking and prints the slip with the booking’s reference, who arranged it, and what for. The visit is marked Arrived, with the time and pass number, once the slip prints. A supplier plate on the roster needs no pass: scanning it admits the vehicle and marks the visit arrived, and its supplier slip carries the booking too.' },
+      { type: 'p', text: 'On its date, a booking appears in the guard’s Expected Today panel. The guard checks the visitor in from there, or from the scan result when their plate is read, which fills the visitor pass from the booking and prints the slip with the booking’s reference, who arranged it, and what for. The visit is marked Arrived, with the time and pass number, once the slip prints. A supplier plate on the roster needs no pass: scanning it admits the vehicle and marks the visit arrived, and its supplier slip carries the booking too. On its date a booking also waives the day and hours rules for its plate — a supplier outside delivery hours, or an owner on a day they are not registered for, is let in. A confiscation or a suspended account is never waived.' },
       { type: 'note', text: 'A booking is notice, not permission. Nobody gets in on it alone — the visitor still needs a pass, and every usual check, including a visitor penalty, still applies. A past visit that never arrived shows as No-show. Mark Arrived is only for correcting the list by hand.' },
       { type: 'p', text: 'Any visit that has not arrived yet, a No-show included, can be moved with Reschedule: the same booking, with the same SV number, appears in Expected Today on its new date. Visits are archived rather than deleted. Archive takes an optional reason and moves the visit to the Archived tab, where it stays on record with who archived it and when; the gate stops seeing it. Restore brings it back.' },
       { type: 'figure', id: 'cdso-suppliers' },
@@ -483,7 +482,7 @@ export const HELP_TOPICS = [
     category: 'CDSO',
     roles: ['admin'],
     body: [
-      { type: 'p', text: 'The Vehicle Log is the gate history: every scan, entry, and exit recorded by security, across all gates. Each guard sees only their own gate — you see all of them in one place.' },
+      { type: 'p', text: 'The Vehicle Log is the gate history: every scan, entry, and exit recorded by security, across all gates. Each guard sees only their own gate — you see all of them in one place. The Entry Gate column is where the vehicle came in, and the Exit column shows the time and the gate it left by.' },
       { type: 'steps', items: [
         'Pick a date range with the quick period buttons, or set the dates yourself.',
         'Narrow by gate, status or category.',

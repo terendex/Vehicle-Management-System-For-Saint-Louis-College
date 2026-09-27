@@ -173,4 +173,13 @@ export const zoneApi = {
     })
     return data
   },
+
+  // Guard reports double parking they saw themselves (no camera alert) →
+  // issues the violation under the same rules as an attributed alert.
+  reportDoublePark: async (zoneId, plateNumber, notes) => {
+    const { data } = await api.post('/vehicles/parking-zones/report-double-park/', {
+      zone_id: zoneId, plate_number: plateNumber, notes,
+    })
+    return data
+  },
 }

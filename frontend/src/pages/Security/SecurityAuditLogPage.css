@@ -237,6 +237,30 @@
 .sal-badge.visitor    { background: #DCE9F2; color: #03396C; }
 .sal-badge.exited     { background: #EEF4F9; color: #2E4C63; }
 
+/* Where the visit came in and went out — the gates can differ. */
+.sal-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.sal-gate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #EEF4F9;
+  color: #2E4C63;
+}
+
+.sal-gate.in     { background: #E6F4EE; color: #0A5C43; }
+.sal-gate.out    { background: #EEF0FA; color: #2F3C86; }
+.sal-gate.inside { background: #FFF6DB; color: #7A5A00; }
+
 .sal-row-sub {
   font-size: 11px;
   color: #64839C;

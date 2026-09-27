@@ -39,6 +39,15 @@
    only what this screen adds to it. */
 .em-scan-log { max-height: 380px; }
 
+/* A lookup in Recent Entries — asked at the gate, nobody logged in or out.
+   Not an entrant category, so it lives here rather than in
+   styles/entrant-category.css. Dashed, so it reads apart from a real entry. */
+.em-class-tag.cls-lookup {
+  background: transparent;
+  color: #5b6570;
+  border: 1px dashed #AEB8C2;
+}
+
 .em-audit-icon {
   width: 28px;
   height: 28px;

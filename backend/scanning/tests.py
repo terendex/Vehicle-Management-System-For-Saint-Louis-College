@@ -1097,6 +1097,35 @@ class VehicleLogReportAPITests(TestCase):
         self.assertEqual(self._col(rows[0], 'Category'), 'Employee')
         self.assertEqual(self._col(rows[0], 'Duration'), '2h')
 
+    def test_a_visit_across_two_gates_shows_both_in_either_gates_log(self):
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle,
+                          gate_id='gate1', minutes_past_midnight=8 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle, gate_id='gate4',
+                  paired_entry=entry, minutes_past_midnight=9 * 60)
+        from scanning.models import Gate
+        label = dict(Gate.objects.values_list('gate_id', 'label'))
+        for gate in ('gate1', 'gate4'):
+            rows = self.client.get('/api/scan/logs/', {'gate_id': gate}).data
+            self.assertEqual(len(rows), 1, gate)            # one visit, one row, at both gates
+            self.assertEqual(rows[0]['gate_id'], 'gate1')
+            self.assertEqual(rows[0]['exit_gate_id'], 'gate4')
+            report, _ = self._rows(gate_id=gate)
+            self.assertEqual(self._col(report[0], 'Entry Gate'), label.get('gate1', 'gate1'))
+            self.assertEqual(self._col(report[0], 'Exit Gate'), label.get('gate4', 'gate4'))
+
+    def test_an_exit_whose_entry_is_another_day_names_the_entry_gate(self):
+        entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle, gate_id='gate1',
+                          day=self.today - timedelta(days=1), minutes_past_midnight=20 * 60)
+        self._log('ABC 1234', AccessLog.Status.EXITED, vehicle=self.vehicle, gate_id='gate4',
+                  paired_entry=entry, minutes_past_midnight=7 * 60)
+        today = self.client.get('/api/scan/logs/', {'date': self.today.isoformat()}).data
+        self.assertEqual(today[0]['status'], 'exited')
+        self.assertEqual(today[0]['entry_gate_id'], 'gate1')
+        # And the day before: the entry is no longer shown as still inside.
+        before = self.client.get('/api/scan/logs/',
+                                 {'date': (self.today - timedelta(days=1)).isoformat()}).data
+        self.assertEqual(before[0]['exit_gate_id'], 'gate4')
+
     def test_a_vehicle_with_no_exit_is_marked_still_inside(self):
         self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle)
         rows, _ = self._rows()

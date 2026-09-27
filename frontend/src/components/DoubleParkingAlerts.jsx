@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { toast } from './Feedback/notify'
 import { zoneApi } from '../api/parking'
+import { announceDoubleParking } from '../utils/doubleParkingOutcome'
 import { useLiveUpdates } from '../realtime/useLiveUpdates'
 import './DoubleParkingAlerts.css'
 
@@ -56,10 +57,10 @@ export default function DoubleParkingAlerts({ zoneId = null, pollMs = 8000, canA
     if (!plate) { toast.error('Enter the plate or conduction number.'); return }
     setSubmitting(key)
     try {
-      await zoneApi.attributeDoublePark(a.zone_id, a.space_ids || [], plate)
-      toast.success(`Double-parking violation issued to ${plate}.`)
+      const data = await zoneApi.attributeDoublePark(a.zone_id, a.space_ids || [], plate)
       setPlateInputs(prev => { const n = { ...prev }; delete n[key]; return n })
       load() // the alert is now cleared server-side
+      await announceDoubleParking(data?.plate_number || plate, data)
     } catch (err) {
       toast.error(err?.response?.data?.error || 'Could not issue the violation.')
     } finally {

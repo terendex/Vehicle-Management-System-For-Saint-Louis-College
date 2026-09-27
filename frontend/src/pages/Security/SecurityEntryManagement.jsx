@@ -50,6 +50,12 @@ const STATUS_META = {
   duplicate:      { label: 'Duplicate Scan', Icon: Clock,       cls: 'exited',    logCls: 'exited'    },
   already_inside: { label: 'Previously Scanned', Icon: CheckCircle, cls: 'wrong_day', logCls: 'wrong_day' },
   visitor_pass_required: { label: 'Visitor Inside on Pass', Icon: AlertTriangle, cls: 'visitor', logCls: 'visitor' },
+  // Lookup-only outcomes: nothing is logged on the server for these, so they
+  // exist only as Recent Entries rows (see LOOKUP_CACHE_KEY).
+  name_lookup:   { label: 'Name Search',         Icon: Search,        cls: 'exited', logCls: 'exited' },
+  slip_opened:   { label: 'Slip Opened',         Icon: Ticket,        cls: 'exited', logCls: 'exited' },
+  expected_card: { label: 'Expected Visit Card', Icon: CalendarClock, cls: 'exited', logCls: 'exited' },
+  lookup_failed: { label: 'Not Found',           Icon: XCircle,       cls: 'denied', logCls: 'denied' },
 }
 function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 
@@ -128,6 +134,27 @@ function loadCachedPasses() {
 function saveCachedPasses(passes) {
   try {
     localStorage.setItem(PASS_CACHE_KEY, JSON.stringify({ date: new Date().toDateString(), passes }))
+  } catch { /* ignore */ }
+}
+
+// Lookups typed or scanned at this terminal that the server logs nothing for —
+// a name search, a re-check of a car already inside, a visitor's slip pulled up
+// by plate, a slip or Expected Visit card scanned. Recent Entries lists them
+// beside the logged scans so every lookup shows there. Browser-only and scoped
+// to today, like the pass cache above: they are a record of what was asked at
+// this gate, not of anybody entering.
+const LOOKUP_CACHE_KEY = 'slc_gate_lookups'
+const RECENT_LIMIT = 20
+function loadCachedLookups() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LOOKUP_CACHE_KEY) || 'null')
+    if (raw && raw.date === new Date().toDateString() && Array.isArray(raw.lookups)) return raw.lookups
+  } catch { /* ignore */ }
+  return []
+}
+function saveCachedLookups(lookups) {
+  try {
+    localStorage.setItem(LOOKUP_CACHE_KEY, JSON.stringify({ date: new Date().toDateString(), lookups }))
   } catch { /* ignore */ }
 }
 
@@ -1296,6 +1323,7 @@ export default function SecurityEntryManagement() {
   const [loading, setLoading]         = useState(false)
   const [scanQueue, setScanQueue]     = useState([]) // [{id, result}] — head is on screen
   const [logs, setLogs]               = useState([])
+  const [lookups, setLookups]         = useState(loadCachedLookups) // lookups the server keeps no row for
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
   const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
@@ -1447,6 +1475,29 @@ export default function SecurityEntryManagement() {
   const refreshLogs = () =>
     getAccessLogs({ limit: 20, ...gateFilter }).then(r => setLogs(r.data?.results ?? r.data ?? [])).catch(() => {})
 
+  // A lookup that left no AccessLog row. `status` picks the row's badge from
+  // STATUS_META; `detail` is the extra the badge cannot say ("2 matches").
+  const recordLookup = (query, status, detail = '') => {
+    setLookups(prev => [{
+      id: `lookup-${Date.now()}-${Math.random()}`,
+      lookup: true,
+      query: (query || '').trim(),
+      status,
+      detail,
+      scanned_at: new Date().toISOString(),
+      scanned_by_name: user?.full_name,
+    }, ...prev].slice(0, RECENT_LIMIT))
+  }
+  useEffect(() => { saveCachedLookups(lookups) }, [lookups])
+
+  // Recent Entries: the gate's logged scans and this terminal's lookups, one
+  // list, newest first.
+  const recent = [...logs, ...lookups]
+    .sort((a, b) => new Date(b.scanned_at) - new Date(a.scanned_at))
+    .slice(0, RECENT_LIMIT)
+  const recentScans = recent.filter(r => !r.lookup)
+  const recentLookupCount = recent.length - recentScans.length
+
   // Active visitor passes — alert once per pass when it crosses into overstay
   const refreshPasses = () =>
     getVisitorPasses().then(r => {
@@ -1539,12 +1590,12 @@ export default function SecurityEntryManagement() {
   // Pull a slip back up from its QR payload (SLC-VISITOR:{id} / SLC-NOPLATE:{id})
   // — shared by the lookup box (USB scanner-gun / typed), the camera scanner,
   // a picked name and the side panels. It only opens the slip; the guard
-  // records the exit or reprints from there.
+  // records the exit or reprints from there. Returns the slip (truthy) or false.
   const openSlip = async (code) => {
     try {
       const { data } = await lookupSlip(code)
       addToQueue({ slip: data, plate_number: data.headline, status: 'slip' })
-      return true
+      return data
     } catch (err) {
       // A visitor slip is good for one visit, and only its newest printed copy
       // works (qr_payload carries that copy's serial).
@@ -1554,6 +1605,14 @@ export default function SecurityEntryManagement() {
     }
   }
   const isSlipCode = (s) => /^SLC-(VISITOR|SUPPLIER|NOPLATE|EVENT):/i.test((s || '').trim())
+  // A slip QR the guard scanned or typed in — the same, plus its Recent
+  // Entries row. The side panels' Slip buttons call openSlip directly: those
+  // reopen a slip already on screen rather than look anything up.
+  const lookUpSlip = async (code) => {
+    const slip = await openSlip(code)
+    recordLookup(slip?.headline || code, slip ? 'slip_opened' : 'lookup_failed')
+    return slip
+  }
 
   // An Expected Visit card the CDSO printed. It admits nobody: scanning it
   // opens the check-in for its booking, so the visitor pass is issued against
@@ -1569,6 +1628,7 @@ export default function SecurityEntryManagement() {
       setExpected(todays)
     } catch { /* fall back to the list on screen */ }
     const visit = todays.find(v => v.id === id)
+    recordLookup(visit?.visitor_name || `SV-${id}`, 'expected_card', `SV-${id}`)
     if (visit && !visit.is_arrived && !visit.auto_admit) {
       setCheckIn(visit)
       return true
@@ -1627,23 +1687,29 @@ export default function SecurityEntryManagement() {
       addToQueue(fromStandingPass ? { ...res.data, _fromStandingPass: true } : res.data)
       // The check action doubles as the exit action once a vehicle is inside
       if (res.data.status === 'exited') refreshAll()
-      // Previously-scanned re-checks are informational — card only, kept out of
-      // recent scans. So is a visitor's plate pulling up their slip: nothing
-      // was logged, the guard decides from the slip.
-      if (res.data.status !== 'already_inside' && !res.data.slip) {
+      // A re-check of a car already inside, a double press, and a visitor's
+      // plate pulling up their slip are not logged on the server — the guard
+      // decides from the card or the slip. They still show in Recent Entries,
+      // as lookups, so every plate the guard checked is listed.
+      const logged = !['already_inside', 'duplicate'].includes(res.data.status) && !res.data.slip
+      if (logged) {
         setLogs(prev => [{
           id: Date.now(), plate_number: plate, status: res.data.status,
           classification: resultClassification(res.data),
           scanned_at: new Date().toISOString(), scanned_by_name: user?.full_name,
           gate_id: user?.gate_assignment,
-        }, ...prev].slice(0, 20))
-        // Reconcile Recent Scans with the server so the manual entry is backed by
+        }, ...prev].slice(0, RECENT_LIMIT))
+        // Reconcile Recent Entries with the server so the manual entry is backed by
         // the persisted AccessLog row, not just the optimistic placeholder.
         refreshLogs()
+      } else {
+        recordLookup(plate, res.data.status)
       }
       return res.data
     } catch (err) {
-      toast.error(err?.response?.data?.error || 'Lookup failed.')
+      const message = err?.response?.data?.error || 'Lookup failed.'
+      recordLookup(plate, 'lookup_failed', message)
+      toast.error(message)
       return null
     } finally { setLoading(false) }
   }
@@ -1655,7 +1721,10 @@ export default function SecurityEntryManagement() {
     setLoading(true)
     try {
       const { data } = await lookupOwner(query)
-      if (!data.results?.length) {
+      const found = data.results?.length ?? 0
+      recordLookup(query, found ? 'name_lookup' : 'lookup_failed',
+                   found ? `${found} match${found === 1 ? '' : 'es'}` : 'No match')
+      if (!found) {
         await notify.error(
           `No vehicle, visitor or no-plate driver matches “${query}”. Check the spelling, ` +
           'or use “No Plate?” if the vehicle has no plate at all.',
@@ -1732,7 +1801,7 @@ export default function SecurityEntryManagement() {
 
     if (isSlipCode(upper)) {
       setExitScanBusy(true)
-      const ok = await openSlip(upper)
+      const ok = await lookUpSlip(upper)
       setExitScanBusy(false)
       if (ok) setShowExitScanner(false)
       return
@@ -1774,7 +1843,7 @@ export default function SecurityEntryManagement() {
     }
     if (isSlipCode(raw)) {
       setLoading(true)
-      await openSlip(raw)
+      await lookUpSlip(raw)
       setPlateInput('')
       setLoading(false)
       return
@@ -2028,27 +2097,28 @@ export default function SecurityEntryManagement() {
 
             <section className="cm-panel">
               <div className="cm-panel-head">
-                <span className="cm-panel-title"><ClipboardList size={14} /> Recent Scans</span>
+                <span className="cm-panel-title"><ClipboardList size={14} /> Recent Entries</span>
                 <div className="cm-panel-end">
-                  <span className="cm-count">{logs.length}</span>
+                  <span className="cm-count">{recent.length}</span>
                   <button
                     type="button"
                     className="cm-icon-btn"
                     onClick={refreshLogs}
                     title="Refresh"
-                    aria-label="Refresh recent scans"
+                    aria-label="Refresh recent entries"
                   >
                     <RefreshCw size={13} />
                   </button>
                 </div>
               </div>
               {/* Who came through, at a glance. Counts only — this panel is
-                  the last 20 scans, so a filter here would hide rows without
-                  being able to say how many it hid. */}
-              {logs.length > 0 && (
+                  the last 20 rows, so a filter here would hide rows without
+                  being able to say how many it hid. Lookups are counted on
+                  their own: they are not anybody coming through. */}
+              {recent.length > 0 && (
                 <div className="em-class-filters">
                   {MANUAL_CATEGORIES.concat('supplier').map(key => {
-                    const n = logs.filter(l => (l.classification || 'unknown') === key).length
+                    const n = recentScans.filter(l => (l.classification || 'unknown') === key).length
                     if (!n) return null
                     const cm = getClassMeta(key)
                     return (
@@ -2057,14 +2127,42 @@ export default function SecurityEntryManagement() {
                       </span>
                     )
                   })}
+                  {recentLookupCount > 0 && (
+                    <span className="em-class-tag cls-lookup">
+                      Lookup <strong>{recentLookupCount}</strong>
+                    </span>
+                  )}
                 </div>
               )}
-              {logs.length === 0 ? (
+              {recent.length === 0 ? (
                 <p className="cm-empty">No entries recorded yet today.</p>
               ) : (
                 <ul className="cm-log em-scan-log">
-                  {logs.map((log, i) => {
+                  {recent.map((log, i) => {
                     const m = getMeta(log.status)
+                    if (log.lookup) {
+                      const by = log.scanned_by_name && log.scanned_by_name !== me ? `By ${log.scanned_by_name}` : ''
+                      return (
+                        <li key={log.id} className="cm-log-row is-lookup">
+                          <span className={`em-audit-icon ${m.logCls}`}><m.Icon size={13} /></span>
+                          <div className="cm-log-main">
+                            <div className="cm-log-line">
+                              <span className="cm-log-plate">{log.query || '—'}</span>
+                              <span className="cm-log-time">{timeAgo(log.scanned_at)}</span>
+                            </div>
+                            <div className="cm-log-tags">
+                              <span className={`em-log-badge ${m.logCls}`}>{m.label}</span>
+                              <span className="em-class-tag cls-lookup">Lookup</span>
+                            </div>
+                            {(log.detail || by) && (
+                              <div className="cm-log-who" title={log.detail}>
+                                {[log.detail, by].filter(Boolean).join(' · ')}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    }
                     const owner = log.vehicle_owner_name
                       // A plateless vehicle has no owner account; the driver
                       // and the description are all it has.

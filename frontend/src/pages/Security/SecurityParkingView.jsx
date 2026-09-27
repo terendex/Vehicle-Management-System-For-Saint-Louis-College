@@ -13,8 +13,7 @@ import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useFullscreen from '../../hooks/useFullscreen'
-import { overrideEntry } from '../../api/scanning'
-import { createViolation } from '../../api/violations'
+import { announceDoubleParking } from '../../utils/doubleParkingOutcome'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import { feedState, FEED_DOT } from '../../utils/feedState'
 import '../Admin/ParkingManagement.css'
@@ -26,93 +25,31 @@ const CAT_OPTS = [
   { key: 'car',        label: 'Car',        Icon: Car  },
 ]
 
-// ─── Parking Override Modal ───────────────────────────────────────────────────
-function ParkingOverrideModal({ zoneName, onClose, onDone }) {
-  const [plate,   setPlate]   = useState('')
-  const [reason,  setReason]  = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    const problems = [...fieldProblems(e.currentTarget)]
-    if (!plate.trim()) problems.push('Enter the plate number.')
-    if (!reason.trim()) problems.push('Give a reason for the override.')
-    if (await notify.validation(problems, { title: 'Override not logged' })) return
-    setLoading(true)
-    try {
-      await overrideEntry({ plate_number: plate.trim().toUpperCase(), reason: `Parking override — ${zoneName}: ${reason}` })
-      toast.success(`Parking override logged for ${plate.toUpperCase()}.`)
-      onDone()
-      onClose()
-    } catch {
-      toast.error('Override failed.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div style={{ background: '#fff', borderRadius: 14, width: 360, boxShadow: '0 20px 60px rgba(0,0,0,0.3)', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #D3E1EC', background: '#FEF9E4' }}>
-          <span style={{ fontWeight: 700, fontSize: 14, color: '#7A5C00', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Shield size={15} /> Parking Override
-          </span>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
-        </div>
-        <form onSubmit={handleSubmit} noValidate style={{ padding: 18 }}>
-          <p style={{ margin: '0 0 12px', fontSize: 12, color: '#8A6B00', background: '#FDF0BE', border: '1px solid #F7E08A', borderRadius: 6, padding: '6px 10px' }}>
-            Allow a vehicle to park in <strong>{zoneName}</strong> even if the zone is full. This will be logged.
-          </p>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate</label>
-          <input
-            value={plate} onChange={e => setPlate(e.target.value)}
-            placeholder="e.g. ABC 123"
-            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }}
-            required
-          />
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Reason</label>
-          <textarea
-            value={reason} onChange={e => setReason(e.target.value)}
-            placeholder="e.g. Event day, special clearance…"
-            rows={2}
-            style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box' }}
-            required
-          />
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" onClick={onClose} style={{ flex: 1, padding: '8px', borderRadius: 7, border: '1.5px solid #BDD4E5', background: '#fff', cursor: 'pointer', fontSize: 13 }}>Cancel</button>
-            <button type="submit" disabled={loading} style={{ flex: 1, padding: '8px', borderRadius: 7, border: 'none', background: '#8A6B00', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>
-              {loading ? 'Logging…' : 'Confirm Override'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
 // ─── Issue Violation Modal ────────────────────────────────────────────────────
-function IssueViolationModal({ onClose }) {
+// Double parking a guard saw for themselves — the one violation this screen
+// issues by hand. The gate raises the others on its own (unauthorized entry,
+// time exceed, activity while confiscated), and a camera alert is attributed
+// from its own card above. Issued through the same server path as an alert, so
+// the same rules hold: one offence per owner per day, then the ladder.
+function IssueViolationModal({ zoneId, zoneName, onClose }) {
   const [plate, setPlate]   = useState('')
-  const [type, setType]     = useState('no_sticker')
   const [notes, setNotes]   = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     const problems = [...fieldProblems(e.currentTarget)]
-    if (!plate.trim()) problems.push('Enter the plate number.')
+    if (!plate.trim()) problems.push('Enter the plate or conduction number.')
     if (await notify.validation(problems, { title: 'Violation not issued' })) return
     setLoading(true)
     try {
-      await createViolation({ plate_number: plate.trim().toUpperCase(), violation_type: type, notes })
-      toast.success(`Violation issued for ${plate.trim().toUpperCase()}.`)
+      const typed = plate.trim().toUpperCase()
+      const data = await zoneApi.reportDoublePark(zoneId, typed, notes)
       onClose()
+      await announceDoubleParking(data?.plate_number || typed, data)
     } catch (err) {
-      toast.error(err?.response?.data?.detail || 'Failed to issue violation.')
+      toast.error(err?.response?.data?.error || 'Failed to issue the violation.',
+                  { title: 'Violation not issued' })
     } finally { setLoading(false) }
   }
 
@@ -124,29 +61,24 @@ function IssueViolationModal({ onClose }) {
       <div style={{ background: '#fff', borderRadius: 14, width: '100%', maxWidth: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: '1px solid #D3E1EC', background: '#FCEDED' }}>
           <span style={{ fontWeight: 700, fontSize: 14, color: '#841818', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <AlertTriangle size={15} /> Issue Violation
+            <AlertTriangle size={15} /> Issue Violation — Double Parking
           </span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} noValidate style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ margin: 0, fontSize: 12, color: '#841818', background: '#FCEDED', border: '1px solid #F3C4C4', borderRadius: 6, padding: '6px 10px', lineHeight: 1.45 }}>
+            A vehicle parked across two bays{zoneName ? <> in <strong>{zoneName}</strong></> : ''}. This counts as an
+            offence: 1st — a week without campus access, 2nd — two weeks, 3rd — the rest of the
+            registration period. One offence per owner per day.
+          </p>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>License Plate *</label>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Plate or Conduction No. *</label>
             <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required
               style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', textTransform: 'uppercase' }} />
           </div>
           <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Violation Type</label>
-            <select value={type} onChange={e => setType(e.target.value)}
-              style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', background: '#fff' }}>
-              <option value="no_sticker">No Sticker</option>
-              <option value="expired_registration">Expired Registration</option>
-              <option value="unauthorized">Unauthorized Entry</option>
-              <option value="other">Other</option>
-            </select>
-          </div>
-          <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Notes</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Optional additional details…"
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} placeholder="Which bays, anything the CDSO should know…"
               style={{ width: '100%', padding: '7px 10px', border: '1.5px solid #BDD4E5', borderRadius: 7, fontSize: 13, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -174,7 +106,6 @@ export default function SecurityParkingView() {
   // which is the right answer whenever the zone covers the lens the guard wants.
   const [lensSel,       setLensSel]       = useState(null)
   const [loading,       setLoading]       = useState(true)
-  const [showOverride,  setShowOverride]  = useState(false)
   const [showViolation, setShowViolation] = useState(false)
   // Device Management camera rows, and which zones the detector is running for.
   const [deviceCams,    setDeviceCams]    = useState([])
@@ -831,18 +762,9 @@ export default function SecurityParkingView() {
                   type="button"
                   className="pm-btn pm-btn--danger"
                   onClick={() => setShowViolation(true)}
-                  title="Issue a violation to a vehicle"
+                  title="Issue a double-parking violation to a vehicle you saw across two bays"
                 >
                   <AlertTriangle size={14} /> Issue Violation
-                </button>
-                <button
-                  type="button"
-                  className="pm-btn pm-guard-override"
-                  onClick={() => setShowOverride(true)}
-                  disabled={!selZone}
-                  title="Allow a vehicle to park regardless of zone capacity"
-                >
-                  <Shield size={14} /> Override Parking
                 </button>
               </div>
             </section>
@@ -855,16 +777,12 @@ export default function SecurityParkingView() {
 
       </div>
 
-      {showOverride && selZone && (
-        <ParkingOverrideModal
-          zoneName={selZone.name}
-          onClose={() => setShowOverride(false)}
-          onDone={() => { setShowOverride(false); refreshZone() }}
-        />
-      )}
-
       {showViolation && (
-        <IssueViolationModal onClose={() => setShowViolation(false)} />
+        <IssueViolationModal
+          zoneId={selZone?.id ?? null}
+          zoneName={selZone?.name}
+          onClose={() => setShowViolation(false)}
+        />
       )}
 
       {bayLookup && (

@@ -167,9 +167,11 @@
 .pm-guard-unmonitored { margin: 0; font-weight: 500; line-height: 1.45; }
 
 /* ── Actions ─────────────────────────────────────────────────── */
+/* One action since Override Parking was removed (it only faked a gate entry;
+   nothing restricts parking in a full zone). */
 .pm-guard-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
   padding: 12px 14px;
 }
@@ -179,9 +181,3 @@
   font-size: 12.5px;
 }
 
-.pm-guard-override { background: #8A6B00; color: #FFFFFF; }
-.pm-guard-override:hover:not(:disabled) { background: #6F5600; }
-
-@media (max-width: 400px) {
-  .pm-guard-actions { grid-template-columns: 1fr; }
-}

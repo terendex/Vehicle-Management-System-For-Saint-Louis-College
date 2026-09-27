@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
 from vehicles.models import Vehicle, SupplierPlate
+from vehicles.scheduled_visits import visit_expected_today, waiver_note
 from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
 from accounts.views import IsAdminRole
@@ -636,7 +637,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
 # is about NOT issuing too many: one car in front of a camera generates scans
 # continuously, and each one would otherwise be another offence.
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
-                        entry_status: str = ''):
+                        entry_status: str = '', issued_by=None):
     """
     Auto-issue a violation at the gate — at most ONE violation of each type per
     vehicle per calendar day, no matter how often it is scanned or detected that
@@ -654,6 +655,10 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     the new violation and the penalty it imposed, or {'already_recorded': True}
     when the per-day cap meant no new strike. Callers that do not show a card
     may ignore it.
+
+    `issued_by` is the guard, when a person reported it rather than the gate or
+    a camera deciding: the row then names them and keeps `message` as written,
+    without the "Auto-logged at gate" prefix. Every rule above still applies.
     """
     from .models import active_guard_for_gate
 
@@ -718,7 +723,8 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         vehicle              = vehicle,
         owner                = owner,
         violation_type       = vtype,
-        notes                = f'Auto-logged at gate: {message}',
+        notes                = message if issued_by else f'Auto-logged at gate: {message}',
+        issued_by            = issued_by,
         offense_number       = offense_num,
         status               = Violation.Status.WARNING,   # issued, not yet acted on by the CDSO
         # Only the 3rd strike holds registration.
@@ -960,8 +966,10 @@ class ScanView(APIView):
                 # Asked only now, at the point of ENTRY. A supplier already
                 # inside when their allowed hours end must still be able to
                 # drive out, which is why the exit branch above never asks.
+                # A visit the CDSO booked for today on this plate waives it.
                 deny_msg = _supplier_rule_denial()
-                if deny_msg:
+                waived_by = visit_expected_today(plate) if deny_msg else None
+                if deny_msg and not waived_by:
                     AccessLog.objects.create(
                         plate_number=plate, status=AccessLog.Status.DENIED,
                         denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
@@ -993,7 +1001,8 @@ class ScanView(APIView):
                     'allowed':       True,
                     'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
                                       if open_campus else
-                                      f'Supplier vehicle — {supplier_name}. Entry permitted.'),
+                                      f'Supplier vehicle — {supplier_name}. Entry permitted.'
+                                      + (waiver_note(waived_by) if waived_by else '')),
                     'is_supplier':   True,
                     'supplier_name': supplier_name,
                     'supplier_slip': supplier_slip(entry_log),   # printed by the guard page
@@ -1890,14 +1899,23 @@ def _filter_access_logs(request):
         AccessLog.objects
         # All three are rendered on every row of the table and every line of
         # the report — vehicle__user is a two-step join for the owner's name.
-        .select_related('scanned_by', 'on_duty_guard', 'vehicle__user')
+        # paired_entry: a lone exit row names the gate its visit came in by.
+        .select_related('scanned_by', 'on_duty_guard', 'vehicle__user', 'paired_entry')
         .order_by('-scanned_at')             # newest first; the row cap below therefore keeps the most recent
     )
     filters_desc = []                        # the filter written out in words, for the report subtitle
 
     gate_id = (request.query_params.get('gate_id') or '').strip()
     if gate_id:
-        qs = qs.filter(gate_id=gate_id)
+        # Every visit that passed through this gate, either way: a car that
+        # came in at Gate 1 and left by Gate 4 is in both gates' logs. So the
+        # rows scanned here, plus the other half of each visit — the exit of
+        # an entry made here, and the entry of an exit made here — which the
+        # merge then folds into one row carrying both gates.
+        exits_here = AccessLog.objects.filter(
+            gate_id=gate_id, paired_entry__isnull=False).values('paired_entry_id')
+        qs = qs.filter(Q(gate_id=gate_id) | Q(paired_entry__gate_id=gate_id)
+                       | Q(pk__in=exits_here))
         from .models import Gate
         label = Gate.objects.filter(gate_id=gate_id).values_list('label', flat=True).first()
         filters_desc.append(f'Gate: {label or gate_id}')
@@ -1980,6 +1998,14 @@ def _merge_access_log_visits(logs):
         # so it still appears as its own row instead of vanishing entirely.
         if log.status == AccessLog.Status.EXITED and log.paired_entry_id in entries_by_id:
             exit_by_entry_id[log.paired_entry_id] = log
+    # The other way round: an entry whose exit is NOT in the set — made after
+    # the date filter's day, or past the row cap — still left, and without
+    # this it would read "Still inside" with no exit gate. One query for all.
+    unpaired = [pk for pk in entries_by_id if pk not in exit_by_entry_id]
+    if unpaired:
+        for exit_log in AccessLog.objects.filter(
+                paired_entry_id__in=unpaired, status=AccessLog.Status.EXITED).order_by('scanned_at'):
+            exit_by_entry_id.setdefault(exit_log.paired_entry_id, exit_log)
 
     merged_exit_ids = {exit_log.id for exit_log in exit_by_entry_id.values()}   # a set, so the filter below is a lookup per row
     visible = [log for log in logs if log.id not in merged_exit_ids]   # order preserved: still newest-first from the queryset
@@ -2032,11 +2058,17 @@ class AccessLogListView(APIView):
         # The exit half is added onto the serialized entry rows rather than
         # being a serializer field: the pairing is only known after the merge
         # above, which the serializer has no access to.
-        for row in data:
+        for row, log in zip(data, visible):
             exit_log = exit_by_entry_id.get(row['id'])
             if exit_log:
                 row['exited_at'] = exit_log.scanned_at
+                row['exit_gate_id'] = exit_log.gate_id
                 row['duration_minutes'] = _visit_duration_minutes(entries_by_id[row['id']], exit_log)
+            elif log.status == AccessLog.Status.EXITED and log.paired_entry_id:
+                # A lone exit — its entry is outside this list (another day,
+                # or past the cap). Still say where and when the visit began.
+                row['entry_gate_id'] = log.paired_entry.gate_id
+                row['entered_at'] = log.paired_entry.scanned_at
         # A row with no exited_at is a vehicle still inside — the screen reads
         # the absence of the key, so nothing needs to say so explicitly.
         return Response(data)
@@ -2046,8 +2078,10 @@ VEHICLE_LOG_REPORT_HEADERS = [
     # 'Category' is who came through, which 'Status' (what was decided about
     # them) cannot answer: a report asked for "how many students entered in
     # September" could not be produced from the old columns at all.
-    '#', 'Date & Time', 'Plate', 'Owner', 'Category', 'Type', 'Gate',
-    'Status', 'Guard on Duty', 'Exit Time', 'Duration', 'Remarks',
+    # Two gate columns, because a visit can come in at one gate and leave by
+    # another, and the gate log reports both halves.
+    '#', 'Date & Time', 'Plate', 'Owner', 'Category', 'Type', 'Entry Gate',
+    'Status', 'Guard on Duty', 'Exit Time', 'Exit Gate', 'Duration', 'Remarks',
 ]
 
 # Rows are capped rather than streamed, the same way the audit report is: a year
@@ -2075,6 +2109,9 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             return f'{minutes} min'
         hours, mins = divmod(minutes, 60)
         return f'{hours}h {mins}m' if mins else f'{hours}h'   # drops a trailing "0m"
+
+    def gate_label(gate_id):
+        return gate_labels.get(gate_id, gate_id or '')
 
     rows = []
     for i, log in enumerate(logs, start=1):
@@ -2105,6 +2142,16 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
         if not exit_log and log.status == AccessLog.Status.AUTHORIZED:
             remarks.append('Still inside')
 
+        # A lone exit row (its entry is outside the report) IS the exit: its
+        # own gate is the exit gate, and the entry gate is its pair's.
+        if log.status == AccessLog.Status.EXITED:
+            entry_gate = gate_label(log.paired_entry.gate_id) if log.paired_entry else ''
+            exit_gate, exit_time = gate_label(log.gate_id), log.scanned_at
+        else:
+            entry_gate = gate_label(log.gate_id)
+            exit_gate = gate_label(exit_log.gate_id) if exit_log else ''
+            exit_time = exit_log.scanned_at if exit_log else None
+
         rows.append([
             i,
             tz.localtime(log.scanned_at).strftime('%b %d, %Y %I:%M:%S %p'),
@@ -2114,12 +2161,13 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             owner,
             category_labels.get(log.entrant_category, ''),
             (log.vehicle_type or '').title(),
-            gate_labels.get(log.gate_id, log.gate_id or ''),
+            entry_gate,
             status_labels.get(log.status, log.status),
             getattr(log.on_duty_guard, 'full_name', '') or '',
             # Time only, no date: the entry column already carries the date,
             # and a visit that crosses midnight is rare enough to read from it.
-            tz.localtime(exit_log.scanned_at).strftime('%I:%M %p') if exit_log else '',
+            tz.localtime(exit_time).strftime('%I:%M %p') if exit_time else '',
+            exit_gate,
             duration_text(minutes),
             ' · '.join(remarks),                 # a middle dot, so remarks stay legible run together in one cell
         ])
@@ -2158,7 +2206,7 @@ class VehicleLogExportView(APIView):
             subtitle=subtitle,
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 22, 14, 26, 16, 12, 22, 14, 22, 12, 10, 40],   # characters, not millimetres — widest for Remarks, the free-text column
+            col_widths=[5, 22, 14, 26, 16, 12, 18, 14, 22, 12, 18, 10, 40],   # characters, not millimetres — widest for Remarks, the free-text column
         )
 
 
@@ -2180,10 +2228,11 @@ class VehicleLogPdfExportView(APIView):
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
             # 267mm of printable width on landscape A4, and it must still total
-            # 267 now that Category has been added. Date & Time gets enough to
-            # stay on one line (the audit report learned that the hard way);
-            # Remarks gives up most of the room, being the only free-text column.
-            col_widths_mm=[8, 31, 21, 32, 18, 15, 24, 21, 28, 16, 14, 39],
+            # 267 now that Category and Exit Gate have been added. Date & Time
+            # gets enough to stay on one line (the audit report learned that the
+            # hard way); Remarks gives up most of the room, being the only
+            # free-text column.
+            col_widths_mm=[8, 31, 21, 28, 18, 15, 20, 21, 25, 16, 20, 14, 30],
         )
 
 
@@ -2915,8 +2964,10 @@ class ManualEntryView(APIView):
 
             # Asked only at ENTRY, never on the exit branch above: a supplier
             # already inside when their hours end must still be able to leave.
+            # A visit the CDSO booked for today on this plate waives it.
             deny_msg = _supplier_rule_denial()
-            if deny_msg:
+            waived_by = visit_expected_today(plate_number) if deny_msg else None
+            if deny_msg and not waived_by:
                 AccessLog.objects.create(
                     plate_number=plate_number, status=AccessLog.Status.DENIED,
                     denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
@@ -2943,7 +2994,8 @@ class ManualEntryView(APIView):
                 'allowed':       True,
                 'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
                                   if open_campus else
-                                  f'Supplier vehicle — {supplier_name}. Entry permitted.'),
+                                  f'Supplier vehicle — {supplier_name}. Entry permitted.'
+                                  + (waiver_note(waived_by) if waived_by else '')),
                 'is_supplier':   True,
                 'supplier_name': supplier_name,
                 'supplier_slip': supplier_slip(entry_log),   # printed by the guard page

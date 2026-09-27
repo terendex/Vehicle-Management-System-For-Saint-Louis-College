@@ -467,6 +467,77 @@ class DoubleParkAttributionTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertTrue(Violation.objects.filter(vehicle=v, violation_type='double_parking').exists())
 
+    def test_second_attribution_same_day_says_nothing_new_was_issued(self):
+        from violations.models import Violation
+        self.assertFalse(self._post(self.guard).data['already_recorded'])
+        resp = self._post(self.guard, space_ids=[3, 4])
+        self.assertTrue(resp.data['already_recorded'])
+        self.assertIsNone(resp.data['violation'])
+        self.assertEqual(Violation.objects.filter(vehicle=self.vehicle).count(), 1)
+
+
+class ReportDoubleParkingTests(TestCase):
+    """The parking screen's Issue Violation: double parking a guard saw for
+    themselves, issued under the same rules as the camera's."""
+
+    URL = '/api/vehicles/parking-zones/report-double-park/'
+
+    def setUp(self):
+        from accounts.models import User
+        from vehicles.models import ParkingZone, Vehicle
+        self.guard = User.objects.create_user(email='rdg@slc.edu.ph', full_name='GUARD ONE',
+                                              password='x', role='security', gate_assignment='gate1')
+        self.admin = User.objects.create_user(email='rda@slc.edu.ph', full_name='Admin',
+                                              password='x', role='admin')
+        self.owner = User.objects.create_user(email='rdo@slc.edu.ph', full_name='OWNER',
+                                              password='x', role='vehicle_owner', owner_type='student')
+        self.vehicle = Vehicle.objects.create(plate_number='RDP1234', vehicle_type='car',
+                                              is_authorized=True, user=self.owner)
+        self.zone = ParkingZone.objects.create(name='North Lot', vehicle_category='car')
+
+    def _post(self, user=None, **data):
+        c = APIClient(); c.force_authenticate(user or self.guard)
+        return c.post(self.URL, {'plate_number': 'rdp 1234', 'zone_id': self.zone.pk, **data}, format='json')
+
+    def test_issues_a_double_parking_strike_named_to_the_guard(self):
+        from violations.models import Violation
+        resp = self._post(notes='  across  bays A3 and A4 ')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['violation']['type'], 'double_parking')
+        self.assertEqual(resp.data['violation']['offense_number'], 1)
+        self.assertTrue(resp.data['violation']['confiscated'])      # 1st offence: a week
+        v = Violation.objects.get(vehicle=self.vehicle)
+        self.assertEqual(v.issued_by, self.guard)
+        self.assertEqual(v.owner, self.owner)
+        self.assertIn('North Lot', v.notes)
+        self.assertIn('across bays A3 and A4', v.notes)
+        self.assertNotIn('Auto-logged', v.notes)
+
+    def test_one_strike_per_owner_per_day(self):
+        from violations.models import Violation
+        self._post()
+        resp = self._post()
+        self.assertTrue(resp.data['already_recorded'])
+        self.assertEqual(Violation.objects.filter(owner=self.owner).count(), 1)
+
+    def test_only_a_guard_may_report(self):
+        self.assertEqual(self._post(self.admin).status_code, 403)
+
+    def test_a_plate_that_was_never_on_campus_is_refused(self):
+        self.assertEqual(self._post(plate_number='ZZZ9999').status_code, 404)
+
+    def test_a_supplier_plate_is_cited_on_an_unowned_vehicle(self):
+        from vehicles.models import Supplier, SupplierPlate, Vehicle
+        from violations.models import Violation
+        supplier = Supplier.objects.create(company_name='ILOCOS FRESH', category='delivery', is_active=True)
+        SupplierPlate.objects.create(supplier=supplier, plate_number='SUP1234')
+        resp = self._post(plate_number='SUP 1234')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        vehicle = Vehicle.objects.get(plate_number='SUP1234')
+        self.assertIsNone(vehicle.user)
+        self.assertFalse(vehicle.is_authorized)
+        self.assertTrue(Violation.objects.filter(vehicle=vehicle, violation_type='double_parking').exists())
+
 
 class DailySchedulerTests(TestCase):
     """The in-process scheduler archives expired owners and applies the retention

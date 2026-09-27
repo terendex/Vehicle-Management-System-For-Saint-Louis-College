@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, CalendarDays, RefreshCw, Filter,
+  ClipboardList, CalendarDays, RefreshCw, Filter, LogIn, LogOut,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { getAccessLogs } from '../../api/scanning'
@@ -38,6 +38,20 @@ function getMeta(status) {
 function timeAgo(ts) {
   try { return formatDistanceToNow(new Date(ts), { addSuffix: true }) }
   catch { return '' }
+}
+
+// Which gate a visit came in by and which it left by. A merged row is the
+// entry carrying its exit; a lone exit row (its entry was on another day) is
+// the exit carrying its entry. A refused or unreadable scan has only the gate
+// it happened at, so it returns null and the row says "At <gate>".
+function visitGates(log) {
+  if (log.status === 'exited') {
+    return { inGate: log.entry_gate_id, inAt: log.entered_at, outGate: log.gate_id, outAt: log.scanned_at }
+  }
+  if (log.status === 'authorized' || log.status === 'open_entry') {
+    return { inGate: log.gate_id, inAt: log.scanned_at, outGate: log.exit_gate_id, outAt: log.exited_at }
+  }
+  return null
 }
 
 function fmtTime(ts) {
@@ -89,6 +103,9 @@ export default function SecurityAuditLogPage() {
     ? logs.filter(l => {
         if (statusFilter === 'denied') return ['denied', 'wrong_day', 'disabled'].includes(l.status)
         if (statusFilter === 'unknown') return ['unknown', 'no_pass'].includes(l.status)
+        // A visit's exit is folded into its entry row, so "Exited" means any
+        // visit that has left — not only a lone exit row.
+        if (statusFilter === 'exited') return l.status === 'exited' || !!l.exited_at
         return l.status === statusFilter
       })
     : logs
@@ -101,7 +118,7 @@ export default function SecurityAuditLogPage() {
         <div className="sal-header">
           <div>
             <h1 className="sal-title"><ClipboardList size={20} /> Vehicle Log</h1>
-            <p className="sal-sub">All scans recorded at {gateLabel}</p>
+            <p className="sal-sub">Every scan at {gateLabel}, and each visit's entry and exit gate</p>
           </div>
           <div className="sal-header-actions">
             <div className="sal-date-wrap">
@@ -157,6 +174,7 @@ export default function SecurityAuditLogPage() {
             <div className="sal-list">
               {filtered.map((log, i) => {
                 const { Icon, label, cls } = getMeta(log.status)
+                const gates = visitGates(log)
                 return (
                   <div key={log.id ?? i} className={`sal-row ${cls}`}>
                     <div className={`sal-row-icon ${cls}`}>
@@ -166,21 +184,39 @@ export default function SecurityAuditLogPage() {
                       <div className="sal-row-top">
                         <span className="sal-plate">{log.plate_number || '—'}</span>
                         <span className={`sal-badge ${cls}`}>{label}</span>
-                        {log.exited_at && (
-                          <span className="sal-badge exited">
-                            Exited {fmtTime(log.exited_at)} · {log.duration_minutes} min
-                          </span>
+                      </div>
+                      <div className="sal-gates">
+                        {gates ? (
+                          <>
+                            <span className="sal-gate in">
+                              <LogIn size={11} /> In · {labelFor(gates.inGate) || 'Earlier visit'}
+                              {gates.inAt && ` · ${fmtTime(gates.inAt)}`}
+                            </span>
+                            {gates.outGate ? (
+                              <span className="sal-gate out">
+                                <LogOut size={11} /> Out · {labelFor(gates.outGate)} · {fmtTime(gates.outAt)}
+                                {log.duration_minutes != null && ` · ${log.duration_minutes} min`}
+                              </span>
+                            ) : (
+                              <span className="sal-gate inside">Still inside</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="sal-gate">At {labelFor(log.gate_id) || log.gate_id || '—'}</span>
                         )}
                       </div>
-                      {(log.vehicle_owner_name || log.scanned_by_name || log.on_duty_guard_name) && (
-                        <div className="sal-row-sub">
-                          {log.vehicle_owner_name && <span>Owner: {log.vehicle_owner_name}</span>}
-                          {log.on_duty_guard_name && <span>· On duty: {log.on_duty_guard_name}</span>}
-                          {log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && (
-                            <span>· Scanned by: {log.scanned_by_name}</span>
-                          )}
-                        </div>
-                      )}
+                      {/* Joined rather than each part carrying its own "· ",
+                          which left a stray dot in front of "On duty" on any
+                          row with no owner (visitors, unregistered plates). */}
+                      {(() => {
+                        const who = [
+                          log.vehicle_owner_name && `Owner: ${log.vehicle_owner_name}`,
+                          log.on_duty_guard_name && `On duty: ${log.on_duty_guard_name}`,
+                          log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name
+                            && `Scanned by: ${log.scanned_by_name}`,
+                        ].filter(Boolean)
+                        return who.length > 0 && <div className="sal-row-sub">{who.join(' · ')}</div>
+                      })()}
                     </div>
                     <div className="sal-row-time">
                       <span className="sal-time-abs">{fmtTime(log.scanned_at)}</span>

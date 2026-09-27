@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from scanning.models import AccessLog, VisitorPass
-from vehicles.models import ScheduledVisit, Supplier, SupplierPlate
+from vehicles.models import RuleConstraint, ScheduledVisit, Supplier, SupplierPlate, Vehicle
 
 
 def _user(email, role, **extra):
@@ -386,3 +386,68 @@ class ExpectedVisitCardTests(TestCase):
         self.client.force_authenticate(user=self.guard)
         resp = self.client.post('/api/scan/slip/exit/', {'code': self.code}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+
+class ExpectedVisitWaivesRulesTests(TestCase):
+    """A plate the CDSO booked for today gets past the day/hour rules. The
+    rules here allow no day at all, so the refusal does not depend on the
+    clock the suite happens to run at."""
+    def setUp(self):
+        self.admin = _user('cdso@slc.edu.ph', 'admin')
+        self.guard = _user('guard@slc.edu.ph', 'security', gate_assignment='gate1')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+        self.today = timezone.localdate()
+        RuleConstraint.objects.update(enabled=False)   # the seeded rules, whatever their days
+        for kind in ('supplier', 'student_vehicle'):
+            RuleConstraint.objects.create(name=f'Closed {kind}', constraint_type=kind, days=[],
+                                          start_time='00:00', end_time='23:59', enabled=True)
+        supplier = Supplier.objects.create(company_name='ILOCOS FRESH', category='delivery', is_active=True)
+        SupplierPlate.objects.create(supplier=supplier, plate_number='ASD123')
+
+    def _visit(self, plate, **kw):
+        return ScheduledVisit.objects.create(visitor_name='JACK BLAK', category='delivery',
+                                             expected_date=self.today, plate_number=plate,
+                                             created_by=self.admin, **kw)
+
+    def _check(self, plate):
+        return self.client.post('/api/scan/manual-entry/', {'plate_number': plate}, format='json').data
+
+    def test_supplier_without_a_visit_is_refused(self):
+        resp = self._check('ASD 123')
+        self.assertEqual(resp['status'], 'denied')
+
+    def test_supplier_expected_today_is_admitted_and_arrives(self):
+        visit = self._visit('ASD123')
+        resp = self._check('ASD 123')
+        self.assertTrue(resp['allowed'], resp)
+        self.assertIn(f'SV-{visit.pk}', resp['message'])
+        self.assertIn('waived', resp['message'])
+        visit.refresh_from_db()
+        self.assertTrue(visit.is_arrived)
+
+    def test_another_days_or_archived_visit_waives_nothing(self):
+        ScheduledVisit.objects.create(visitor_name='JACK BLAK', plate_number='ASD123',
+                                      expected_date=self.today - timedelta(days=1))
+        self._visit('ASD123', archived_at=timezone.now())
+        self.assertEqual(self._check('ASD123')['status'], 'denied')
+
+    def test_student_on_a_closed_day_is_admitted_when_expected(self):
+        owner = _user('stu@slc.edu.ph', 'vehicle_owner', owner_type='student')
+        vehicle = Vehicle.objects.create(plate_number='STU1234', vehicle_type='car',
+                                         is_authorized=True, user=owner)
+        # Asked of check_entry directly: a refused gate check would also issue
+        # a violation, and the confiscation it brings is (rightly) not waived.
+        from scanning.entry_logic import check_entry
+        self.assertEqual(check_entry(vehicle)['status'], 'wrong_day')
+        self._visit('STU1234')
+        resp = self._check('STU1234')
+        self.assertEqual(resp['status'], 'authorized', resp)
+        self.assertIn('waived', resp['message'])
+
+    def test_a_confiscated_account_is_not_waived(self):
+        owner = _user('conf@slc.edu.ph', 'vehicle_owner', owner_type='student')
+        Vehicle.objects.create(plate_number='CNF1234', vehicle_type='car', is_authorized=True, user=owner)
+        self._visit('CNF1234')
+        with patch.object(User, 'is_confiscated', new=True):
+            self.assertEqual(self._check('CNF1234')['status'], 'confiscated')

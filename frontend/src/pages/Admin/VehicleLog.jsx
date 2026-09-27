@@ -429,15 +429,22 @@ export default function VehicleLog() {
                     <th style={{ width: 160 }}>Time Stamp</th>
                     <th style={{ width: 115 }}>Plate</th>
                     <th>Owner</th>
-                    <th style={{ width: 105 }}>Gate</th>
+                    <th style={{ width: 105 }}>Entry Gate</th>
                     <th style={{ width: 145 }}>Status</th>
                     <th style={{ width: 150 }}>Guard on Duty</th>
-                    <th style={{ width: 140 }}>Exit</th>
+                    <th style={{ width: 150 }}>Exit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pageRows.map((log, i) => {
                     const { Icon, label, cls } = getMeta(log.status)
+                    // A visit can enter by one gate and leave by another. A
+                    // merged row is the entry carrying its exit; a lone exit
+                    // row (entry outside the filter) carries its entry's gate.
+                    const loneExit = log.status === 'exited'
+                    const entryGate = loneExit ? log.entry_gate_id : log.gate_id
+                    const exitGate  = loneExit ? log.gate_id : log.exit_gate_id
+                    const exitAt    = loneExit ? log.scanned_at : log.exited_at
                     return (
                       <tr key={log.id ?? i}>
                         <td className="vl-timestamp">{fmtDateTime(log.scanned_at)}</td>
@@ -462,7 +469,7 @@ export default function VehicleLog() {
                             </span>
                           )}
                         </td>
-                        <td className="vl-gate">{gateLabel(log.gate_id) || '—'}</td>
+                        <td className="vl-gate">{gateLabel(entryGate) || '—'}</td>
                         <td>
                           <span className={`vl-status-badge ${cls}`}>
                             <Icon size={12} /> {label}
@@ -479,10 +486,13 @@ export default function VehicleLog() {
                           )}
                         </td>
                         <td className="vl-exit">
-                          {log.exited_at ? (
+                          {exitAt ? (
                             <>
-                              {fmtTime(log.exited_at)}
-                              <span className="vl-duration">{fmtDuration(log.duration_minutes)} inside</span>
+                              {fmtTime(exitAt)}
+                              {exitGate && <span className="vl-exit-gate">via {gateLabel(exitGate)}</span>}
+                              {log.duration_minutes != null && (
+                                <span className="vl-duration">{fmtDuration(log.duration_minutes)} inside</span>
+                              )}
                             </>
                           ) : log.status === 'authorized' ? (
                             <span className="vl-inside">Still inside</span>

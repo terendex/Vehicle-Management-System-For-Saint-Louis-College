@@ -1134,8 +1134,11 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         # Outside → a request to come in. The only rule that can refuse a
         # supplier is the delivery window; returns a sentence, or nothing.
+        # A visit the CDSO booked for today on this plate waives it.
+        from vehicles.scheduled_visits import visit_expected_today, waiver_note
         deny_msg = _supplier_rule_denial()
-        if deny_msg:
+        waived_by = visit_expected_today(plate_number) if deny_msg else None
+        if deny_msg and not waived_by:
             # DB-backed dedup so an idling supplier truck doesn't flood the log
             now = timezone.now()
             cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
@@ -1177,7 +1180,8 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             "allowed":        True,
             "message":        (f"Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted."
                                if open_campus else
-                               f"Supplier vehicle — {supplier_name}. Entry permitted."),
+                               f"Supplier vehicle — {supplier_name}. Entry permitted."
+                               + (waiver_note(waived_by) if waived_by else "")),
             "is_supplier":    True,
             "supplier_name":  supplier_name,
             "supplier_slip":  supplier_slip(entry_log),   # printed by the guard page

@@ -775,6 +775,10 @@ class SystemSettings(models.Model):
         default=60,
         validators=[MinValueValidator(5), MaxValueValidator(300)],
     )
+    # Retired: nothing reads it. Its switch (Events page) and the guard's
+    # Override Parking button were removed — the button only wrote a gate
+    # entry, and nothing restricts parking in a full zone. The column stays
+    # until a two-phase drop (see the deploy notes on NOT NULL column drops).
     event_mode_parking   = models.BooleanField(
         default=False,
         help_text="When enabled, guards can override full-parking restrictions.",

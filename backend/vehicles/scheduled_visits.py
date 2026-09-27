@@ -1,9 +1,12 @@
 """How a scheduled visit meets the gate.
 
-A ScheduledVisit is notice, not permission: it tells the guard who to expect
-today and pre-fills the visitor pass, but nobody gets in on it alone. A visitor
-still enters on a printed visitor slip, a supplier still enters off the
-supplier roster.
+A ScheduledVisit tells the guard who to expect today and pre-fills the visitor
+pass. It is also the CDSO saying "this vehicle comes in today": a plate booked
+for today is not turned away by the day/hour entry rules (supplier delivery
+window, student/employee/fetcher rules) — see visit_expected_today. It is not a
+pass on its own, though: a visitor still enters on a printed visitor slip, a
+supplier still enters off the supplier roster, and a confiscated or suspended
+account is still refused.
 
 A visit is marked arrived at the moment its person's entry is logged, and only
 then:
@@ -41,6 +44,25 @@ def open_visit_for_plate(plate):
     return (live_visits()
             .filter(expected_date=timezone.localdate(), is_arrived=False, plate_number=plate)
             .order_by('pk').first())
+
+
+def visit_expected_today(*plates):
+    """Today's visit booked on any of these identifiers, or None — the visit
+    that waives the day/hour entry rules for this vehicle.
+
+    Arrived visits count too: the booking is for the day, so a supplier who
+    drives out between deliveries is still expected when they come back."""
+    wanted = {_normalize_plate(p) for p in plates} - {''}
+    if not wanted:
+        return None
+    return (live_visits()
+            .filter(expected_date=timezone.localdate(), plate_number__in=wanted)
+            .order_by('is_arrived', 'pk').first())
+
+
+def waiver_note(visit):
+    """The sentence added to an entry the booking let through."""
+    return f' Expected visit SV-{visit.pk} ({visit.visitor_name}) — schedule rule waived.'
 
 
 def mark_arrived(visit, when=None, plate=''):

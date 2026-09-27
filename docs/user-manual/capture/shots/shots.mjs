@@ -359,7 +359,7 @@ export const SHOTS = [
     caption: 'Events reserve part of campus parking and note organizer plates.',
     prepare: async (p) => { await clickTab(p, /^Events$/) },
     marks: [
-      m(1, 'Event Mode overrides', 'Parking Override lets guards admit vehicles when a zone is full; Entry Override lets them admit plates that would be denied. Click the switch to turn each on or off.', union(card(text('Parking Override')), card(text('Entry Override')))),
+      m(1, 'Event Mode', 'Entry Override lets guards admit plates that would be denied; click the switch to turn it on or off. Zone Capacity Overrides set a temporary capacity per zone — leave one blank to use its bays.', union(card(text('Entry Override')), card(text('Zone Capacity Overrides')))),
       m(2, 'Add Event', 'Create an event: name, date, times, how much parking it takes, and organizer plates.', btn(/Add Event/)),
       m(3, 'Event card', 'Date, time, organizer plates, and how much of campus parking the event holds.', card(text('Research Congress 2026'))),
       m(4, 'Event actions', 'Activate the event, reschedule it, show its details, or delete it.', (p) => { const b = p.locator('main').getByText('Research Congress 2026', { exact: true }).locator('xpath=ancestor::*[.//button[contains(.,"Activate")]][1]').getByRole('button'); return [b.first(), b.last()] }),
@@ -387,8 +387,8 @@ export const SHOTS = [
       m(2, 'Date range', 'Quick ranges, or pick exact start and end dates.', card(text('Date range', 'main'))),
       m(3, 'Search', 'Find a plate, owner or guard.', ph(/Search plate, owner or guard/)),
       m(4, 'Gate, status and category filters', 'Narrow the log; Clear filters resets them.', union(text('All Gates'), btn(/Clear filters/))),
-      m(5, 'Log table', 'Time, plate, owner, gate, decision and the guard on duty.', css('main table')),
-      m(6, 'Exit', 'When the vehicle left and how long it stayed, or "Still inside".', (p) => p.locator('main table thead th').last()),
+      m(5, 'Log table', 'Time, plate, owner, the gate it came in by, decision and the guard on duty.', css('main table')),
+      m(6, 'Exit', 'When the vehicle left, by which gate, and how long it stayed — or "Still inside". A vehicle can leave by a different gate than it came in.', (p) => p.locator('main table thead th').last()),
     ],
   }),
   fig(AD, '17-rule-constraints', {
@@ -510,7 +510,7 @@ export const SHOTS = [
       m(4, 'Check Plate — Entry / Exit', 'Checks the typed plate. A vehicle already inside is logged out; otherwise its entry is checked against its pass and schedule.', btn(/Check Plate/)),
       m(5, 'Scan QR', 'Scan the QR code on the owner’s vehicle pass, or on any printed slip — a visitor slip, a supplier or event pass, or the entry slip given to a vehicle with no plate. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up cannot let a vehicle out by accident.', btn(/Scan QR/)),
       m(6, 'No Plate?', 'Record a vehicle with no plate or conduction sticker by describing it. Its entry slip prints on the thermal printer for the driver to keep.', btn(/No Plate/)),
-      m(7, 'Recent Scans', 'Latest decisions at this gate. The chips count entries by category.', card(text('Recent Scans'))),
+      m(7, 'Recent Entries', 'Latest decisions at this gate, plus the plates and names you looked up. The chips count entries by category.', card(text('Recent Entries'))),
       m(8, 'Active Visitors', 'Visitor passes still inside, with time left. +30m extends a pass.', card(text('Active Visitors'))),
       m(9, 'Confiscated accounts', 'Owners serving a violation penalty. They may not enter or park.', card(text('Confiscated accounts'))),
       m(10, 'Shift controls', 'On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.', css('aside .sidebar-footer')),
@@ -566,7 +566,7 @@ export const SHOTS = [
       m(4, 'Legend', 'Free, Occupied and Double parking. The bays refresh every 8 seconds.', union(text('Free', 'main'), text('Double parking', 'main'))),
       m(5, 'Campus-wide figures', 'Free, Parked and Capacity for this vehicle type across campus, from the parking cameras. On campus beside them counts gate entry and exit scans instead, parked or not, so the two are counted differently and will not agree. Held appears where an event is reserving spaces.', card(text('Car Parking', 'main'))),
       m(6, 'Bays in this zone', 'How many bays the camera sees taken, with the zone’s own status: Monitoring, Camera off, or Not set up — which means an admin has not finished the zone’s setup, so those bay colours may be out of date.', card(text(/Bays in /, 'main', false))),
-      m(7, 'Issue Violation / Override Parking', 'Record a parking offence, or let a vehicle park when the area is full (event mode).', union(btn(/Issue Violation/), btn(/Override Parking/))),
+      m(7, 'Issue Violation', 'Record a vehicle parked across two bays (double parking).', btn(/Issue Violation/)),
     ],
   }),
   fig(SE, '05-issue-violation', {
@@ -576,19 +576,19 @@ export const SHOTS = [
     prepare: async (p) => { await clickTab(p, /Issue Violation/) },
     after: async (p) => { await p.keyboard.press('Escape') },
     marks: [
-      m(1, 'License Plate', 'The plate of the offending vehicle. Required.', ph(/ABC 123/i)),
-      m(2, 'Violation Type', 'Choose the offence, e.g. No Sticker, Double Parking or Time Exceed.', (p) => p.getByText('Violation Type', { exact: true }).locator('xpath=following::select[1]')),
-      m(3, 'Notes', 'Optional details that help the CDSO review it.', ph(/Optional additional details/)),
-      m(4, 'Issue Violation', 'Records the violation against the vehicle’s owner and counts toward the offence ladder. Cancel closes without saving.', union(btn(/^Cancel$/), (p) => p.getByRole('button', { name: /Issue Violation/ }).last())),
+      m(1, 'Plate or Conduction No.', 'The plate or conduction number of the double-parked vehicle. Required.', ph(/ABC 123/i)),
+      m(2, 'Double Parking', 'This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.', (p) => p.getByText(/parked across two bays/)),
+      m(3, 'Notes', 'Optional details that help the CDSO review it.', ph(/Which bays/)),
+      m(4, 'Issue Violation', 'Records the violation against the vehicle’s owner and applies the penalty. If they already have one today, it says so and records nothing new. Cancel closes without saving.', union(btn(/^Cancel$/), (p) => p.getByRole('button', { name: /Issue Violation/ }).last())),
     ],
   }),
   fig(SE, '06-vehicle-log', {
     who: 'guard', path: '/security/audit', title: 'Vehicle Log (gate)',
-    caption: 'Every scan recorded at your gate.',
+    caption: 'Every scan at your gate, with the gate each visit came in and left by.',
     marks: [
       m(1, 'Status filter', 'Show all scans or only one decision: Authorized, Denied, Wrong Day, Visitor or Exited.', union(btn(/^All$/, 'main'), btn(/^Exited$/, 'main'))),
       m(2, 'Date and refresh', 'Pick another day, or reload the list.', union(css('main input[type=date]'), (p) => p.locator('main input[type=date]').locator('xpath=following::button[1]'))),
-      m(3, 'Scan entry', 'Plate, decision, owner, guard on duty and time. Exits show when the vehicle left and how long it stayed.', (p) => p.locator('main').getByText('ABK5521').first().locator('xpath=ancestor::*[contains(.,"Owner:")][1]')),
+      m(3, 'Scan entry', 'Plate, decision, owner, guard on duty and time, then the gate it came in by and the gate it left by, with how long it stayed (or Still inside).', (p) => p.locator('main').getByText('ABK5521').first().locator('xpath=ancestor::*[contains(.,"Owner:")][1]')),
     ],
   }),
 

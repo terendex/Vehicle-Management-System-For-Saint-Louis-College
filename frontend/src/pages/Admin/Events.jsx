@@ -756,7 +756,7 @@ function ZoneCapacityRow({ zone, onSaved }) {
           className="ev-capacity-input"
           type="number"
           min={0}
-          placeholder="No override"
+          placeholder="Default"
           value={override}
           onChange={e => setOverride(e.target.value)}
         />
@@ -784,7 +784,7 @@ function ZoneCapacityRow({ zone, onSaved }) {
 export default function Events({ embedded = false }) {
   const Wrapper = embedded ? Fragment : AdminLayout
   const [settings, setSettings]           = useState(null)
-  const [modeLoading, setModeLoading]     = useState({ parking: false, entry: false })
+  const [modeLoading, setModeLoading]     = useState(false)
   const [zones, setZones]                 = useState([])
   const [events, setEvents]               = useState([])
   const [pageLoading, setPageLoading]     = useState(true)
@@ -811,17 +811,20 @@ export default function Events({ embedded = false }) {
   // Live-refresh on event / settings / zone changes
   useLiveUpdates(loadEventsData, ['event', 'systemsettings', 'parkingzone'])
 
-  const toggleMode = async (field) => {
-    const key = field === 'event_mode_parking' ? 'parking' : 'entry'
-    setModeLoading(p => ({ ...p, [key]: true }))
+  // The Parking Override switch that used to sit beside this one is gone: its
+  // guard button only faked a gate entry, and nothing restricts parking in a
+  // full zone. Its one real effect was hiding the capacity editor below, which
+  // hid overrides that were still in force — so the editor now always shows.
+  const toggleEntryOverride = async () => {
+    setModeLoading(true)
     try {
-      const { data } = await patchSystemSettings({ [field]: !settings[field] })
+      const { data } = await patchSystemSettings({ event_mode_entry: !settings.event_mode_entry })
       setSettings(data)
-      toast.success(`${key === 'parking' ? 'Parking' : 'Entry'} override ${data[field] ? 'enabled' : 'disabled'}.`)
+      toast.success(`Entry override ${data.event_mode_entry ? 'enabled' : 'disabled'}.`)
     } catch {
       toast.error('Failed to update event mode.')
     } finally {
-      setModeLoading(p => ({ ...p, [key]: false }))
+      setModeLoading(false)
     }
   }
 
@@ -867,55 +870,48 @@ export default function Events({ embedded = false }) {
               <div className="ev-section-head">
                 <h2 className="ev-section-title">Event Mode</h2>
                 <p className="ev-section-desc">
-                  When enabled, security guards gain override access for the selected systems during the event.
+                  Settings for event days: gate overrides, and temporary parking capacity per zone.
                 </p>
               </div>
 
               <div className="ev-mode-grid">
                 <ModeToggle
-                  label="Parking Override"
-                  description="Guards can admit vehicles even when a zone is at full capacity."
-                  enabled={settings?.event_mode_parking ?? false}
-                  loading={modeLoading.parking}
-                  onToggle={() => toggleMode('event_mode_parking')}
-                />
-                <ModeToggle
                   label="Entry Override"
                   description="Guards can allow entry for plates that would otherwise be denied."
                   enabled={settings?.event_mode_entry ?? false}
-                  loading={modeLoading.entry}
-                  onToggle={() => toggleMode('event_mode_entry')}
+                  loading={modeLoading}
+                  onToggle={toggleEntryOverride}
                 />
               </div>
 
-              {/* Capacity overrides — shown when parking mode is on */}
-              {settings?.event_mode_parking && (
-                <div className="ev-capacity-block">
-                  <div className="ev-capacity-head">
-                    <ParkingCircle size={15} />
-                    <span>Zone Capacity Overrides</span>
-                    <span className="ev-capacity-hint">
-                      Set a temporary capacity limit per zone. Leave blank to use the zone's default.
-                    </span>
-                  </div>
-
-                  {zones.length === 0 ? (
-                    <p className="ev-empty">No parking zones configured.</p>
-                  ) : (
-                    <div className="ev-zone-table">
-                      <div className="ev-zone-header">
-                        <span>Zone</span>
-                        <span>Default</span>
-                        <span>Override</span>
-                        <span />
-                      </div>
-                      {zones.map(z => (
-                        <ZoneCapacityRow key={z.id} zone={z} onSaved={handleZoneSaved} />
-                      ))}
-                    </div>
-                  )}
+              {/* Capacity overrides — always shown: the server applies one
+                  whenever it is set, so hiding the editor would hide a
+                  limit that is still in force. */}
+              <div className="ev-capacity-block">
+                <div className="ev-capacity-head">
+                  <ParkingCircle size={15} />
+                  <span>Zone Capacity Overrides</span>
+                  <span className="ev-capacity-hint">
+                    Set a temporary capacity limit per zone. Leave blank to use the zone's default.
+                  </span>
                 </div>
-              )}
+
+                {zones.length === 0 ? (
+                  <p className="ev-empty">No parking zones configured.</p>
+                ) : (
+                  <div className="ev-zone-table">
+                    <div className="ev-zone-header">
+                      <span>Zone</span>
+                      <span>Default</span>
+                      <span>Override</span>
+                      <span />
+                    </div>
+                    {zones.map(z => (
+                      <ZoneCapacityRow key={z.id} zone={z} onSaved={handleZoneSaved} />
+                    ))}
+                  </div>
+                )}
+              </div>
             </section>
 
             {/* ── Events List ────────────────────────── */}

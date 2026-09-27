@@ -273,8 +273,25 @@ def is_open_campus() -> bool:
 #   5. Otherwise apply the rules for their type: employee, student, or fetcher
 # The order matters: each step answers a different question, and the guard needs
 # the reason that actually applies, not merely a true one.
+#
+# A refusal from step 5 alone — wrong day, outside hours — is waived when the
+# CDSO booked this vehicle for today (a ScheduledVisit on its plate): the
+# booking is the office saying "let them in today". Steps 2–4 are never waived;
+# a confiscation or a suspended account is not a timetable problem.
 # =============================================================================
 def check_entry(vehicle) -> dict:
+    result = _decide_entry(vehicle)
+    if result.pop('waivable', False):
+        from vehicles.scheduled_visits import visit_expected_today, waiver_note
+        visit = visit_expected_today(*vehicle_identifiers(vehicle))
+        if visit:
+            return _result('authorized', True,
+                           f'{vehicle.user.full_name} — Entry granted.{waiver_note(visit)}',
+                           result.get('constraint'))
+    return result
+
+
+def _decide_entry(vehicle) -> dict:
     # Open Campus Mode — bypass all rules, allow everything. The client-facing
     # status is 'open_entry' (displayed as "Open Entry"); the AccessLog row is
     # still stored as AUTHORIZED so entry/exit pairing and stats keep working.
@@ -373,11 +390,11 @@ def check_entry(vehicle) -> dict:
                 day_name = timezone.localdate().strftime('%A')   # name the day in the refusal
                 return _result('wrong_day', False,
                     f'Employee access restricted. Today ({day_name}) is not allowed by rule: {rule.name}.',
-                    rule.name)
+                    rule.name, waivable=True)
             if not _is_within_window(rule, now):
                 return _result('denied', False,
                     f'Employee access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}) per rule: {rule.name}.',
-                    rule.name)
+                    rule.name, waivable=True)
         # No enabled rule, or every check passed: let them in and name the rule that applied.
         return _result('authorized', True, f'Employee — {user.full_name}. Entry granted.', rule.name if rule else None)
 
@@ -386,11 +403,11 @@ def check_entry(vehicle) -> dict:
         rule = _get_active_rule(RuleConstraint.ConstraintType.STUDENT_VEHICLE)
         denial = _day_denial(rule, user, today_weekday)     # campus days AND their own registered days
         if denial:
-            return _result('wrong_day', False, denial, rule.name if rule else None)
+            return _result('wrong_day', False, denial, rule.name if rule else None, waivable=True)
         if rule and not _is_within_window(rule, now):
             return _result('denied', False,
                 f'Student access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
-                rule.name)
+                rule.name, waivable=True)
         return _result('authorized', True, f'Student — {user.full_name}. Entry granted.', rule.name if rule else None)
 
     # ── FETCHER ───────────────────────────────────────────────────────
@@ -398,7 +415,7 @@ def check_entry(vehicle) -> dict:
         rule = _get_active_rule(RuleConstraint.ConstraintType.FETCHER)
         denial = _day_denial(rule, user, today_weekday)     # same two day checks as students
         if denial:
-            return _result('wrong_day', False, denial, rule.name if rule else None)
+            return _result('wrong_day', False, denial, rule.name if rule else None, waivable=True)
         # Standby fetchers are allowed to park inside campus while waiting, so
         # the drop-off/pick-up time window only restricts Drop & Go fetchers.
         is_standby = user.registrations.filter(
@@ -407,7 +424,7 @@ def check_entry(vehicle) -> dict:
         if rule and not is_standby and not _is_within_window(rule, now):
             return _result('denied', False,
                 f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
-                rule.name)
+                rule.name, waivable=True)
         label = 'Fetcher (Standby)' if is_standby else 'Fetcher'   # say which kind, so the guard sees why waiting is allowed
         return _result('authorized', True, f'{label} — {user.full_name}. Entry granted.', rule.name if rule else None)
 
@@ -418,8 +435,10 @@ def check_entry(vehicle) -> dict:
 
 # Builds the little dictionary every answer above is returned in, so they all
 # have the same shape.
-def _result(status, allowed, message, constraint=None):
+def _result(status, allowed, message, constraint=None, waivable=False):
     result = {'status': status, 'allowed': allowed, 'message': message}
     if constraint:
         result['constraint'] = constraint               # only present when a named rule decided the outcome
+    if waivable:
+        result['waivable'] = True                       # a schedule-rule refusal; check_entry removes the key
     return result
