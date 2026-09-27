@@ -297,51 +297,12 @@
 }
 /* ── Cross-gate records table ───────────────────────────────────── */
 .oc-xg-note { margin: -4px 0 10px; font-size: 12px; color: #64839C; }
-.oc-xg-toolbar {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
-}
-.oc-xg-filters { display: flex; gap: 6px; flex-wrap: wrap; }
-.oc-xg-filter {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px; border-radius: 999px;
-  border: 1px solid #D3E1EC; background: #fff;
-  font-size: 12.5px; font-weight: 600; color: #3E5B72; cursor: pointer;
-}
-.oc-xg-filter.active { background: #03396C; border-color: #03396C; color: #fff; }
-.oc-xg-filter-n {
-  min-width: 18px; padding: 0 5px; border-radius: 999px;
-  background: #EEF4F9; color: #3E5B72; font-size: 11px; text-align: center;
-}
-.oc-xg-filter.active .oc-xg-filter-n { background: rgba(255, 255, 255, 0.2); color: #fff; }
-.oc-xg-review-all {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 7px 12px; border-radius: 8px; border: none;
-  background: #0F7A5A; color: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer;
-}
-.oc-xg-review-all:disabled { opacity: 0.6; cursor: default; }
 .oc-xg-table th:nth-child(n+5) { text-align: left; }
 .oc-xg-owner { color: #3E5B72; }
 .oc-xg-gate { display: block; font-weight: 600; color: #0A5C43; }
 .oc-xg-gate.out { color: #2F3C86; }
 .oc-xg-time { display: block; font-size: 11px; color: #64839C; margin-top: 2px; }
 .oc-xg-stay { white-space: nowrap; color: #3E5B72; }
-.oc-xg-pill {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
-}
-.oc-xg-pill.open     { background: #FFF6DB; color: #7A5A00; }
-.oc-xg-pill.reviewed { background: #E8F6F0; color: #0F7A5A; }
-.oc-xg-action { text-align: right; white-space: nowrap; }
-.oc-xg-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 5px 10px; border-radius: 7px;
-  border: 1px solid #D3E1EC; background: #fff;
-  font-size: 12px; font-weight: 600; color: #3E5B72; cursor: pointer;
-}
-.oc-xg-btn.primary { border-color: #0F7A5A; color: #0F7A5A; }
-.oc-xg-btn.primary:hover:not(:disabled) { background: #E8F6F0; }
-.oc-xg-btn:disabled { opacity: 0.55; cursor: default; }
 .oc-xg-pager { padding: 0 14px 12px; }
 
 .oc-clear {

@@ -4,12 +4,12 @@ import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff, Check, RotateCcw,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
-import notify, { toast } from '../../components/Feedback/notify'
+import { toast } from '../../components/Feedback/notify'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses,
-         getCrossGate, reviewCrossGate, reviewAllCrossGate } from '../../api/scanning'
+         getCrossGate } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
 import { displayStatus } from '../../utils/logStatus'
 import { useCameraContext } from '../../context/CameraContext'
@@ -498,18 +498,11 @@ function CameraMonitor() {
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 // ─── Cross-gate records ─────────────────────────────────────────────────────────
-// A vehicle that came in at one gate and left by another. Usually fine — the
-// campus has more than one gate — but it is also what a swapped or mis-set gate
-// posting looks like, so each one waits for the CDSO to look at it. Reviewing
-// clears it from the open count (the tab badge and the stat card); the record
-// stays, with who reviewed it and when, under Reviewed. Paged on the server,
-// across every day, newest exit first.
+// A vehicle that came in at one gate and left by another, with both halves of
+// the visit side by side. A record, not an alarm — the campus has more than one
+// gate — so there is nothing to clear. Paged on the server, across every day,
+// newest exit first.
 const RECORDS_PAGE_SIZE = 10
-const RECORD_FILTERS = [
-  { key: 'open',     label: 'Open' },
-  { key: 'reviewed', label: 'Reviewed' },
-  { key: 'all',      label: 'All' },
-]
 
 function fmtStay(min) {
   if (min == null) return '—'
@@ -517,94 +510,34 @@ function fmtStay(min) {
   return `${Math.floor(min / 60)}h ${min % 60}m`
 }
 
-function CrossGateRecords({ gateLabel, refreshKey, onChanged }) {
-  const [status, setStatus] = useState('open')
-  const [page, setPage]     = useState(1)
-  const [data, setData]     = useState({ results: [], count: 0, counts: {} })
-  const [busy, setBusy]     = useState(null)   // a row id, or 'all'
+function CrossGateRecords({ gateLabel, refreshKey }) {
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState({ results: [], count: 0 })
 
   const load = useCallback(() => {
-    getCrossGate({ status, page, page_size: RECORDS_PAGE_SIZE })
-      .then(r => setData(r.data ?? { results: [], count: 0, counts: {} }))
+    getCrossGate({ page, page_size: RECORDS_PAGE_SIZE })
+      .then(r => setData(r.data ?? { results: [], count: 0 }))
       .catch(() => {})
-  }, [status, page])
+  }, [page])
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const counts     = data.counts ?? {}
   const total      = data.count ?? 0
   const totalPages = Math.max(1, Math.ceil(total / RECORDS_PAGE_SIZE))
-
-  // Reviewing (or reopening) the last row of a filtered page empties it, and
-  // the server answers a page past the end with a 404 — step back instead.
-  const afterChange = () => {
-    if (status !== 'all' && data.results.length === 1 && page > 1) setPage(p => p - 1)
-    else load()
-    onChanged?.()
-  }
-
-  const review = async (row, reviewed) => {
-    setBusy(row.id)
-    try {
-      await reviewCrossGate(row.id, reviewed)
-      afterChange()
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not update the record.')
-    } finally { setBusy(null) }
-  }
-
-  const reviewAll = async () => {
-    if (!(await notify.confirm({
-      title: 'Mark all reviewed?',
-      message: `${counts.open} open cross-gate record${counts.open === 1 ? '' : 's'} will be marked reviewed under your name.`,
-      confirmLabel: 'Mark all reviewed',
-    }))) return
-    setBusy('all')
-    try {
-      const { data: res } = await reviewAllCrossGate()
-      toast.success(`${res.reviewed} record${res.reviewed === 1 ? '' : 's'} marked reviewed.`)
-      setPage(1)
-      load()
-      onChanged?.()
-    } catch (err) {
-      toast.error(err?.response?.data?.error || 'Could not mark them reviewed.')
-    } finally { setBusy(null) }
-  }
 
   return (
     <div className="oc-section">
       <div className="oc-section-head">
         <ArrowRightLeft size={15} />
         <span>Cross-Gate Records</span>
-        {counts.open > 0 && <span className="oc-flag-count">{counts.open}</span>}
       </div>
-      <p className="oc-xg-note">
-        Vehicles that came in at one gate and left by another. Usually fine — mark each
-        reviewed once you have checked the gates were set up right.
-      </p>
-
-      <div className="oc-xg-toolbar">
-        <div className="oc-xg-filters" role="tablist" aria-label="Cross-gate records">
-          {RECORD_FILTERS.map(f => (
-            <button key={f.key} type="button" role="tab" aria-selected={status === f.key}
-              className={`oc-xg-filter${status === f.key ? ' active' : ''}`}
-              onClick={() => { setStatus(f.key); setPage(1) }}>
-              {f.label} <span className="oc-xg-filter-n">{counts[f.key] ?? 0}</span>
-            </button>
-          ))}
-        </div>
-        {counts.open > 0 && (
-          <button type="button" className="oc-xg-review-all" disabled={busy === 'all'} onClick={reviewAll}>
-            <Check size={13} /> {busy === 'all' ? 'Marking…' : 'Mark all reviewed'}
-          </button>
-        )}
-      </div>
+      <p className="oc-xg-note">Vehicles that came in at one gate and left by another.</p>
 
       <div className="oc-guard-table-wrap">
         {data.results.length === 0 ? (
           <div className="oc-clear">
             <CheckCircle size={18} />
-            <span>{status === 'open' ? 'No open cross-gate records' : 'No cross-gate records'}</span>
+            <span>No cross-gate records</span>
           </div>
         ) : (
           <table className="oc-guard-table oc-xg-table">
@@ -615,8 +548,6 @@ function CrossGateRecords({ gateLabel, refreshKey, onChanged }) {
                 <th>In</th>
                 <th>Out</th>
                 <th>Inside</th>
-                <th>Status</th>
-                <th aria-label="Action" />
               </tr>
             </thead>
             <tbody>
@@ -633,31 +564,6 @@ function CrossGateRecords({ gateLabel, refreshKey, onChanged }) {
                     <span className="oc-xg-time">{fmt(r.exited_at)}</span>
                   </td>
                   <td className="oc-xg-stay">{fmtStay(r.duration_minutes)}</td>
-                  <td>
-                    {r.reviewed_at ? (
-                      <>
-                        <span className="oc-xg-pill reviewed"><CheckCircle size={11} /> Reviewed</span>
-                        <span className="oc-xg-time">
-                          {r.reviewed_by_name ? `${r.reviewed_by_name} · ` : ''}{fmt(r.reviewed_at)}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="oc-xg-pill open"><AlertTriangle size={11} /> Open</span>
-                    )}
-                  </td>
-                  <td className="oc-xg-action">
-                    {r.reviewed_at ? (
-                      <button type="button" className="oc-xg-btn" disabled={busy === r.id}
-                        onClick={() => review(r, false)} title="Put it back on the open list">
-                        <RotateCcw size={12} /> Reopen
-                      </button>
-                    ) : (
-                      <button type="button" className="oc-xg-btn primary" disabled={busy === r.id}
-                        onClick={() => review(r, true)}>
-                        <Check size={12} /> Mark reviewed
-                      </button>
-                    )}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -699,7 +605,7 @@ export default function OperationsCenter() {
   const { gates, gateIds, gateLabel } = useGates()
   const [currentShifts, setCurrentShifts] = useState({})
   const [logsByGate,    setLogsByGate]    = useState({})
-  const [crossOpen,     setCrossOpen]     = useState(0)   // cross-gate records nobody has reviewed
+  const [crossToday,    setCrossToday]    = useState(0)   // vehicles in by one gate, out by another, today
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
   const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
@@ -730,7 +636,7 @@ export default function OperationsCenter() {
 
       if (monitorRes.status === 'fulfilled') {
         const d = monitorRes.value.data
-        setCrossOpen(d?.cross_gate_open ?? 0)
+        setCrossToday(d?.cross_gate_today ?? 0)
         setGuards(d?.guards ?? [])
       }
 
@@ -825,10 +731,10 @@ export default function OperationsCenter() {
             </div>
           </div>
           <div className="oc-stat-card">
-            <div className="oc-stat-icon amber"><AlertTriangle size={18} /></div>
+            <div className="oc-stat-icon blue"><ArrowRightLeft size={18} /></div>
             <div>
-              <p className="oc-stat-val">{crossOpen}</p>
-              <p className="oc-stat-lbl">Cross-Gate Flags</p>
+              <p className="oc-stat-val">{crossToday}</p>
+              <p className="oc-stat-lbl">Cross-Gate Today</p>
             </div>
           </div>
           <div className="oc-stat-card">
@@ -843,9 +749,7 @@ export default function OperationsCenter() {
         <PageTabs
           id="oc"
           ariaLabel="Operations sections"
-          tabs={TABS.map(t => (
-            t.id === 'records' ? { ...t, count: crossOpen } : t
-          ))}
+          tabs={TABS}
           active={tab}
           onChange={setTab}
         />
@@ -1007,8 +911,8 @@ export default function OperationsCenter() {
           </div>
         </div>
 
-        {/* Cross-gate records — reviewable, paged, every day */}
-        <CrossGateRecords gateLabel={gateLabel} refreshKey={lastRefresh} onChanged={load} />
+        {/* Cross-gate records — paged, every day */}
+        <CrossGateRecords gateLabel={gateLabel} refreshKey={lastRefresh} />
 
         {/* Accounts serving a violation penalty — barred from entering and
             from parking until the term runs out or the CDSO lifts it. */}

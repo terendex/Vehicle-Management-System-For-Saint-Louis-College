@@ -290,8 +290,8 @@ export const SHOTS = [
     caption: 'Operations › Operations Center. Watch all gates, guards and cameras at once.',
     wait: 3500,
     marks: [
-      m(1, 'Live summary', 'Guards on duty, recent entries, cross-gate records still to review, and total guards.', parent(card(text('Guards On Duty', 'main', false)))),
-      m(2, 'Screen tabs', 'Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate records to review and confiscated accounts). The number on Gate Records is how many cross-gate records are still open.', union(btn(/Live Monitor/), btn(/Gate Records/))),
+      m(1, 'Live summary', 'Guards on duty, recent entries, vehicles that came in and left by different gates today, and total guards.', parent(card(text('Guards On Duty', 'main', false)))),
+      m(2, 'Screen tabs', 'Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate records and confiscated accounts).', union(btn(/Live Monitor/), btn(/Gate Records/))),
       m(3, 'Camera Monitor', 'View-only camera pictures. Plate detection runs on the guard terminals. (Sample picture shown.)', card(text('Camera Monitor'))),
       m(4, 'Gate column', 'Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.', card((p) => p.locator('main').getByText('789UIO').first())),
       m(5, 'Refresh', 'Reloads the screen.', btn('Refresh', 'main')),
@@ -310,11 +310,11 @@ export const SHOTS = [
   }),
   fig(AD, '11-operations-gate-records', {
     who: 'admin', path: '/admin/entries', title: 'Operations Center: gate records',
-    caption: 'Visitors still on campus, cross-gate records to review and confiscated accounts.',
+    caption: 'Visitors still on campus, cross-gate records and confiscated accounts.',
     prepare: async (p) => { await clickTab(p, /Gate Records/) },
     marks: [
       m(1, 'Active Visitors', 'Visitor passes still inside, with the office visited, who issued the pass, and time left (or how long they have overstayed).', union(text('Active Visitors'), (p) => p.locator('main').getByText('HJK7021').first())),
-      m(2, 'Cross-Gate Records', 'Vehicles that came in by one gate and left by another, newest first, with both gates and times. Mark each reviewed once the gates are checked — or Mark all reviewed — and it leaves the open count. Open, Reviewed and All filter the table; the pager moves through older records.', union(text('Cross-Gate Records'), (p) => p.locator('main .oc-xg-table').first())),
+      m(2, 'Cross-Gate Records', 'Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.', union(text('Cross-Gate Records'), (p) => p.locator('main .oc-xg-table').first())),
       m(3, 'Confiscated accounts', 'Owners serving a violation penalty and when it ends.', card(text('Confiscated accounts'))),
       m(4, 'Lift', 'Ends a confiscation early. The violations themselves stay on record.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
     ],

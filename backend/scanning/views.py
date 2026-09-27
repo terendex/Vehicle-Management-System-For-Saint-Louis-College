@@ -2646,18 +2646,19 @@ class GuardMonitorView(APIView):
         return Response({
             'guards':          result,
             'active_shifts':   active_shifts,
-            # The Gate Records badge and stat: flags nobody has reviewed yet,
-            # on any day. The flags themselves are CrossGateListView's.
-            'cross_gate_open': _cross_gate_exits().filter(reviewed_at__isnull=True).count(),
+            # The stat card: vehicles that came in by one gate and left by
+            # another today. Information, not an alarm — the campus has more
+            # than one gate; the records are CrossGateListView's.
+            'cross_gate_today': filter_local_date_range(
+                _cross_gate_exits(), 'scanned_at', today.isoformat(), today.isoformat()).count(),
         })
 
 
 # ── Cross-gate records ─────────────────────────────────────────────────────
-# A vehicle in at one gate and out at another. Not wrong in itself — the
-# campus has more than one gate — but it is what a swapped or mis-set gate
-# posting looks like, so each one is flagged for the CDSO to look at and mark
-# reviewed. The flag is the EXIT row; reviewing stamps it (reviewed_at/by), so
-# the record keeps who looked at it and when, and the open count falls.
+# A vehicle in at one gate and out at another — listed in the Operations
+# Center's Gate Records so the CDSO can see both halves of such a visit. Not a
+# problem in itself (the campus has more than one gate), so there is nothing to
+# review or clear: it is a record, paged like the other logs.
 def _cross_gate_exits():
     """Exit rows whose paired entry was logged at a different gate. A blank
     gate on either side is a missing posting, not a cross-gate visit."""
@@ -2680,82 +2681,34 @@ def _cross_gate_row(ex):
         'entered_at':       entry.scanned_at,
         'exited_at':        ex.scanned_at,
         'duration_minutes': _visit_duration_minutes(entry, ex),
-        'reviewed_at':      ex.reviewed_at,
-        'reviewed_by_name': getattr(ex.reviewed_by, 'full_name', None),
     }
 
 
 class CrossGateListView(APIView):
     """GET /api/scan/cross-gate/ — the Operations Center's Gate Records table.
 
-    status = open (default) | reviewed | all; date_from / date_to on the exit
-    date; ?page= / ?page_size= page it. Returns the page plus the count for
-    each status tab over the same dates, so each tab says what it will show."""
+    Every day, newest exit first; date_from / date_to narrow it to exit dates,
+    and ?page= / ?page_size= page it."""
     permission_classes = [IsAdminRole]
 
     def get(self, request):
         from config.pagination import DefaultPagination
-        from django.db.models import Count, Q
         params = request.query_params
-        qs = filter_local_date_range(_cross_gate_exits(), 'scanned_at',
-                                     (params.get('date_from') or '').strip(),
-                                     (params.get('date_to') or '').strip())
-        counts = qs.aggregate(all=Count('pk'),
-                              open=Count('pk', filter=Q(reviewed_at__isnull=True)),
-                              reviewed=Count('pk', filter=Q(reviewed_at__isnull=False)))
-        status_f = (params.get('status') or 'open').strip()
-        if status_f == 'open':
-            qs = qs.filter(reviewed_at__isnull=True)
-        elif status_f == 'reviewed':
-            qs = qs.filter(reviewed_at__isnull=False)
-        qs = (qs.select_related('paired_entry', 'vehicle__user', 'reviewed_by')
-                .order_by('-scanned_at', '-pk'))              # newest exit first
+        qs = (filter_local_date_range(_cross_gate_exits(), 'scanned_at',
+                                      (params.get('date_from') or '').strip(),
+                                      (params.get('date_to') or '').strip())
+              .select_related('paired_entry', 'vehicle__user')
+              .order_by('-scanned_at', '-pk'))
         paginator = DefaultPagination()
         page = paginator.paginate_queryset(qs, request, view=self)
         if page is None:
-            return Response({'results': [_cross_gate_row(ex) for ex in qs[:500]], 'counts': counts})
+            return Response([_cross_gate_row(ex) for ex in qs[:500]])
         return Response({
             'count':    paginator.page.paginator.count,
             'next':     paginator.get_next_link(),
             'previous': paginator.get_previous_link(),
             'results':  [_cross_gate_row(ex) for ex in page],
-            'counts':   counts,
         })
-
-
-class CrossGateReviewView(APIView):
-    """POST /api/scan/cross-gate/<pk>/review/ marks one flag reviewed, and
-    {"reviewed": false} reopens it. POST /api/scan/cross-gate/review-all/
-    marks every open flag reviewed (within date_from / date_to when given)."""
-    permission_classes = [IsAdminRole]
-
-    def post(self, request, pk=None):
-        now = timezone.now()
-        who = request.user.full_name
-        if pk is None:
-            open_ids = list(filter_local_date_range(
-                _cross_gate_exits().filter(reviewed_at__isnull=True), 'scanned_at',
-                (request.data.get('date_from') or '').strip(),
-                (request.data.get('date_to') or '').strip()).values_list('pk', flat=True))
-            n = AccessLog.objects.filter(pk__in=open_ids).update(reviewed_at=now, reviewed_by=request.user)
-            if n:
-                _audit(request, AuditLog.Action.RECORD_UPDATED,
-                       f"Cross-gate flags reviewed | {n} record(s) | By: {who}")
-            return Response({'reviewed': n})
-
-        ex = (_cross_gate_exits().filter(pk=pk)
-              .select_related('paired_entry', 'vehicle__user', 'reviewed_by').first())
-        if ex is None:
-            return Response({'error': 'No cross-gate record with that id.'}, status=404)
-        reviewed = request.data.get('reviewed', True) not in (False, 'false', 'False', '0', 0)
-        if reviewed != bool(ex.reviewed_at):
-            ex.reviewed_at = now if reviewed else None
-            ex.reviewed_by = request.user if reviewed else None
-            ex.save(update_fields=['reviewed_at', 'reviewed_by'])
-            _audit(request, AuditLog.Action.RECORD_UPDATED,
-                   f"Cross-gate flag {'reviewed' if reviewed else 'reopened'} | Plate: {ex.plate_number} | "
-                   f"{_gate_label(ex.paired_entry.gate_id)} → {_gate_label(ex.gate_id)} | By: {who}")
-        return Response(_cross_gate_row(ex))
 
 
 # The visitor needs longer. Extends the allowance rather than issuing a second
