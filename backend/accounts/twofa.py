@@ -59,6 +59,13 @@ DORMANCY_DAYS = 7
 # "Sudo mode": how long one code authorises sensitive writes.
 STEP_UP_MINUTES = 10
 
+# How long an unconfirmed QR stays the one setup hands out. Matches the life of
+# the setup challenge, so one sign-in attempt sees one QR however many times the
+# screen is reloaded or whichever server answers. Past it the QR counts as
+# abandoned and is replaced, so a photo of an old one never becomes a live
+# authenticator once the real owner finally pairs.
+PENDING_SECRET_MINUTES = STEP_UP_MINUTES
+
 # Codes are accepted one timestep either side of now, so a phone clock drifting
 # by up to 30s still works. Wider than this and a stolen code stays live longer.
 TOTP_VALID_WINDOW = 1

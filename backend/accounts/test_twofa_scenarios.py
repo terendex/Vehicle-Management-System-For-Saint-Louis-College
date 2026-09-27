@@ -8,6 +8,8 @@ Nothing shortcuts the flow — no hand-built tokens, no direct model writes to
 skip a step. If a journey passes here, a person can actually walk it.
 """
 
+from datetime import timedelta
+
 import pyotp
 from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
@@ -405,6 +407,11 @@ class ClosedTheTabOnTheBackupCodes(Journey):
 
         device = TwoFactorDevice.objects.get(user=owner)
         self.assertIsNone(device.confirmed_at, 'an abandoned setup must not count')
+
+        # They come back after the pending QR has lapsed. (Inside that window the
+        # same QR is handed out again, so a reload does not void what was scanned.)
+        TwoFactorDevice.objects.filter(pk=device.pk).update(
+            created_at=timezone.now() - timedelta(minutes=twofa.PENDING_SECRET_MINUTES + 1))
 
         # Next login offers setup again — with a brand-new secret, so the
         # abandoned one can never be used against the account.

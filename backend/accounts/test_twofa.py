@@ -355,6 +355,39 @@ class EnrollmentTests(TwoFactorTestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIsNone(TwoFactorDevice.objects.get(user=self.admin).confirmed_at)
 
+    def test_repeating_setup_keeps_the_qr_already_scanned(self):
+        """A reloaded setup screen, a second tab, or signing in on the other
+        server all call setup again. The QR scanned from the first call must
+        still produce codes the server accepts."""
+        challenge = self.login(self.admin).data['challenge']
+        first = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': challenge}, format='json')
+        again = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': self.login(self.admin).data['challenge']},
+                                 format='json')
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertEqual(first.data['secret'], again.data['secret'])
+
+        scanned = pyotp.TOTP(first.data['secret'])
+        confirm = self.client.post('/api/accounts/2fa/confirm/',
+                                   {'challenge': challenge, 'code': scanned.now()},
+                                   format='json')
+        self.assertEqual(confirm.status_code, 200, confirm.data)
+
+    def test_setup_never_reuses_a_secret_that_was_once_paired(self):
+        """A pending row that has accepted a code belongs to a voided phone —
+        e.g. one unconfirmed by a backup code before that path rotated secrets."""
+        device, _ = make_confirmed_device(self.admin)
+        device.confirmed_at = None
+        device.last_used_step = 1
+        device.save()
+
+        challenge = self.login(self.admin).data['challenge']
+        setup = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': challenge}, format='json')
+        self.assertEqual(setup.status_code, 200, setup.data)
+        self.assertNotEqual(setup.data['secret'], device.secret)
+
     def test_setup_rejects_a_forged_challenge(self):
         res = self.client.post('/api/accounts/2fa/setup/',
                                {'challenge': 'not-a-real-token'}, format='json')
@@ -375,6 +408,8 @@ class EnrollmentTests(TwoFactorTestCase):
         )
         allowed = client.post('/api/accounts/2fa/setup/', {}, format='json')
         self.assertEqual(allowed.status_code, 200, allowed.data)
+        # Replacing a phone pairs a new secret, never the one being replaced.
+        self.assertNotEqual(allowed.data['secret'], totp.secret)
 
 
 # ── Code verification ────────────────────────────────────────────────────────
@@ -520,6 +555,17 @@ class BackupCodeTests(TwoFactorTestCase):
             {'challenge': resumed.data['challenge'], 'code': old_totp.now()},
             format='json')
         self.assertEqual(stale.status_code, 400)
+
+    def test_re_pairing_after_a_backup_code_never_offers_the_lost_phones_secret(self):
+        _, codes = self.enroll_with_backup_codes(self.admin)
+        lost_secret = TwoFactorDevice.objects.get(user=self.admin).secret
+
+        pivot = self.spend_backup_code(self.admin, codes[-1])
+        setup = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': pivot.data['challenge']}, format='json')
+
+        self.assertEqual(setup.status_code, 200, setup.data)
+        self.assertNotEqual(setup.data['secret'], lost_secret)
 
     def test_the_new_backup_code_arrives_only_after_re_pairing(self):
         _, codes = self.enroll_with_backup_codes(self.admin)

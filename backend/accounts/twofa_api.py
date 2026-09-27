@@ -8,6 +8,7 @@ and the enrollment-completing confirm call all go through it, so `last_login`
 """
 
 import logging
+from datetime import timedelta
 
 from django.core.cache import cache
 from django.db import transaction
@@ -338,13 +339,31 @@ class TwoFactorSetupView(APIView):
                     'Enter a code from your current authenticator before pairing a new device.'
                 )
 
-        secret = twofa.new_secret()
-        if device is None:
-            device = TwoFactorDevice(user=user)
-        device.secret = secret
-        device.confirmed_at = None
-        device.last_used_step = 0
-        device.save()
+        # A pairing still in progress keeps its secret for a while. Minting a new
+        # one on every call meant a reloaded setup screen, a second tab, or signing
+        # in on the other server silently voided the QR already scanned, and the
+        # phone then produced "invalid" codes that were in fact perfectly good.
+        #
+        # Only a recent secret that has never been paired is reused (created_at
+        # is reset whenever the secret changes, so it dates the secret). A
+        # confirmed device is being replaced, so it gets a new one; an older
+        # pending QR counts as abandoned (see PENDING_SECRET_MINUTES); and a
+        # device that has ever accepted a code (last_used_step > 0) belongs to a
+        # phone that was since voided, so it must not be handed back either.
+        reuse_after = timezone.now() - timedelta(minutes=twofa.PENDING_SECRET_MINUTES)
+        if (device is not None and not device.is_confirmed
+                and device.last_used_step == 0 and device.secret
+                and device.created_at >= reuse_after):
+            secret = device.secret
+        else:
+            secret = twofa.new_secret()
+            if device is None:
+                device = TwoFactorDevice(user=user)
+            device.secret = secret
+            device.confirmed_at = None
+            device.last_used_step = 0
+            device.created_at = timezone.now()
+            device.save()
 
         uri = twofa.provisioning_uri(user, secret)
         return Response({
@@ -466,8 +485,15 @@ class TwoFactorVerifyView(APIView):
             # device and offers setup again, so a spent code cannot strand
             # anybody. No session exists in the meantime, so the half-enrolled
             # state is never one an attacker can act from.
+            #
+            # The secret is replaced as well, not just unconfirmed: setup reuses a
+            # pending secret so a reloaded QR stays valid, and the missing phone's
+            # secret must never be the one it hands back.
             device.confirmed_at = None
-            device.save(update_fields=['confirmed_at'])
+            device.secret = twofa.new_secret()
+            device.last_used_step = 0
+            device.created_at = timezone.now()
+            device.save(update_fields=['confirmed_at', 'secret', 'last_used_step', 'created_at'])
 
             return Response({
                 'twofa_required': True,
