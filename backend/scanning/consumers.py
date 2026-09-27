@@ -637,7 +637,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         status = result.get("status")
         if result.get("error") or status == "duplicate":
             return self._dedup_seconds            # transient — retry soon
-        if status in ("authorized", "open_entry", "exited"):
+        if status in ("authorized", "open_entry", "scheduled_entry", "exited"):
             return CAMERA_ENTRY_COOLDOWN_SECONDS  # breathing space before state can flip
         return NEGATIVE_SCAN_COOLDOWN_SECONDS     # unknown / denied / wrong_day etc.
 
@@ -1134,11 +1134,12 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
 
         # Outside → a request to come in. The only rule that can refuse a
         # supplier is the delivery window; returns a sentence, or nothing.
-        # A visit the CDSO booked for today on this plate waives it.
-        from vehicles.scheduled_visits import visit_expected_today, waiver_note
+        # A visit the CDSO booked for today on this plate waives it, and makes
+        # the admission a Scheduled Entry either way.
+        from vehicles.scheduled_visits import SCHEDULED_ENTRY, visit_expected_today, visit_note
         deny_msg = _supplier_rule_denial()
-        waived_by = visit_expected_today(plate_number) if deny_msg else None
-        if deny_msg and not waived_by:
+        visit = visit_expected_today(plate_number)
+        if deny_msg and not visit:
             # DB-backed dedup so an idling supplier truck doesn't flood the log
             now = timezone.now()
             cutoff = now - timedelta(seconds=NEGATIVE_SCAN_COOLDOWN_SECONDS)
@@ -1176,12 +1177,13 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
         from .slips import supplier_slip
         open_campus = is_open_campus()                 # only changes the wording and the status shown
         return {
-            "status":         "open_entry" if open_campus else "authorized",
+            "status":         ("open_entry" if open_campus
+                               else SCHEDULED_ENTRY if visit else "authorized"),
             "allowed":        True,
             "message":        (f"Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted."
                                if open_campus else
                                f"Supplier vehicle — {supplier_name}. Entry permitted."
-                               + (waiver_note(waived_by) if waived_by else "")),
+                               + (visit_note(visit, waived=bool(deny_msg)) if visit else "")),
             "is_supplier":    True,
             "supplier_name":  supplier_name,
             "supplier_slip":  supplier_slip(entry_log),   # printed by the guard page

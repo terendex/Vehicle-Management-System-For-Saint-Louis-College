@@ -4,7 +4,7 @@ import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
   ClipboardList, UserPlus, X, Shield, Search, LogOut, Video, Wifi, Star, Clock,
   DoorOpen, Ban, ScanLine, Maximize2, Minimize2, Users, FileQuestion,
-  VideoOff, RefreshCw, Printer, Ticket, Timer, ShieldOff, CalendarClock,
+  VideoOff, RefreshCw, Printer, Ticket, Timer, ShieldOff, CalendarClock, LogIn,
 } from 'lucide-react'
 import notify, { toast, useFeedbackStore } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -28,6 +28,7 @@ import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
 import { feedState, FEED_LABEL, FEED_DOT } from '../../utils/feedState'
+import { displayStatus } from '../../utils/logStatus'
 import '../../styles/camera-monitor.css'
 import './SecurityEntryManagement.css'
 
@@ -35,6 +36,8 @@ import './SecurityEntryManagement.css'
 const STATUS_META = {
   authorized: { label: 'Approved for Entry',     Icon: CheckCircle,   cls: 'authorized', logCls: 'authorized' },
   open_entry: { label: 'Open Entry',             Icon: DoorOpen,      cls: 'authorized', logCls: 'authorized' },
+  // Admitted under a CDSO booking (Expected Today) — see utils/logStatus.js.
+  scheduled_entry: { label: 'Scheduled Entry',   Icon: CalendarClock, cls: 'authorized', logCls: 'authorized' },
   wrong_day:  { label: 'Wrong Schedule Day',     Icon: XCircle,       cls: 'wrong_day',  logCls: 'wrong_day'  },
   denied:     { label: 'Entry Denied',           Icon: XCircle,       cls: 'denied',     logCls: 'denied'     },
   // Serving a violation penalty — an owner's account, or a visitor matched on
@@ -1703,12 +1706,12 @@ export default function SecurityEntryManagement() {
         // the persisted AccessLog row, not just the optimistic placeholder.
         refreshLogs()
       } else {
-        recordLookup(plate, res.data.status)
+        recordLookup(plate.replace(/\s+/g, ''), res.data.status)
       }
       return res.data
     } catch (err) {
       const message = err?.response?.data?.error || 'Lookup failed.'
-      recordLookup(plate, 'lookup_failed', message)
+      recordLookup(plate.replace(/\s+/g, ''), 'lookup_failed', message)
       toast.error(message)
       return null
     } finally { setLoading(false) }
@@ -2139,7 +2142,7 @@ export default function SecurityEntryManagement() {
               ) : (
                 <ul className="cm-log em-scan-log">
                   {recent.map((log, i) => {
-                    const m = getMeta(log.status)
+                    const m = getMeta(displayStatus(log))
                     if (log.lookup) {
                       const by = log.scanned_by_name && log.scanned_by_name !== me ? `By ${log.scanned_by_name}` : ''
                       return (
@@ -2176,7 +2179,10 @@ export default function SecurityEntryManagement() {
                       log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name && log.scanned_by_name !== me
                         ? `By ${log.scanned_by_name}` : '',
                     ].filter(Boolean)
-                    const who = [owner, ...staff].filter(Boolean).join(' · ')
+                    // The booking a scheduled entry came in under, by reference and name.
+                    const booking = log.scheduled_visit_ref
+                      ? [log.scheduled_visit_ref, log.scheduled_visit_name].filter(Boolean).join(' ') : ''
+                    const who = [booking, owner, ...staff].filter(Boolean).join(' · ')
                     return (
                       <li key={log.id ?? i} className="cm-log-row">
                         <span className={`em-audit-icon ${m.logCls}`}><m.Icon size={13} /></span>
@@ -2314,19 +2320,20 @@ export default function SecurityEntryManagement() {
 
             {/* Expected today — visits the CDSO scheduled. Shown only on a day
                 that has any. Checking one in issues the visitor pass against
-                the booking; a supplier plate needs nothing, the scan admits it
-                and ticks it off. */}
+                the booking; a supplier plate needs nothing, the scan admits it.
+                A visit that has come in stays here, marked Inside, until the
+                vehicle leaves — then the server drops it from the feed. */}
             {expected.length > 0 && (
               <section className="cm-panel">
                 <div className="cm-panel-head">
                   <span className="cm-panel-title"><CalendarClock size={14} /> Expected Today</span>
                   <div className="cm-panel-end">
-                    <span className="cm-count">{expected.filter(v => !v.is_arrived).length}</span>
+                    <span className="cm-count" title="Still to arrive, plus those inside now">{expected.length}</span>
                   </div>
                 </div>
                 <div className="em-side-list">
                   {expected.map(v => (
-                    <div key={v.id} className={`em-expected-row${v.is_arrived ? ' arrived' : ''}`}>
+                    <div key={v.id} className={`em-expected-row${v.is_arrived ? ' inside' : ''}`}>
                       <div className="em-expected-main">
                         <span className="em-expected-name">{v.visitor_name}</span>
                         <span className="em-visitor-sub">
@@ -2335,9 +2342,13 @@ export default function SecurityEntryManagement() {
                           {v.purpose && ` · ${v.purpose}`}
                         </span>
                       </div>
+                      {/* inside_since is this stay's entry — a supplier back
+                          for a second drop shows when they came back, not the
+                          day's first arrival. */}
                       {v.is_arrived ? (
-                        <span className="em-expected-state done" title={v.pass_reference ? `Checked in on ${v.pass_reference}` : 'Arrived'}>
-                          <CheckCircle size={11} /> {v.arrived_at ? fmtClock(v.arrived_at) : 'Arrived'}
+                        <span className="em-expected-state inside"
+                          title={`Came in at ${fmtClock(v.inside_since || v.arrived_at)}${v.pass_reference ? ` on ${v.pass_reference}` : ''} — leaves this list when they exit`}>
+                          <LogIn size={11} /> Inside · {fmtClock(v.inside_since || v.arrived_at)}
                         </span>
                       ) : v.auto_admit ? (
                         <span className="em-expected-state" title="On the supplier roster — scanning the plate admits it and marks it arrived">

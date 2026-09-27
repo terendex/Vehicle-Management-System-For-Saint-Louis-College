@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { getAccessLogs, exportVehicleLogExcel, exportVehicleLogPdf } from '../../api/scanning'
+import { displayStatus } from '../../utils/logStatus'
 import { useGates } from '../../hooks/useGates'
 import { reportFileName } from '../../utils/reportName'
 import { openReportTab } from '../../utils/saveFile'
@@ -9,7 +10,7 @@ import { notify } from '../../components/Feedback/notify'
 import {
   Search, Car, Filter, RefreshCw, ChevronLeft, ChevronRight,
   X, Calendar, DoorOpen, CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  Download, FileText, Users,
+  Download, FileText, Users, CalendarClock,
 } from 'lucide-react'
 import './VehicleLog.css'
 
@@ -23,6 +24,7 @@ import './VehicleLog.css'
 const STATUS_META = {
   authorized: { label: 'Authorized', Icon: CheckCircle,   cls: 'authorized' },
   open_entry: { label: 'Open Entry', Icon: CheckCircle,   cls: 'authorized' },
+  scheduled_entry: { label: 'Scheduled Entry', Icon: CalendarClock, cls: 'authorized' },
   exited:     { label: 'Exited',     Icon: DoorOpen,      cls: 'exited'     },
   denied:     { label: 'Denied',     Icon: XCircle,       cls: 'denied'     },
   wrong_day:  { label: 'Wrong Day',  Icon: XCircle,       cls: 'denied'     },
@@ -437,7 +439,7 @@ export default function VehicleLog() {
                 </thead>
                 <tbody>
                   {pageRows.map((log, i) => {
-                    const { Icon, label, cls } = getMeta(log.status)
+                    const { Icon, label, cls } = getMeta(displayStatus(log))
                     // A visit can enter by one gate and leave by another. A
                     // merged row is the entry carrying its exit; a lone exit
                     // row (entry outside the filter) carries its entry's gate.
@@ -476,6 +478,11 @@ export default function VehicleLog() {
                           </span>
                           {log.is_override && (
                             <span className="vl-override" title={log.override_reason}>Override</span>
+                          )}
+                          {log.scheduled_visit_ref && (
+                            <span className="vl-reason">
+                              Booked: {[log.scheduled_visit_ref, log.scheduled_visit_name].filter(Boolean).join(' ')}
+                            </span>
                           )}
                           {log.denied_reason && <span className="vl-reason">{log.denied_reason}</span>}
                         </td>

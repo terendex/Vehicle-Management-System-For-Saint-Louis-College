@@ -211,6 +211,15 @@ class AccessLog(models.Model):
         'vehicles.Event', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='access_logs',
     )
+    # The CDSO booking this entry came in under (Expected Today). Set on the
+    # entry row when it is logged (scanning.signals), so the log keeps saying
+    # "Scheduled Entry" afterwards — the gate screens and the reports read it,
+    # the way they read the entry and exit gates. SET_NULL: the gate record
+    # outlives a deleted booking.
+    scheduled_visit = models.ForeignKey(
+        'vehicles.ScheduledVisit', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='entries',
+    )
     snapshot       = models.ImageField(upload_to='snapshots/', blank=True)   # the frame the camera captured, when there is one
     scanned_at     = models.DateTimeField(auto_now_add=True)
     scanned_by     = models.ForeignKey(

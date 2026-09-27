@@ -10,6 +10,7 @@ import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from '../../components/Feedback/notify'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses } from '../../api/scanning'
 import { camerasApi } from '../../api/cameras'
+import { displayStatus } from '../../utils/logStatus'
 import { useCameraContext } from '../../context/CameraContext'
 import { useGates } from '../../hooks/useGates'
 import { useFullscreen } from '../../hooks/useFullscreen'
@@ -25,6 +26,7 @@ import './OperationsCenter.css'
 const STATUS_META = {
   authorized: { label: 'Authorized', cls: 'authorized', Icon: CheckCircle  },
   open_entry: { label: 'Open Entry', cls: 'authorized', Icon: CheckCircle  },
+  scheduled_entry: { label: 'Scheduled Entry', cls: 'authorized', Icon: CheckCircle },
   denied:     { label: 'Denied',     cls: 'denied',     Icon: XCircle      },
   wrong_day:  { label: 'Wrong Day',  cls: 'denied',     Icon: XCircle      },
   unknown:    { label: 'Unregistered', cls: 'visitor',  Icon: HelpCircle   },
@@ -119,7 +121,7 @@ function GatePanel({ label, shift, logs }) {
       ) : (
         <ul className="cm-log oc-gate-log">
           {logs.map((log, i) => {
-            const { cls, label: statusLabel } = getMeta(log.status)
+            const { cls, label: statusLabel } = getMeta(displayStatus(log))
             // A hand-recorded plateless vehicle has no owner account; the
             // driver's name is all it has.
             const who = [

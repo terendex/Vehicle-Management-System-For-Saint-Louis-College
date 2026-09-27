@@ -442,7 +442,7 @@ class ExpectedVisitWaivesRulesTests(TestCase):
         self.assertEqual(check_entry(vehicle)['status'], 'wrong_day')
         self._visit('STU1234')
         resp = self._check('STU1234')
-        self.assertEqual(resp['status'], 'authorized', resp)
+        self.assertEqual(resp['status'], 'scheduled_entry', resp)
         self.assertIn('waived', resp['message'])
 
     def test_a_confiscated_account_is_not_waived(self):
@@ -451,3 +451,95 @@ class ExpectedVisitWaivesRulesTests(TestCase):
         self._visit('CNF1234')
         with patch.object(User, 'is_confiscated', new=True):
             self.assertEqual(self._check('CNF1234')['status'], 'confiscated')
+
+
+class ScheduledEntryRecordTests(TestCase):
+    """A booked vehicle's entry is a Scheduled Entry on the card AND on the
+    record: the log row names the booking, the log and the report say so, and
+    Expected Today keeps the visit (as inside) until the vehicle leaves."""
+    def setUp(self):
+        self.admin = _user('cdso@slc.edu.ph', 'admin')
+        self.guard = _user('guard@slc.edu.ph', 'security', gate_assignment='gate1')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.guard)
+        self.today = timezone.localdate()
+        supplier = Supplier.objects.create(company_name='JOLIBEE', category='delivery', is_active=True)
+        SupplierPlate.objects.create(supplier=supplier, plate_number='ASD123')
+        self.visit = ScheduledVisit.objects.create(
+            visitor_name='JACK BLAK', category='delivery', supplier=supplier,
+            plate_number='ASD123', expected_date=self.today, created_by=self.admin)
+
+    def _check(self, plate='ASD 123'):
+        with patch('scanning.views._supplier_rule_denial', return_value=None):
+            return self.client.post('/api/scan/manual-entry/', {'plate_number': plate}, format='json').data
+
+    def _feed(self):
+        return self.client.get('/api/vehicles/scheduled-visits/today/').data
+
+    def test_card_and_record_say_scheduled_entry(self):
+        resp = self._check()
+        self.assertEqual(resp['status'], 'scheduled_entry')
+        self.assertIn(f'SV-{self.visit.pk}', resp['message'])
+        self.assertNotIn('waived', resp['message'])        # within hours: nothing to waive
+        entry = AccessLog.objects.get(plate_number='ASD123', status='authorized')
+        self.assertEqual(entry.scheduled_visit_id, self.visit.pk)
+
+        row = self.client.get('/api/scan/logs/').data[0]
+        self.assertEqual(row['scheduled_visit_ref'], f'SV-{self.visit.pk}')
+        self.assertEqual(row['scheduled_visit_name'], 'JACK BLAK')
+
+        from django.test import RequestFactory
+        from scanning.views import VEHICLE_LOG_REPORT_HEADERS, _vehicle_log_report_data
+        request = RequestFactory().get('/x'); request.user = self.admin
+        request.query_params = request.GET
+        report, _ = _vehicle_log_report_data(request)
+        col = lambda h: report[0][VEHICLE_LOG_REPORT_HEADERS.index(h)]
+        self.assertEqual(col('Status'), 'Scheduled Entry')
+        self.assertIn(f'SV-{self.visit.pk}', col('Remarks'))
+
+    def test_expected_today_keeps_the_visit_until_it_exits(self):
+        self.assertEqual([(v['id'], v['is_arrived']) for v in self._feed()], [(self.visit.pk, False)])
+        self._check()
+        feed = self._feed()
+        self.assertEqual(len(feed), 1)
+        self.assertTrue(feed[0]['is_arrived'])
+        self.assertTrue(feed[0]['is_inside'])
+        entry = AccessLog.objects.get(plate_number='ASD123', status='authorized')
+        self.assertEqual(feed[0]['inside_since'], entry.scanned_at.isoformat())   # this stay's entry
+        # Drive out: backdate the entry past the re-check window, check again.
+        AccessLog.objects.filter(plate_number='ASD123').update(
+            scanned_at=timezone.now() - timedelta(minutes=10))
+        self.assertEqual(self._check()['status'], 'exited')
+        self.assertEqual(self._feed(), [])
+
+    def test_an_ordinary_entry_is_not_scheduled(self):
+        resp = self.client.post('/api/scan/manual-entry/', {'plate_number': 'ZZZ9999'}, format='json').data
+        self.assertNotEqual(resp.get('status'), 'scheduled_entry')
+        self.assertFalse(AccessLog.objects.filter(scheduled_visit__isnull=False).exists())
+
+    def test_visitor_slip_entry_names_its_booking_even_in_another_car(self):
+        guest = ScheduledVisit.objects.create(visitor_name='DR. HELEN OCAMPO', category='guest',
+                                              expected_date=self.today, created_by=self.admin)
+        resp = self.client.post('/api/scan/visitor-pass/', {
+            'plate_number': 'HOC2020', 'visitor_name': 'Helen Ocampo', 'allowed_duration': 60,
+            'scheduled_visit': guest.pk}, format='json')
+        self.client.post(f"/api/scan/visitor-pass/{resp.data['id']}/printed/")
+        entry = AccessLog.objects.get(plate_number='HOC2020', status='authorized')
+        self.assertEqual(entry.scheduled_visit_id, guest.pk)
+        inside = {v['id']: v['is_inside'] for v in self._feed()}
+        self.assertTrue(inside[guest.pk])
+
+    def test_old_records_are_linked_by_the_backfill(self):
+        import importlib
+        from django.apps import apps
+        self._check()
+        AccessLog.objects.update(scheduled_visit=None)              # as it was before the field
+        backfill = importlib.import_module('scanning.migrations.0027_accesslog_scheduled_visit')
+        backfill.link_past_entries(apps, None)
+        entry = AccessLog.objects.get(plate_number='ASD123', status='authorized')
+        self.assertEqual(entry.scheduled_visit_id, self.visit.pk)
+        # An archived booking is not linked — the gate never matches one.
+        self.visit.archived_at = timezone.now(); self.visit.save()
+        AccessLog.objects.update(scheduled_visit=None)
+        backfill.link_past_entries(apps, None)
+        self.assertIsNone(AccessLog.objects.get(pk=entry.pk).scheduled_visit_id)

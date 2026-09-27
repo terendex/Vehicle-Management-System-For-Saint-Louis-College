@@ -576,7 +576,8 @@
   background: #F4F8FC;
   border: 1px solid #C9DCEC;
 }
-.em-expected-row.arrived { background: #F7FAFC; border-color: #E1EAF1; opacity: 0.7; }
+/* Came in and not yet gone: kept on the list, tinted green, until the exit. */
+.em-expected-row.inside { background: #EFF8F3; border-color: #CDE9DA; }
 
 .em-expected-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .em-expected-name {
@@ -597,7 +598,7 @@
   white-space: nowrap;
   color: #2E4C63;
 }
-.em-expected-state.done { color: #0F7A5A; }
+.em-expected-state.inside { color: #0F7A5A; }
 
 .em-expected-checkin {
   display: inline-flex;

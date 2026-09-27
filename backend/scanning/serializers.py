@@ -31,6 +31,14 @@ class AccessLogSerializer(serializers.ModelSerializer):
     # deriving it from today's data.
     classification       = serializers.SerializerMethodField()
     classification_label = serializers.SerializerMethodField()
+    # The booking an entry came in under — the log screens show such a row as
+    # "Scheduled Entry" and name the booking (SV-12 · JACK BLAK).
+    scheduled_visit_ref  = serializers.SerializerMethodField()
+    scheduled_visit_name = serializers.CharField(source='scheduled_visit.visitor_name',
+                                                 read_only=True, default=None)
+
+    def get_scheduled_visit_ref(self, obj):
+        return f'SV-{obj.scheduled_visit_id}' if obj.scheduled_visit_id else None
 
     def _supplier_plates(self):
         # DRF reuses this child serializer across the whole list, so cache the

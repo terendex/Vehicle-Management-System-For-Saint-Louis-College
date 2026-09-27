@@ -60,9 +60,37 @@ def visit_expected_today(*plates):
             .order_by('is_arrived', 'pk').first())
 
 
-def waiver_note(visit):
-    """The sentence added to an entry the booking let through."""
-    return f' Expected visit SV-{visit.pk} ({visit.visitor_name}) — schedule rule waived.'
+# The status an admission carries when it matches a booking, so the guard's
+# result card reads "Scheduled Entry" rather than an ordinary approval. A
+# screen label only: the AccessLog row is stored as AUTHORIZED like any entry.
+SCHEDULED_ENTRY = 'scheduled_entry'
+
+
+def visit_note(visit, waived=False):
+    """The sentence added to an entry that matched a booking — and, when the
+    booking is what got it past the day/hour rules, says so."""
+    return (f' Expected visit SV-{visit.pk} ({visit.visitor_name})'
+            + (' — schedule rule waived.' if waived else '.'))
+
+
+def inside_since(visit):
+    """When this visit's vehicle came in, if it is inside now; else None.
+
+    Arrived and not yet gone: its visitor pass is still open, or its plate has
+    an entry with no exit. The gate's Expected Today keeps such a visit on the
+    list (as inside) and drops it once the vehicle has left. The time is this
+    stay's entry, not the day's first arrival — a supplier back for a second
+    drop shows when they came back."""
+    if not visit.is_arrived:
+        return None
+    open_pass = visit.visitor_passes.filter(status='active').order_by('-pk').first()
+    if open_pass:
+        return open_pass.printed_at or open_pass.entered_at
+    if not visit.plate_number:
+        return None
+    from scanning.views import _inside_state      # scanning imports this module; imported late
+    state, entry = _inside_state(visit.plate_number)
+    return entry.scanned_at if state != 'outside' else None
 
 
 def mark_arrived(visit, when=None, plate=''):

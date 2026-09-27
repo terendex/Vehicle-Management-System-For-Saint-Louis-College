@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  ClipboardList, CalendarDays, RefreshCw, Filter, LogIn, LogOut,
+  ClipboardList, CalendarDays, RefreshCw, Filter, LogIn, LogOut, CalendarClock,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { getAccessLogs } from '../../api/scanning'
+import { displayStatus } from '../../utils/logStatus'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import './SecurityAuditLogPage.css'
@@ -13,6 +14,7 @@ import './SecurityAuditLogPage.css'
 const STATUS_META = {
   authorized: { label: 'Authorized',        Icon: CheckCircle,   cls: 'authorized' },
   open_entry: { label: 'Open Entry',        Icon: CheckCircle,   cls: 'authorized' },
+  scheduled_entry: { label: 'Scheduled Entry', Icon: CalendarClock, cls: 'authorized' },
   wrong_day:  { label: 'Wrong Day',         Icon: XCircle,       cls: 'denied'     },
   denied:     { label: 'Denied',            Icon: XCircle,       cls: 'denied'     },
   unknown:    { label: 'Visitor',           Icon: HelpCircle,    cls: 'visitor'    },
@@ -173,7 +175,7 @@ export default function SecurityAuditLogPage() {
           ) : (
             <div className="sal-list">
               {filtered.map((log, i) => {
-                const { Icon, label, cls } = getMeta(log.status)
+                const { Icon, label, cls } = getMeta(displayStatus(log))
                 const gates = visitGates(log)
                 return (
                   <div key={log.id ?? i} className={`sal-row ${cls}`}>
@@ -210,6 +212,7 @@ export default function SecurityAuditLogPage() {
                           row with no owner (visitors, unregistered plates). */}
                       {(() => {
                         const who = [
+                          log.scheduled_visit_ref && `Booked: ${[log.scheduled_visit_ref, log.scheduled_visit_name].filter(Boolean).join(' ')}`,
                           log.vehicle_owner_name && `Owner: ${log.vehicle_owner_name}`,
                           log.on_duty_guard_name && `On duty: ${log.on_duty_guard_name}`,
                           log.scanned_by_name && log.scanned_by_name !== log.on_duty_guard_name

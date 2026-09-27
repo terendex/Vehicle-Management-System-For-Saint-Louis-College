@@ -5649,7 +5649,12 @@ class ExpectedVisitsTodayView(APIView):
         if getattr(request.user, 'role', None) not in ('admin', 'security'):
             return Response({'detail': 'Gate staff only.'}, status=403)
         from .scheduled_visits import expected_today
-        return Response(ScheduledVisitSerializer(expected_today(), many=True).data)
+        # Still expected, or here now. A visit that arrived and has since left
+        # drops off: the gate is done with it (the CDSO's table keeps it as
+        # Arrived).
+        rows = ScheduledVisitSerializer(expected_today(), many=True,
+                                        context={'with_inside': True}).data
+        return Response([r for r in rows if not r['is_arrived'] or r['is_inside']])
 
 
 # The CDSO's Scheduled Visits table, printed. Same filters, same order, so the

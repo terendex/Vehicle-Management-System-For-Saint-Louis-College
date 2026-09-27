@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
 from vehicles.models import Vehicle, SupplierPlate
-from vehicles.scheduled_visits import visit_expected_today, waiver_note
+from vehicles.scheduled_visits import SCHEDULED_ENTRY, visit_expected_today, visit_note
 from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
 from accounts.views import IsAdminRole
@@ -966,10 +966,11 @@ class ScanView(APIView):
                 # Asked only now, at the point of ENTRY. A supplier already
                 # inside when their allowed hours end must still be able to
                 # drive out, which is why the exit branch above never asks.
-                # A visit the CDSO booked for today on this plate waives it.
+                # A visit the CDSO booked for today on this plate waives it,
+                # and makes the admission a Scheduled Entry either way.
                 deny_msg = _supplier_rule_denial()
-                waived_by = visit_expected_today(plate) if deny_msg else None
-                if deny_msg and not waived_by:
+                visit = visit_expected_today(plate)
+                if deny_msg and not visit:
                     AccessLog.objects.create(
                         plate_number=plate, status=AccessLog.Status.DENIED,
                         denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
@@ -997,12 +998,13 @@ class ScanView(APIView):
                 from .slips import supplier_slip
                 results.append({
                     'plate_number':  plate,
-                    'status':        'open_entry' if open_campus else 'authorized',
+                    'status':        ('open_entry' if open_campus
+                                      else SCHEDULED_ENTRY if visit else 'authorized'),
                     'allowed':       True,
                     'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
                                       if open_campus else
                                       f'Supplier vehicle — {supplier_name}. Entry permitted.'
-                                      + (waiver_note(waived_by) if waived_by else '')),
+                                      + (visit_note(visit, waived=bool(deny_msg)) if visit else '')),
                     'is_supplier':   True,
                     'supplier_name': supplier_name,
                     'supplier_slip': supplier_slip(entry_log),   # printed by the guard page
@@ -1575,6 +1577,9 @@ class VisitorPassPrintedView(APIView):
             status=AccessLog.Status.AUTHORIZED,
             gate_id=gate_id,
             scanned_by=request.user,
+            # Named outright: a visitor booked without a plate, or arriving in
+            # another car, would not be found by plate.
+            scheduled_visit=pass_.scheduled_visit,
         )
         # The entry is logged, so the visit it was checked in from has arrived.
         # (The AccessLog signal already ticks off a visit on the same plate;
@@ -1900,7 +1905,8 @@ def _filter_access_logs(request):
         # All three are rendered on every row of the table and every line of
         # the report — vehicle__user is a two-step join for the owner's name.
         # paired_entry: a lone exit row names the gate its visit came in by.
-        .select_related('scanned_by', 'on_duty_guard', 'vehicle__user', 'paired_entry')
+        .select_related('scanned_by', 'on_duty_guard', 'vehicle__user', 'paired_entry',
+                        'scheduled_visit')
         .order_by('-scanned_at')             # newest first; the row cap below therefore keeps the most recent
     )
     filters_desc = []                        # the filter written out in words, for the report subtitle
@@ -2133,6 +2139,9 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             remarks.append(f'No plate — {described}' if described else 'No plate')
             if log.entry_note:
                 remarks.append(log.entry_note)
+        if log.scheduled_visit_id:
+            remarks.append(f'Expected visit SV-{log.scheduled_visit_id}'
+                           + (f' ({log.scheduled_visit.visitor_name})' if log.scheduled_visit else ''))
         if log.is_override:
             remarks.append(f'Override: {log.override_reason}' if log.override_reason else 'Override')
         if log.denied_reason:
@@ -2162,7 +2171,9 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             category_labels.get(log.entrant_category, ''),
             (log.vehicle_type or '').title(),
             entry_gate,
-            status_labels.get(log.status, log.status),
+            # Stored as authorized; the booking is what makes it a scheduled one.
+            ('Scheduled Entry' if log.scheduled_visit_id and log.status == AccessLog.Status.AUTHORIZED
+             else status_labels.get(log.status, log.status)),
             getattr(log.on_duty_guard, 'full_name', '') or '',
             # Time only, no date: the entry column already carries the date,
             # and a visit that crosses midnight is rare enough to read from it.
@@ -2964,10 +2975,11 @@ class ManualEntryView(APIView):
 
             # Asked only at ENTRY, never on the exit branch above: a supplier
             # already inside when their hours end must still be able to leave.
-            # A visit the CDSO booked for today on this plate waives it.
+            # A visit the CDSO booked for today on this plate waives it, and
+            # makes the admission a Scheduled Entry either way.
             deny_msg = _supplier_rule_denial()
-            waived_by = visit_expected_today(plate_number) if deny_msg else None
-            if deny_msg and not waived_by:
+            visit = visit_expected_today(plate_number)
+            if deny_msg and not visit:
                 AccessLog.objects.create(
                     plate_number=plate_number, status=AccessLog.Status.DENIED,
                     denied_reason=deny_msg, gate_id=gate_id, scanned_by=request.user,
@@ -2990,12 +3002,13 @@ class ManualEntryView(APIView):
             from .slips import supplier_slip
             return Response({
                 'plate_number':  plate_number,
-                'status':        'open_entry' if open_campus else 'authorized',
+                'status':        ('open_entry' if open_campus
+                                  else SCHEDULED_ENTRY if visit else 'authorized'),
                 'allowed':       True,
                 'message':       (f'Open Campus Mode active — Supplier vehicle {supplier_name}. Open entry granted.'
                                   if open_campus else
                                   f'Supplier vehicle — {supplier_name}. Entry permitted.'
-                                  + (waiver_note(waived_by) if waived_by else '')),
+                                  + (visit_note(visit, waived=bool(deny_msg)) if visit else '')),
                 'is_supplier':   True,
                 'supplier_name': supplier_name,
                 'supplier_slip': supplier_slip(entry_log),   # printed by the guard page

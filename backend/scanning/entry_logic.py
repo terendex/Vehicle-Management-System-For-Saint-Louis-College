@@ -281,14 +281,20 @@ def is_open_campus() -> bool:
 # =============================================================================
 def check_entry(vehicle) -> dict:
     result = _decide_entry(vehicle)
-    if result.pop('waivable', False):
-        from vehicles.scheduled_visits import visit_expected_today, waiver_note
-        visit = visit_expected_today(*vehicle_identifiers(vehicle))
-        if visit:
-            return _result('authorized', True,
-                           f'{vehicle.user.full_name} — Entry granted.{waiver_note(visit)}',
-                           result.get('constraint'))
-    return result
+    waivable = result.pop('waivable', False)
+    # An ordinary admission, or a timetable refusal, may be a booked visit.
+    # Anything else (confiscated, suspended, Open Campus) is left as decided.
+    if not waivable and result['status'] != 'authorized':
+        return result
+    from vehicles.scheduled_visits import SCHEDULED_ENTRY, visit_expected_today, visit_note
+    visit = visit_expected_today(*vehicle_identifiers(vehicle))
+    if visit is None:
+        return result
+    # Booked for today: admitted as a Scheduled Entry either way — past the
+    # rule it failed, or on its own merits with the booking named.
+    message = (f'{vehicle.user.full_name} — Entry granted.{visit_note(visit, waived=True)}'
+               if waivable else result['message'] + visit_note(visit))
+    return _result(SCHEDULED_ENTRY, True, message, result.get('constraint'))
 
 
 def _decide_entry(vehicle) -> dict:

@@ -466,13 +466,18 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
     auto_admit      = serializers.SerializerMethodField()
     # The visitor pass that checked this visit in (VP-{id}), when there is one.
     pass_reference  = serializers.SerializerMethodField()
+    # Arrived and not yet left — the gate's Expected Today shows it as inside
+    # until the exit. Worked out only for that feed (context with_inside); the
+    # CDSO's table has no use for it and would pay a query per row.
+    is_inside       = serializers.SerializerMethodField()
+    inside_since    = serializers.SerializerMethodField()   # this stay's entry time, for "Inside · 4:32 PM"
 
     class Meta:
         model  = ScheduledVisit
         fields = [
             'id', 'visitor_name', 'category', 'supplier', 'supplier_name',
             'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'arrived_at',
-            'created_by_name', 'auto_admit', 'pass_reference',
+            'created_by_name', 'auto_admit', 'pass_reference', 'is_inside', 'inside_since',
             'archived_at', 'archived_by_name', 'archive_reason', 'created_at',
         ]
         read_only_fields = ['id', 'arrived_at', 'archived_at', 'archive_reason', 'created_at']
@@ -480,6 +485,25 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
     def get_auto_admit(self, obj):
         from .scheduled_visits import is_supplier_plate
         return is_supplier_plate(obj.plate_number)
+
+    def _inside_since(self, obj):
+        # Asked by both fields below; worked out once per visit.
+        cache = self.__dict__.setdefault('_inside_cache', {})
+        if obj.pk not in cache:
+            from .scheduled_visits import inside_since
+            cache[obj.pk] = inside_since(obj)
+        return cache[obj.pk]
+
+    def get_is_inside(self, obj):
+        if not self.context.get('with_inside'):
+            return None
+        return self._inside_since(obj) is not None
+
+    def get_inside_since(self, obj):
+        if not self.context.get('with_inside'):
+            return None
+        since = self._inside_since(obj)
+        return since.isoformat() if since else None
 
     def get_pass_reference(self, obj):
         pass_ = obj.visitor_passes.order_by('-pk').first()
