@@ -577,7 +577,7 @@ export const SHOTS = [
     after: async (p) => { await p.keyboard.press('Escape') },
     marks: [
       m(1, 'Plate or Conduction No.', 'The plate or conduction number of the double-parked vehicle. Required.', ph(/ABC 123/i)),
-      m(2, 'Double Parking', 'This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.', (p) => p.getByText(/parked across two bays/)),
+      m(2, 'Double Parking', 'This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.', (p) => p.getByText('Issue Violation — Double Parking')),
       m(3, 'Notes', 'Optional details that help the CDSO review it.', ph(/Which bays/)),
       m(4, 'Issue Violation', 'Records the violation against the vehicle’s owner and applies the penalty. If they already have one today, it says so and records nothing new. Cancel closes without saving.', union(btn(/^Cancel$/), (p) => p.getByRole('button', { name: /Issue Violation/ }).last())),
     ],

@@ -31,7 +31,7 @@ const CAT_OPTS = [
 // time exceed, activity while confiscated), and a camera alert is attributed
 // from its own card above. Issued through the same server path as an alert, so
 // the same rules hold: one offence per owner per day, then the ladder.
-function IssueViolationModal({ zoneId, zoneName, onClose }) {
+function IssueViolationModal({ zoneId, onClose }) {
   const [plate, setPlate]   = useState('')
   const [notes, setNotes]   = useState('')
   const [loading, setLoading] = useState(false)
@@ -66,11 +66,6 @@ function IssueViolationModal({ zoneId, zoneName, onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#5C7B92' }}><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} noValidate style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <p style={{ margin: 0, fontSize: 12, color: '#841818', background: '#FCEDED', border: '1px solid #F3C4C4', borderRadius: 6, padding: '6px 10px', lineHeight: 1.45 }}>
-            A vehicle parked across two bays{zoneName ? <> in <strong>{zoneName}</strong></> : ''}. This counts as an
-            offence: 1st — a week without campus access, 2nd — two weeks, 3rd — the rest of the
-            registration period. One offence per owner per day.
-          </p>
           <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#2E4C63', marginBottom: 4 }}>Plate or Conduction No. *</label>
             <input value={plate} onChange={e => setPlate(e.target.value)} placeholder="e.g. ABC 123" required
@@ -780,7 +775,6 @@ export default function SecurityParkingView() {
       {showViolation && (
         <IssueViolationModal
           zoneId={selZone?.id ?? null}
-          zoneName={selZone?.name}
           onClose={() => setShowViolation(false)}
         />
       )}
