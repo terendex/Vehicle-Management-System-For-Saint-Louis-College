@@ -13,7 +13,7 @@ import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
 import useFullscreen from '../../hooks/useFullscreen'
-import { announceDoubleParking } from '../../utils/doubleParkingOutcome'
+import { announceDoubleParking, confirmDoubleParking } from '../../utils/doubleParkingOutcome'
 import ConfiscatedAccounts from '../../components/ConfiscatedAccounts'
 import { feedState, FEED_DOT } from '../../utils/feedState'
 import '../Admin/ParkingManagement.css'
@@ -41,9 +41,10 @@ function IssueViolationModal({ zoneId, onClose }) {
     const problems = [...fieldProblems(e.currentTarget)]
     if (!plate.trim()) problems.push('Enter the plate or conduction number.')
     if (await notify.validation(problems, { title: 'Violation not issued' })) return
+    const typed = plate.trim().toUpperCase()
+    if (!(await confirmDoubleParking(typed))) return   // cancelled: the form stays open as filled
     setLoading(true)
     try {
-      const typed = plate.trim().toUpperCase()
       const data = await zoneApi.reportDoublePark(zoneId, typed, notes)
       onClose()
       await announceDoubleParking(data?.plate_number || typed, data)

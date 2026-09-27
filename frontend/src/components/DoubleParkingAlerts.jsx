@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { AlertTriangle, ShieldAlert } from 'lucide-react'
 import { toast } from './Feedback/notify'
 import { zoneApi } from '../api/parking'
-import { announceDoubleParking } from '../utils/doubleParkingOutcome'
+import { announceDoubleParking, confirmDoubleParking } from '../utils/doubleParkingOutcome'
 import { useLiveUpdates } from '../realtime/useLiveUpdates'
 import './DoubleParkingAlerts.css'
 
@@ -55,6 +55,7 @@ export default function DoubleParkingAlerts({ zoneId = null, pollMs = 8000, canA
     const key = keyOf(a)
     const plate = (plateInputs[key] || '').trim().toUpperCase()
     if (!plate) { toast.error('Enter the plate or conduction number.'); return }
+    if (!(await confirmDoubleParking(plate))) return   // cancelled: the typed plate stays in the box
     setSubmitting(key)
     try {
       const data = await zoneApi.attributeDoublePark(a.zone_id, a.space_ids || [], plate)

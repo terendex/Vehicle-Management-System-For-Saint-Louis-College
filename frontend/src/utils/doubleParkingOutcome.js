@@ -1,5 +1,21 @@
 import notify from '../components/Feedback/notify'
 
+// Asked before either path issues anything — the parking screen's Issue
+// Violation form and a camera alert's plate box. Issuing costs the owner
+// campus access (a first offence is a week), so it is not a single unconfirmed
+// click; the overstay Acknowledge asks the same way. Resolves true to go on.
+export function confirmDoubleParking(plate) {
+  return notify.confirm({
+    title: 'Issue a double-parking violation?',
+    message: `Issue a Double Parking violation to ${plate.replace(/\s+/g, '')}?`,
+    description: 'This counts as an offence against the owner: 1st — a week without campus '
+               + 'access, 2nd — two weeks, 3rd — the rest of the registration period. '
+               + 'Only one offence is counted per owner per day.',
+    confirmLabel: 'Issue violation',
+    danger: true,
+  })
+}
+
 // What a double-parking report actually did, told the guard in one dialog.
 // Shared by the alert card (a camera caught it) and the parking screen's
 // Issue Violation (the guard saw it): both go through the server's one
