@@ -345,7 +345,7 @@ Edit Parking Slots mode: draw and adjust bays over the zone’s reference image.
 
 Events reserve part of campus parking and note organizer plates.
 
-1. **Event Mode**: Entry Override lets guards admit plates that would be denied; click the switch to turn it on or off. Zone Capacity Overrides set a temporary capacity per zone — leave one blank to use its bays.
+1. **Event Parking Capacity**: A temporary capacity per zone for an event day. The parking counts use it while it is set; leave a zone blank to use its bays.
 2. **Add Event**: Create an event: name, date, times, how much parking it takes, and organizer plates.
 3. **Event card**: Date, time, organizer plates, and how much of campus parking the event holds.
 4. **Event actions**: Activate the event, reschedule it, show its details, or delete it.

@@ -10,7 +10,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import AdminLayout from '../../components/Layout/AdminLayout'
-import { getSystemSettings, patchSystemSettings, getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
+import { getEvents, createEvent, patchEvent, deleteEvent } from '../../api/vehicles'
 import { lookupSlip, printSlipOnServer } from '../../api/scanning'
 import { printSlipInBrowser } from '../../utils/slipPrint'
 import { zoneApi } from '../../api/parking'
@@ -37,30 +37,6 @@ const shareShort = (v) => PARKING_SHARES.find(s => s.value === v)?.short ?? null
 // each the way the gate compares it — FM001 becomes FM-001.
 const isOrganizerIdentifier = (raw) => isValidPlateNumber(raw) || isValidConductionNumber(raw)
 const IDENTIFIER_ERROR = 'Enter a plate, conduction sticker, or e-bike control number (e.g. FM-001).'
-
-// ── Toggle card for event mode switches ──────────────────────────────
-function ModeToggle({ label, description, enabled, loading, onToggle }) {
-  return (
-    <div className={`ev-mode-card${enabled ? ' ev-mode-card--on' : ''}`}>
-      <div className="ev-mode-info">
-        <span className="ev-mode-label">{label}</span>
-        <p className="ev-mode-desc">{description}</p>
-      </div>
-      <button
-        className={`ev-toggle-btn${enabled ? ' ev-toggle-btn--on' : ''}`}
-        onClick={onToggle}
-        disabled={loading}
-        aria-pressed={enabled}
-      >
-        {loading
-          ? <Loader2 size={22} className="ev-spinner" />
-          : enabled ? <ToggleRight size={28} /> : <ToggleLeft size={28} />
-        }
-        <span>{enabled ? 'ON' : 'OFF'}</span>
-      </button>
-    </div>
-  )
-}
 
 // ── Add Event modal ──────────────────────────────────────────────────
 function AddEventModal({ onClose, onCreated }) {
@@ -783,8 +759,6 @@ function ZoneCapacityRow({ zone, onSaved }) {
 // live as a tab inside Parking Space Management.
 export default function Events({ embedded = false }) {
   const Wrapper = embedded ? Fragment : AdminLayout
-  const [settings, setSettings]           = useState(null)
-  const [modeLoading, setModeLoading]     = useState(false)
   const [zones, setZones]                 = useState([])
   const [events, setEvents]               = useState([])
   const [pageLoading, setPageLoading]     = useState(true)
@@ -793,12 +767,10 @@ export default function Events({ embedded = false }) {
 
   const loadEventsData = () => {
     Promise.all([
-      getSystemSettings(),
       zoneApi.listAll(),
       getEvents(),
     ])
-      .then(([{ data: s }, z, { data: ev }]) => {
-        setSettings(s)
+      .then(([z, { data: ev }]) => {
         setZones(z)
         setEvents(ev)
       })
@@ -808,25 +780,15 @@ export default function Events({ embedded = false }) {
 
   useEffect(() => { loadEventsData() }, [])
 
-  // Live-refresh on event / settings / zone changes
-  useLiveUpdates(loadEventsData, ['event', 'systemsettings', 'parkingzone'])
+  // Live-refresh on event / zone changes
+  useLiveUpdates(loadEventsData, ['event', 'parkingzone'])
 
-  // The Parking Override switch that used to sit beside this one is gone: its
-  // guard button only faked a gate entry, and nothing restricts parking in a
-  // full zone. Its one real effect was hiding the capacity editor below, which
-  // hid overrides that were still in force — so the editor now always shows.
-  const toggleEntryOverride = async () => {
-    setModeLoading(true)
-    try {
-      const { data } = await patchSystemSettings({ event_mode_entry: !settings.event_mode_entry })
-      setSettings(data)
-      toast.success(`Entry override ${data.event_mode_entry ? 'enabled' : 'disabled'}.`)
-    } catch {
-      toast.error('Failed to update event mode.')
-    } finally {
-      setModeLoading(false)
-    }
-  }
+  // This section used to carry two "event mode" switches, Parking Override and
+  // Entry Override. Neither controlled anything: nothing restricts parking in a
+  // full zone, and a guard may override a denied entry on any day (with a
+  // reason, and an audit line). Both were removed. Parking Override's one real
+  // effect was hiding the capacity editor below — hiding limits still in
+  // force — so the editor now always shows.
 
   const handleZoneSaved = (id, val) => {
     setZones(prev => prev.map(z => z.id === id ? { ...z, capacity_override: val } : z))
@@ -842,14 +804,14 @@ export default function Events({ embedded = false }) {
 
         {/* ── Header ─────────────────────────────── */}
         {/* Embedded, this whole block is dropped: the two section headings
-            below ("Event Mode", "Events & Organizers") already say what each
+            below ("Event Parking Capacity", "Events & Organizers") already say what each
             part does, and Add Event moves down to the list it acts on. */}
         {!embedded && (
           <div className="ev-header">
             <div>
               <h1 className="ev-title">Events</h1>
               <p className="ev-subtitle">
-                Activate event mode, manage parking capacity overrides, and track organizer vehicles.
+                Set temporary parking capacity for events, and track organizer vehicles.
               </p>
             </div>
             <button className="ev-btn ev-btn-primary" onClick={() => setShowAdd(true)}>
@@ -865,23 +827,14 @@ export default function Events({ embedded = false }) {
           </div>
         ) : (
           <>
-            {/* ── Event Mode ─────────────────────────── */}
+            {/* ── Event Parking Capacity ─────────────── */}
             <section className="ev-section">
               <div className="ev-section-head">
-                <h2 className="ev-section-title">Event Mode</h2>
+                <h2 className="ev-section-title">Event Parking Capacity</h2>
                 <p className="ev-section-desc">
-                  Settings for event days: gate overrides, and temporary parking capacity per zone.
+                  For an event day, set a temporary capacity per zone. The parking counts use it
+                  for as long as it is set — clear it after the event.
                 </p>
-              </div>
-
-              <div className="ev-mode-grid">
-                <ModeToggle
-                  label="Entry Override"
-                  description="Guards can allow entry for plates that would otherwise be denied."
-                  enabled={settings?.event_mode_entry ?? false}
-                  loading={modeLoading}
-                  onToggle={toggleEntryOverride}
-                />
               </div>
 
               {/* Capacity overrides — always shown: the server applies one

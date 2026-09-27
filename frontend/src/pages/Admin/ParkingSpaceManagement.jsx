@@ -29,7 +29,7 @@ const TABS = [
 const BLURB = {
   spaces: 'Draw and edit bay layouts, watch live occupancy, and see which accounts are '
         + 'barred from parking.',
-  events: 'Activate event mode, override parking capacity, and track organizer vehicles.',
+  events: 'Set temporary parking capacity for events, and track organizer vehicles.',
 }
 
 export default function ParkingSpaceManagement() {

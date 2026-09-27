@@ -783,6 +783,9 @@ class SystemSettings(models.Model):
         default=False,
         help_text="When enabled, guards can override full-parking restrictions.",
     )
+    # Retired too: nothing reads it. Guards may override a denied entry on any
+    # day (a reason is required and the override is audited); its Events switch
+    # was removed. The column stays until a two-phase drop.
     event_mode_entry     = models.BooleanField(
         default=False,
         help_text="When enabled, guards can override denied entry scans at the gate.",
