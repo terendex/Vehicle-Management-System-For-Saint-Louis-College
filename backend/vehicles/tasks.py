@@ -64,6 +64,16 @@ def purge_old_records():
 
 
 @shared_task(name="vehicles.auto_archive_expired_accounts")
+def auto_archive_past_visits():
+    """Archive scheduled visits the day after their date, keeping their outcome
+    (Arrived / No-show) — see vehicles.scheduled_visits.auto_archive_due.
+    Idempotent: archived visits are not live, so a re-run finds nothing."""
+    from .scheduled_visits import auto_archive_due
+    archived = auto_archive_due()
+    log.info("[auto_archive_past_visits] Archived %d visit(s)", archived)
+    return {"archived": archived}
+
+
 def auto_archive_expired_accounts():
     """Archive vehicle-owner accounts whose expires_at has passed.
 

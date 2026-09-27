@@ -17,7 +17,11 @@ then:
     roster, who never gets a visitor pass, is ticked off too.
 
 An archived visit is out of all of it: the gate neither lists nor matches it.
+A visit archives itself the day after its date (auto_archive_due), and keeps
+what happened — Arrived, No-show — as its outcome (visit_outcome).
 """
+from datetime import timedelta
+
 from django.utils import timezone
 
 from .models import ScheduledVisit, SupplierPlate, _normalize_plate
@@ -141,6 +145,8 @@ VISIT_STATUS_LABELS = {
     'arrived':  'Arrived',
     'no_show':  'No-show',
     'archived': 'Archived',
+    # An outcome only (see visit_outcome): archived before its day came.
+    'cancelled': 'Cancelled',
 }
 
 
@@ -153,3 +159,36 @@ def visit_status(visit, today=None):
     if visit.expected_date < today:
         return 'no_show'
     return 'today' if visit.expected_date == today else 'upcoming'
+
+
+def visit_outcome(visit, today=None):
+    """What happened with a visit, archived or not — the status it keeps on
+    record. visit_status answers "which tab"; this answers "arrived or not":
+    an archived visit is still Arrived or a No-show, and one archived before
+    its day came was Cancelled."""
+    today = today or timezone.localdate()
+    if visit.is_arrived:
+        return 'arrived'
+    if visit.expected_date < today:
+        return 'no_show'
+    if visit.archived_at:
+        return 'cancelled'
+    return 'today' if visit.expected_date == today else 'upcoming'
+
+
+# A visit archives itself this many days after its date, keeping its outcome:
+# 1 = the day after (a visit on the 27th is archived on the 28th). A no-show is
+# rescheduled straight from the Archived tab.
+AUTO_ARCHIVE_AFTER_DAYS = 1
+AUTO_ARCHIVE_REASON = 'Auto-archived after the visit day'
+
+
+def auto_archive_due(today=None):
+    """Archive every live visit whose date is AUTO_ARCHIVE_AFTER_DAYS or more
+    past. is_arrived and arrived_at are left alone, so the outcome survives.
+    No archived_by: nobody did it. Idempotent. Returns how many it archived."""
+    today = today or timezone.localdate()
+    cutoff = today - timedelta(days=AUTO_ARCHIVE_AFTER_DAYS)
+    return (live_visits()
+            .filter(expected_date__lte=cutoff)
+            .update(archived_at=timezone.now(), archive_reason=AUTO_ARCHIVE_REASON))

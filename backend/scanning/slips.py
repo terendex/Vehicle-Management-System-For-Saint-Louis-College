@@ -422,7 +422,7 @@ def expected_visit_slip(visit):
     booking, and scanning it at the gate opens the check-in for it — the
     visitor pass is issued, and the visit marked arrived, from there. So the
     guard reads the booking off the card instead of typing it in."""
-    from vehicles.scheduled_visits import visit_status
+    from vehicles.scheduled_visits import visit_outcome, visit_status
     expected = visit.expected_date
     when = f"{expected.strftime('%b')} {expected.day}, {expected.year}"   # fits the bold row on 48mm
     who = [['Visitor', visit.visitor_name, KEY], ['Category', visit.get_category_display()]]
@@ -442,7 +442,11 @@ def expected_visit_slip(visit):
         'headline':         visit.plate_number or f'SV-{visit.pk}',
         'plate_number':     visit.plate_number,
         'name':             visit.visitor_name,
-        'state':            visit_status(visit),
+        # An auto-archived visit is still Arrived or a No-show, and a card
+        # scanned for one says that — only a cancelled booking reads Archived.
+        'state':            (visit_outcome(visit) if visit.archived_at
+                             and visit_outcome(visit) in ('arrived', 'no_show')
+                             else visit_status(visit)),
         'expected_date':    expected.isoformat(),
         'expected_label':   f"{expected.strftime('%A')}, {when}",
         'entered_at':       None,

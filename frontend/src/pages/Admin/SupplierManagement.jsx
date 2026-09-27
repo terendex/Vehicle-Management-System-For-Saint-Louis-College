@@ -733,7 +733,13 @@ const VISIT_TABS = [
 ]
 const VISIT_STATE_LABEL = {
   today: 'Expected today', upcoming: 'Upcoming', arrived: 'Arrived', no_show: 'No-show', archived: 'Archived',
+  cancelled: 'Cancelled',   // an outcome only: archived before its day came
 }
+// A visit's badge. An archived one keeps what happened — Arrived, No-show,
+// Cancelled — from the server's `outcome` (visits archive themselves the day
+// after their date), and says it is archived beside it.
+const badgeState = (v, st) => (st === 'archived' ? (v.outcome || 'archived') : st)
+const badgeClass = (s) => ({ no_show: 'noshow', cancelled: 'archived' }[s] || s)
 const VISITS_PER_PAGE = 10
 
 const fmtDate = (iso) => {
@@ -823,7 +829,15 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
   // What a row's menu offers, by where the visit stands.
   const menuItems = (v, st) => {
     if (st === 'archived') {
-      return [{ key: 'restore', label: 'Restore', Icon: ArchiveRestore, tone: 'enable', onSelect: () => restore(v) }]
+      // A no-show (or a cancelled booking) is rebooked from here: rescheduling
+      // brings it back on its new day. An arrived visit only ever restores.
+      const archivedItems = []
+      if (!v.is_arrived) {
+        archivedItems.push({ key: 'reschedule', label: 'Reschedule', Icon: CalendarDays, tone: 'view',
+          onSelect: () => setAction({ visit: v, mode: 'reschedule' }) })
+      }
+      archivedItems.push({ key: 'restore', label: 'Restore', Icon: ArchiveRestore, tone: 'enable', onSelect: () => restore(v) })
+      return archivedItems
     }
     const items = []
     // A card for someone still to come. A no-show's date has passed, so it
@@ -962,9 +976,14 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
                       </td>
                       <td className="sv-purpose">{v.purpose || <span className="sv-muted">—</span>}</td>
                       <td>
-                        <span className={`sp-visit-badge sp-visit-badge--${st === 'no_show' ? 'noshow' : st}`}>
-                          {VISIT_STATE_LABEL[st]}
+                        <span className={`sp-visit-badge sp-visit-badge--${badgeClass(badgeState(v, st))}`}>
+                          {VISIT_STATE_LABEL[badgeState(v, st)]}
                         </span>
+                        {st === 'archived' && (
+                          <span className="sp-visit-archived-tag" title={v.archive_reason || 'Archived'}>
+                            <Archive size={10} /> Archived
+                          </span>
+                        )}
                         {v.is_arrived && v.arrived_at && (
                           <span className="sv-sub">
                             {fmtArrival(v.arrived_at)}{v.pass_reference && ` · ${v.pass_reference}`}

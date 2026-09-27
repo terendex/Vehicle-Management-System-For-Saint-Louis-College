@@ -237,14 +237,29 @@ class ScheduledVisitGateTests(TestCase):
         visit.refresh_from_db()
         self.assertFalse(visit.is_arrived)
 
-    def test_restore_brings_it_back_and_it_can_then_be_rescheduled(self):
+    def test_restore_brings_it_back(self):
         visit = self._visit()
         self._archive(visit)
-        self.assertEqual(self._reschedule(visit, self.today + timedelta(days=1)).status_code, 400)
         resp = self._archive(visit, archived=False)
         self.assertIsNone(resp.data['archived_at'])
         self.assertEqual(resp.data['archive_reason'], '')
-        self.assertEqual(self._reschedule(visit, self.today + timedelta(days=1)).status_code, 200)
+
+    def test_rescheduling_an_archived_no_show_brings_it_back(self):
+        # Visits archive themselves a day after their date, so a no-show is
+        # rebooked straight from the Archived tab.
+        from accounts.models import AuditLog
+        visit = self._visit(expected_date=self.today - timedelta(days=3))
+        self._archive(visit, reason='Auto-archived after the visit day')
+        resp = self._reschedule(visit, self.today + timedelta(days=1))
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIsNone(resp.data['archived_at'])
+        self.assertEqual(resp.data['outcome'], 'upcoming')
+        self.assertTrue(AuditLog.objects.filter(details__contains='restored from archive').exists())
+        # An arrived one is history: never rescheduled, archived or not.
+        came = self._visit(expected_date=self.today - timedelta(days=3), is_arrived=True,
+                           arrived_at=timezone.now())
+        self._archive(came)
+        self.assertEqual(self._reschedule(came, self.today + timedelta(days=1)).status_code, 400)
 
 
 class ScheduledVisitTableTests(TestCase):
@@ -324,7 +339,8 @@ class ScheduledVisitTableTests(TestCase):
         kw = build.call_args.kwargs
         self.assertEqual(len(kw['rows']), 1)
         self.assertEqual(kw['rows'][0][1], f'SV-{self.archived.pk}')
-        self.assertEqual(kw['rows'][0][7], 'Archived — Postponed')
+        # Archived before its day: Cancelled is the outcome, archiving said after it.
+        self.assertEqual(kw['rows'][0][7], 'Cancelled — Archived: Postponed')
         self.assertIn('Status: Archived', kw['subtitle'])
         self.assertEqual(sum(kw['col_widths_mm']), 267)
         self.assertEqual(len(kw['col_widths_mm']), len(kw['headers']))
@@ -543,3 +559,70 @@ class ScheduledEntryRecordTests(TestCase):
         AccessLog.objects.update(scheduled_visit=None)
         backfill.link_past_entries(apps, None)
         self.assertIsNone(AccessLog.objects.get(pk=entry.pk).scheduled_visit_id)
+
+
+class AutoArchiveTests(TestCase):
+    """Visits archive themselves the day after their date and keep their outcome."""
+    def setUp(self):
+        self.admin = _user('cdso@slc.edu.ph', 'admin')
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+        self.today = timezone.localdate()
+
+    def _visit(self, name, days, **kw):
+        return ScheduledVisit.objects.create(visitor_name=name, created_by=self.admin,
+                                             expected_date=self.today + timedelta(days=days), **kw)
+
+    def test_the_day_after_its_date_a_visit_archives_itself_keeping_its_outcome(self):
+        from vehicles.tasks import auto_archive_past_visits
+        came    = self._visit('CAME', -2, is_arrived=True, arrived_at=timezone.now() - timedelta(days=2))
+        noshow  = self._visit('NOSHOW', -2)
+        yesterday = self._visit('YESTERDAY', -1)        # the day after: archived
+        today   = self._visit('TODAY', 0)               # its own day: not yet
+        self.assertEqual(auto_archive_past_visits(), {'archived': 3})
+        for v in (came, noshow, yesterday, today):
+            v.refresh_from_db()
+        self.assertIsNotNone(came.archived_at)
+        self.assertTrue(came.is_arrived)                  # the arrival is kept
+        self.assertIsNotNone(came.arrived_at)
+        self.assertEqual(came.archive_reason, 'Auto-archived after the visit day')
+        self.assertIsNone(came.archived_by)               # nobody did it
+        self.assertIsNotNone(noshow.archived_at)
+        self.assertIsNotNone(yesterday.archived_at)
+        self.assertIsNone(today.archived_at)
+        self.assertEqual(auto_archive_past_visits(), {'archived': 0})    # idempotent
+
+        rows = {r['visitor_name']: r for r in
+                self.client.get('/api/vehicles/scheduled-visits/', {'status': 'archived'}).data}
+        self.assertEqual(rows['CAME']['outcome'], 'arrived')
+        self.assertEqual(rows['NOSHOW']['outcome'], 'no_show')
+        self.assertEqual(rows['YESTERDAY']['outcome'], 'no_show')
+        self.assertEqual(self.client.get('/api/vehicles/scheduled-visits/', {'status': 'no_show'}).data, [])
+
+    def test_the_daily_scheduler_runs_it(self):
+        from vehicles.scheduler import DAILY_JOBS
+        self.assertIn('auto_archive_past_visits', DAILY_JOBS)
+
+    def test_a_card_for_an_archived_visit_still_says_what_happened(self):
+        from vehicles.tasks import auto_archive_past_visits
+        came = self._visit('CAME', -2, is_arrived=True, arrived_at=timezone.now())
+        noshow = self._visit('NOSHOW', -2)
+        cancelled = self._visit('CANCELLED', 3, archived_at=timezone.now(), archive_reason='Called off')
+        auto_archive_past_visits()
+        guard = _user('guard@slc.edu.ph', 'security', gate_assignment='gate1')
+        self.client.force_authenticate(user=guard)
+        state = lambda v: self.client.get('/api/scan/slip/', {'code': f'SLC-SCHEDULED:{v.pk}'}).data['state']
+        self.assertEqual(state(came), 'arrived')
+        self.assertEqual(state(noshow), 'no_show')
+        self.assertEqual(state(cancelled), 'archived')
+
+    def test_report_keeps_the_outcome(self):
+        from vehicles.tasks import auto_archive_past_visits
+        self._visit('CAME', -2, is_arrived=True, arrived_at=timezone.now())
+        auto_archive_past_visits()
+        with patch('report_utils.branded_pdf_response') as build:
+            from django.http import HttpResponse
+            build.return_value = HttpResponse(b'%PDF')
+            self.client.get('/api/vehicles/scheduled-visits/report/pdf/', {'status': 'archived'})
+        self.assertEqual(build.call_args.kwargs['rows'][0][7],
+                         'Arrived — Archived: Auto-archived after the visit day')

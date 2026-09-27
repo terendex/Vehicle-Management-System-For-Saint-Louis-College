@@ -60,6 +60,7 @@ CHECK_INTERVAL_SECONDS = 3600
 DAILY_JOBS = (
     'auto_backup',
     'auto_archive_expired_accounts',
+    'auto_archive_past_visits',
     'purge_old_records',
 )
 

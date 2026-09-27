@@ -466,6 +466,9 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
     auto_admit      = serializers.SerializerMethodField()
     # The visitor pass that checked this visit in (VP-{id}), when there is one.
     pass_reference  = serializers.SerializerMethodField()
+    # What happened — arrived / no_show / cancelled / today / upcoming — kept
+    # after the visit is archived (vehicles.scheduled_visits.visit_outcome).
+    outcome         = serializers.SerializerMethodField()
     # Arrived and not yet left — the gate's Expected Today shows it as inside
     # until the exit. Worked out only for that feed (context with_inside); the
     # CDSO's table has no use for it and would pay a query per row.
@@ -477,7 +480,7 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'visitor_name', 'category', 'supplier', 'supplier_name',
             'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'arrived_at',
-            'created_by_name', 'auto_admit', 'pass_reference', 'is_inside', 'inside_since',
+            'created_by_name', 'auto_admit', 'pass_reference', 'outcome', 'is_inside', 'inside_since',
             'archived_at', 'archived_by_name', 'archive_reason', 'created_at',
         ]
         read_only_fields = ['id', 'arrived_at', 'archived_at', 'archive_reason', 'created_at']
@@ -485,6 +488,10 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
     def get_auto_admit(self, obj):
         from .scheduled_visits import is_supplier_plate
         return is_supplier_plate(obj.plate_number)
+
+    def get_outcome(self, obj):
+        from .scheduled_visits import visit_outcome
+        return visit_outcome(obj)
 
     def _inside_since(self, obj):
         # Asked by both fields below; worked out once per visit.

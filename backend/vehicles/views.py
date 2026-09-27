@@ -5399,7 +5399,8 @@ def _parse_visit_date(value):
     return parsed, None
 
 
-from .scheduled_visits import VISIT_STATUS_LABELS, visit_status as _visit_status   # shared with the slip card
+from .scheduled_visits import (VISIT_STATUS_LABELS, visit_outcome as _visit_outcome,   # shared with the slip card
+                               visit_status as _visit_status)
 
 
 def _visit_search_filter(request):
@@ -5593,21 +5594,25 @@ class ScheduledVisitDetailView(APIView):
         # and the slip carry it on the new day. Not once they have arrived:
         # that visit happened, and moving it would rewrite when.
         if 'expected_date' in request.data:
-            if visit.archived_at:
-                return Response({'expected_date': 'This visit is archived. Restore it before rescheduling.'},
-                                status=400)
             if visit.is_arrived:
                 return Response({'expected_date': 'This visit has already arrived and cannot be rescheduled.'},
                                 status=400)
             new_date, error = _parse_visit_date(request.data.get('expected_date'))
             if error:
                 return error
-            if new_date != visit.expected_date:
+            # An archived no-show (or cancelled booking) is rescheduled straight
+            # from the Archived tab: moving it to a new day brings it back. That
+            # is the point of it — visits archive themselves the day after their
+            # date, and a no-show is the one worth booking again.
+            restored = bool(visit.archived_at)
+            if new_date != visit.expected_date or restored:
                 old_date = visit.expected_date
                 visit.expected_date = new_date
-                visit.save(update_fields=['expected_date'])
+                visit.archived_at, visit.archived_by, visit.archive_reason = None, None, ''
+                visit.save(update_fields=['expected_date', 'archived_at', 'archived_by', 'archive_reason'])
                 audit(request, AuditLog.Action.RECORD_UPDATED,
-                      f"Scheduled visit rescheduled | {visit.visitor_name} (SV-{visit.pk}) | "
+                      f"Scheduled visit rescheduled{' (restored from archive)' if restored else ''} | "
+                      f"{visit.visitor_name} (SV-{visit.pk}) | "
                       f"{old_date} → {new_date} | By: {request.user.full_name}")
 
         # Normally the gate ticks a visit off (see vehicles/scheduled_visits.py);
@@ -5672,8 +5677,10 @@ def _scheduled_visit_report(request):
     for i, v in enumerate(qs[:5000], start=1):
         status_key = _visit_status(v, today)
         status = VISIT_STATUS_LABELS[status_key]
-        if status_key == 'archived' and v.archive_reason:
-            status = f"Archived — {v.archive_reason}"
+        if status_key == 'archived':
+            # The outcome stays the status; being archived is said after it.
+            status = (f"{VISIT_STATUS_LABELS[_visit_outcome(v, today)]} — Archived"
+                      + (f": {v.archive_reason}" if v.archive_reason else ''))
         pass_ = v.visitor_passes.order_by('-pk').first()
         arrived = '—'
         if v.is_arrived:

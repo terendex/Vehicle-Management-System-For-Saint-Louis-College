@@ -759,6 +759,17 @@
 .sp-visit-badge--noshow   { color: #8A6B00; background: #FDF6DC; border: 1px solid #F0D9A0; }
 .sp-visit-badge--archived { color: #4A6B85; background: #EEF4F9; border: 1px solid #D3E1EC; }
 
+/* Beside an archived visit's outcome badge (Arrived / No-show / Cancelled). */
+.sp-visit-archived-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64839C;
+}
+
 /* Schedule Visit dialog: two fields to a row where they are short. */
 .sv-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 520px) {
