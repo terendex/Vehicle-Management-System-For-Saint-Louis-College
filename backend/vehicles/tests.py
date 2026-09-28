@@ -1032,3 +1032,65 @@ class SupplierOwnerPlateTests(TestCase):
         self.assertIn('OWN1234', resp.data['owner_plates'])
         self.assertNotIn('FRE5678', resp.data['owner_plates'])
         self.assertFalse(Supplier.objects.filter(company_name='NEW CO').exists())
+
+
+class SupplierCategoryOtherTests(TestCase):
+    """"Other" is a prompt, not an answer: a supplier filed under it has to say
+    what it means, and moving off it clears the text."""
+
+    def setUp(self):
+        from accounts.models import User
+        self.admin = User.objects.create_user(email='sco@slc.edu.ph', full_name='ADMIN',
+                                              password='x', role='admin')
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def _create(self, **body):
+        return self.client.post('/api/vehicles/suppliers/',
+                                {'company_name': 'MANG INASAL', **body}, format='json')
+
+    def test_other_without_its_text_is_refused(self):
+        from vehicles.models import Supplier
+        for body in ({'category': 'other'}, {'category': 'other', 'category_other': ' '}, {}):
+            resp = self._create(**body)
+            self.assertEqual(resp.status_code, 400, body)
+            self.assertIn('category_other', resp.data)
+        self.assertFalse(Supplier.objects.exists())
+
+    def test_other_is_stored_with_its_text(self):
+        resp = self._create(category='other', category_other='Catering')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['category_other'], 'Catering')
+        self.assertEqual(resp.data['category_label'], 'Other: Catering')
+
+    def test_switching_to_other_needs_the_text_in_the_same_request(self):
+        from vehicles.models import Supplier
+        supplier = Supplier.objects.create(company_name='MANG INASAL', category='delivery')
+        url = f'/api/vehicles/suppliers/{supplier.pk}/'
+        self.assertEqual(self.client.patch(url, {'category': 'other'}, format='json').status_code, 400)
+        supplier.refresh_from_db()
+        self.assertEqual(supplier.category, 'delivery')
+
+        resp = self.client.patch(url, {'category': 'other', 'category_other': 'Catering'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['category_label'], 'Other: Catering')
+
+    def test_moving_off_other_clears_the_text(self):
+        from vehicles.models import Supplier
+        supplier = Supplier.objects.create(company_name='MANG INASAL', category='other',
+                                           category_other='Catering')
+        resp = self.client.patch(f'/api/vehicles/suppliers/{supplier.pk}/',
+                                 {'category': 'vendor'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        supplier.refresh_from_db()
+        self.assertEqual((supplier.category, supplier.category_other), ('vendor', ''))
+
+    def test_toggling_active_leaves_the_category_alone(self):
+        """A PATCH that does not mention the category must not trip the rule —
+        a legacy "Other" saved before the text box existed still toggles."""
+        from vehicles.models import Supplier
+        supplier = Supplier.objects.create(company_name='OLD CO', category='other')
+        resp = self.client.patch(f'/api/vehicles/suppliers/{supplier.pk}/',
+                                 {'is_active': False}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['category_label'], 'Other')

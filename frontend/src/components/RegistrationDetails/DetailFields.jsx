@@ -1,5 +1,5 @@
 import {
-  DEPARTMENTS, DRIVER_RELATIONSHIPS, VEHICLE_COLORS, VEHICLE_TYPES,
+  DEPARTMENTS, DRIVER_RELATIONSHIPS, OTHER_VEHICLE_TYPE, VEHICLE_COLORS, VEHICLE_TYPES,
   formatDetailValue,
 } from './detailRules'
 
@@ -41,10 +41,29 @@ export default function DetailFields({
           /* Switching to E-Bike is refused — it means trading the plate for a
              system-issued control number, which only a new application does. */
           const types = VEHICLE_TYPES.filter(t => t !== 'E-Bike' || value === 'E-Bike')
+          /* A type specified under "Other" is stored as the typed text, so any
+             value that is not a listed type reads as "Other" plus its text.
+             Choosing Other blanks the value, which the text box then fills. */
+          const listed = value !== OTHER_VEHICLE_TYPE && VEHICLE_TYPES.includes(value)
           control = (
-            <select id={id} value={value} onChange={set(field)} disabled={disabled}>
-              {types.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <>
+              <select
+                id={id} value={listed ? value : OTHER_VEHICLE_TYPE} disabled={disabled}
+                onChange={e => onChange(field, e.target.value === OTHER_VEHICLE_TYPE ? '' : e.target.value)}
+              >
+                {types.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              {!listed && (
+                <input
+                  type="text" value={value === OTHER_VEHICLE_TYPE ? '' : value}
+                  onChange={e => onChange(field, e.target.value.toUpperCase())}
+                  disabled={disabled} autoComplete="off" maxLength={50}
+                  placeholder="Specify vehicle type (e.g. Jeepney)"
+                  aria-label="Specify vehicle type"
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </>
           )
         } else if (field === 'department') {
           control = (

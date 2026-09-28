@@ -365,6 +365,56 @@ class PendingSelfEditTests(EditFlowTestCase):
 
 
 # ──────────────────────────────────────────────
+# "Other" vehicle type — specified, never bare
+# ──────────────────────────────────────────────
+
+class OtherVehicleTypeTests(EditFlowTestCase):
+
+    def submit_raw(self, **over):
+        return self.client.post('/api/vehicles/register/open/',
+                                student_payload(**over), format='json')
+
+    def test_a_bare_other_is_refused_at_registration(self):
+        res = self.submit_raw(vehicle_type='Other')
+        self.assertEqual(res.status_code, 400, res.data)
+        self.assertIn('vehicle_type', res.data)
+        self.assertFalse(VehicleRegistration.objects.exists())
+
+    def test_the_specified_type_is_what_is_stored(self):
+        res = self.submit_raw(vehicle_type='  jeepney ')
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(VehicleRegistration.objects.get(pk=res.data['id']).vehicle_type, 'JEEPNEY')
+
+    def test_a_listed_type_typed_under_other_keeps_its_listed_spelling(self):
+        """The tricycle, e-bike and fee rules key on the listed spelling."""
+        res = self.submit_raw(vehicle_type='sedan')
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(VehicleRegistration.objects.get(pk=res.data['id']).vehicle_type, 'Sedan')
+
+    def test_a_pending_applicant_can_specify_their_own(self):
+        reg = self.submit()
+        res = self.self_edit(reg, vehicle_type='Kalesa')
+        self.assertEqual(res.status_code, 200, res.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.vehicle_type, 'KALESA')
+
+        res = self.self_edit(reg, vehicle_type='Other')
+        self.assertEqual(res.status_code, 400, res.data)
+        self.assertIn('vehicle_type', res.data['errors'])
+
+    def test_an_approved_specified_type_reaches_the_vehicle_as_a_car(self):
+        """Vehicle.Type is a fixed list; anything it has no word for takes a
+        full bay, like the old bare "Other" did."""
+        reg, owner = self.approved_owner()
+        filed = self.request_change(owner, vehicle_type='Jeepney')
+        self.assertEqual(filed.status_code, 201, filed.data)
+        self.decide(filed.data['id'], 'approve')
+        reg.refresh_from_db()
+        self.assertEqual(reg.vehicle_type, 'JEEPNEY')
+        self.assertEqual(reg.vehicle.vehicle_type, Vehicle.Type.CAR)
+
+
+# ──────────────────────────────────────────────
 # ACCEPTED — the owner asks, CDSO decides
 # ──────────────────────────────────────────────
 

@@ -1171,6 +1171,35 @@ class ParkingSpace(models.Model):
         return f"{cat} Space {self.space_number} {status}"
 
 
+# "Other" as a category is a prompt, not an answer: the person picking it says
+# what they mean in a text box, stored beside the category in `category_other`.
+CATEGORY_OTHER_MAX_LENGTH = 100
+
+
+def clean_category_other(category, value):
+    """`(stored_value, error)` for the text that specifies an "Other" category.
+
+    Required when the category is 'other', and cleared otherwise — a leftover
+    "Catering" on a row since moved to Delivery would be read as current.
+    """
+    if category != 'other':
+        return '', None
+    text = ' '.join(str(value or '').split())
+    if not text:
+        return None, 'Please specify the category.'
+    if len(text) > CATEGORY_OTHER_MAX_LENGTH:
+        return None, f'Keep the category under {CATEGORY_OTHER_MAX_LENGTH} characters.'
+    return text, None
+
+
+def category_label(category, display, other_text):
+    """The category as people read it: "Other: Catering" rather than "Other".
+    A row saved before the text box existed has no text, and reads "Other"."""
+    if category == 'other' and other_text:
+        return f"{display}: {other_text}"
+    return display
+
+
 # A company whose vehicles are expected at the gate.
 class Supplier(models.Model):
     """A supplier company whose vehicles are automatically permitted entry."""
@@ -1184,6 +1213,10 @@ class Supplier(models.Model):
     id           = models.BigAutoField(primary_key=True, db_column='supplier_id')
     company_name = models.CharField(max_length=200, unique=True)
     category     = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    # What "Other" means for this company — required when category is OTHER,
+    # blank otherwise. Nullable so a server still on older code can insert
+    # without it (both backends share one database).
+    category_other = models.CharField(max_length=100, null=True, blank=True)
     is_active    = models.BooleanField(default=True)   # cleared when a contract ends; their plates stop being recognised
     created_at   = models.DateTimeField(auto_now_add=True)
     updated_at   = models.DateTimeField(auto_now=True)
@@ -1194,6 +1227,10 @@ class Supplier(models.Model):
 
     def __str__(self):
         return self.company_name
+
+    @property
+    def category_label(self):
+        return category_label(self.category, self.get_category_display(), self.category_other)
 
 
 # A visit arranged in advance, so the guard knows who to expect.
@@ -1211,6 +1248,7 @@ class ScheduledVisit(models.Model):
     id            = models.BigAutoField(primary_key=True, db_column='scheduled_visit_id')
     visitor_name  = models.CharField(max_length=200)
     category      = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
+    category_other = models.CharField(max_length=100, null=True, blank=True)   # see Supplier.category_other
     supplier      = models.ForeignKey(               # set when the visit is on behalf of a known company
         Supplier, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='scheduled_visits',
@@ -1244,6 +1282,10 @@ class ScheduledVisit(models.Model):
 
     def __str__(self):
         return f"{self.visitor_name} — {self.expected_date}"
+
+    @property
+    def category_label(self):
+        return category_label(self.category, self.get_category_display(), self.category_other)
 
 
 # One plate belonging to a supplier; this is what classify_entrant checks.

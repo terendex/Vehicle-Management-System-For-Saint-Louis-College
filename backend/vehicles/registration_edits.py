@@ -31,6 +31,12 @@ VEHICLE_TYPES = frozenset({
     'Sedan', 'SUV', 'Motorcycle', 'Tricycle', 'E-Bike', 'Van', 'Truck', 'Other',
 })
 
+# "Other" is a prompt, not an answer: picking it reveals a text box, and what
+# is stored is what the person typed there. The bare word is refused so a
+# registration never reaches CDSO saying only "Other".
+OTHER_VEHICLE_TYPE = 'Other'
+VEHICLE_TYPE_MAX_LENGTH = 50              # VehicleRegistration.vehicle_type's column width
+
 # Only this type carries a body number; see `apply_changes` for the clearing
 # rule that keeps a leftover number off a vehicle that no longer has one.
 BODY_NUMBER_TYPE = 'Tricycle'
@@ -99,10 +105,37 @@ def _clean_department(value, registration):
     return label, None
 
 
+def clean_vehicle_type(value):
+    """A submitted vehicle type as it is stored: `(value, error)`.
+
+    A listed type comes back in its listed spelling, however it was cased —
+    someone who picked "Other" and typed "sedan" meant Sedan, and the fee, body
+    number and e-bike rules all key on the listed spelling. Anything else is the
+    specified "Other", stored upper-case like every other free-text vehicle
+    detail (the colour's "Other" box is the precedent).
+
+    Shared by the registration form (VehicleRegistrationSerializer) and the edit
+    flows below, so the two cannot accept different things.
+    """
+    vtype = ' '.join(_text(value).split())   # collapse runs of spaces a typed value can carry
+    if not vtype:
+        return None, 'A vehicle type is required.'
+    if is_ebike(vtype):                       # "ebike", "E-BIKE" and so on
+        return 'E-Bike', None
+    for listed in VEHICLE_TYPES:
+        if vtype.lower() == listed.lower():
+            if listed == OTHER_VEHICLE_TYPE:
+                return None, 'Please specify the vehicle type.'
+            return listed, None
+    if len(vtype) > VEHICLE_TYPE_MAX_LENGTH:
+        return None, f'Keep the vehicle type under {VEHICLE_TYPE_MAX_LENGTH} characters.'
+    return vtype.upper(), None
+
+
 def _clean_vehicle_type(value, registration):
-    vtype = _text(value)
-    if vtype not in VEHICLE_TYPES:
-        return None, 'Choose one of the listed vehicle types.'
+    vtype, error = clean_vehicle_type(value)
+    if error:
+        return None, error
     # Becoming an e-bike means trading the plate for a system-issued control
     # number, which an edit cannot do. (An e-bike is never offered this field.)
     if is_ebike(vtype) and not is_ebike(registration.vehicle_type):

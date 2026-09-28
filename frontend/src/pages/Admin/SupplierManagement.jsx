@@ -4,7 +4,7 @@ import {
   Truck, Plus, Trash2, ChevronDown, ChevronUp,
   Loader2, ToggleLeft, ToggleRight, X, AlertTriangle, Tag, CalendarClock, Check,
   Printer, Monitor, CalendarDays, Archive, ArchiveRestore, Search, ChevronLeft, ChevronRight,
-  RotateCcw,
+  RotateCcw, Pencil,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
@@ -40,10 +40,34 @@ const VISIT_CATEGORIES = [
 
 const categoryLabel = (list, value) => list.find(c => c.value === value)?.label || value
 
+// "Other" is a prompt, not an answer: picking it reveals a box for what it
+// means, and the server refuses an "Other" left unexplained.
+const OTHER = 'other'
+const CATEGORY_OTHER_MAX = 100
+
+function CategoryOtherInput({ value, onChange, autoFocus = true }) {
+  return (
+    <div className="sp-field">
+      <label className="sp-label" htmlFor="sp-category-other">Specify Category</label>
+      <input
+        id="sp-category-other"
+        className="sp-text-input"
+        placeholder="e.g. Catering"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        maxLength={CATEGORY_OTHER_MAX}
+        autoFocus={autoFocus}
+        required
+      />
+    </div>
+  )
+}
+
 // ── Add Supplier modal ────────────────────────────────────────────────
 function AddSupplierModal({ onClose, onCreated }) {
   const [name, setName]             = useState('')
-  const [category, setCategory]     = useState('other')
+  const [category, setCategory]     = useState('')
+  const [categoryOther, setCategoryOther] = useState('')
   const [plateInput, setPlateInput] = useState('')
   const [plateError, setPlateError] = useState('')
   const [plates, setPlates]         = useState([])
@@ -75,7 +99,12 @@ function AddSupplierModal({ onClose, onCreated }) {
     if (await notify.validation(fieldProblems(e.currentTarget))) return
     setSaving(true)
     try {
-      const { data } = await createSupplier({ company_name: name.trim(), category, plates })
+      const { data } = await createSupplier({
+        company_name: name.trim(),
+        category,
+        category_other: category === OTHER ? categoryOther.trim() : '',
+        plates,
+      })
       onCreated(data)
       toast.success('Supplier added.')
       onClose()
@@ -115,11 +144,15 @@ function AddSupplierModal({ onClose, onCreated }) {
           </div>
 
           <div className="sp-field">
-            <label className="sp-label">Category</label>
-            <select className="sp-text-input" value={category} onChange={e => setCategory(e.target.value)}>
+            <label className="sp-label" htmlFor="sp-category">Category</label>
+            <select id="sp-category" className="sp-text-input" value={category}
+              onChange={e => setCategory(e.target.value)} required>
+              <option value="">Select category</option>
               {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
+
+          {category === OTHER && <CategoryOtherInput value={categoryOther} onChange={setCategoryOther} />}
 
           <div className="sp-field">
             <label className="sp-label">License Plates <span className="sp-label-optional">(optional)</span></label>
@@ -299,17 +332,35 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
   const plates = supplier.plates ?? []
 
   const [changingCategory, setChangingCategory] = useState(false)
-  const handleCategoryChange = async (e) => {
-    const category = e.target.value
+  // Open while "Other" is being specified. The category only changes once the
+  // text is saved, so cancelling leaves the supplier as it was.
+  const [otherPrompt, setOtherPrompt] = useState(null)   // the text being typed, or null when closed
+
+  const saveCategory = async (category, categoryOther = '') => {
     setChangingCategory(true)
     try {
-      const { data } = await patchSupplier(supplier.id, { category })
-      onUpdated(data)
-    } catch {
-      toast.error('Failed to update category.')
+      const { data } = await patchSupplier(supplier.id, { category, category_other: categoryOther })
+      onUpdated({ ...supplier, ...data })
+      return true
+    } catch (err) {
+      await notify.error(err.response?.data?.category_other || err.response?.data?.category
+        || 'Failed to update category.', { title: 'Category not changed' })
+      return false
     } finally {
       setChangingCategory(false)
     }
+  }
+
+  const handleCategoryChange = (e) => {
+    const category = e.target.value
+    if (category === OTHER) { setOtherPrompt(supplier.category_other || ''); return }
+    saveCategory(category)
+  }
+
+  const submitOther = async (e) => {
+    e.preventDefault()
+    if (await notify.validation(fieldProblems(e.currentTarget), { title: 'Category not changed' })) return
+    if (await saveCategory(OTHER, otherPrompt.trim())) setOtherPrompt(null)
   }
 
   const handleToggleActive = async () => {
@@ -409,6 +460,16 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
             >
               {SUPPLIER_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
+            {supplier.category === OTHER && (
+              <button
+                type="button"
+                className="sp-category-other"
+                onClick={() => setOtherPrompt(supplier.category_other || '')}
+                title="Change what “Other” means for this supplier"
+              >
+                {supplier.category_other || 'Not specified'} <Pencil size={11} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -499,6 +560,29 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
 
       {printPlate && (
         <PrintPassModal supplier={supplier} plate={printPlate} onClose={() => setPrintPlate(null)} />
+      )}
+
+      {otherPrompt !== null && (
+        <div className="sp-overlay" onClick={() => !changingCategory && setOtherPrompt(null)}>
+          <div className="sp-modal sp-modal--sm sp-visit-modal" onClick={e => e.stopPropagation()}>
+            <div className="sp-modal-head">
+              <h2 className="sp-modal-title">Specify Category</h2>
+              <button className="sp-modal-close" onClick={() => setOtherPrompt(null)}><X size={16} /></button>
+            </div>
+            <form onSubmit={submitOther} className="sp-modal-form" noValidate>
+              <p className="sp-modal-body" style={{ margin: 0, textAlign: 'left' }}>
+                What kind of supplier is <strong>{supplier.company_name}</strong>?
+              </p>
+              <CategoryOtherInput value={otherPrompt} onChange={setOtherPrompt} />
+              <div className="sp-modal-actions">
+                <button type="button" className="sp-btn sp-btn-ghost" onClick={() => setOtherPrompt(null)}>Cancel</button>
+                <button type="submit" className="sp-btn sp-btn-primary" disabled={changingCategory}>
+                  {changingCategory ? <Loader2 size={14} className="sp-spinner" /> : <Check size={14} />} Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {confirmDel && (
@@ -630,7 +714,7 @@ function VisitActionModal({ visit, mode, onClose, onSaved }) {
   )
 }
 
-const EMPTY_VISIT = { visitor_name: '', category: 'guest', supplier: '', plate_number: '', purpose: '', expected_date: '', notes: '' }
+const EMPTY_VISIT = { visitor_name: '', category: 'guest', category_other: '', supplier: '', plate_number: '', purpose: '', expected_date: '', notes: '' }
 
 // Booking a visit — opened from the page header's Schedule Visit button, the
 // way User Management opens Add User, so the table below keeps the page.
@@ -644,6 +728,7 @@ function ScheduleVisitModal({ suppliers, onClose, onCreated }) {
     e.preventDefault()
     const problems = []
     if (!form.visitor_name.trim()) problems.push("Enter the visitor's or company's name.")
+    if (form.category === OTHER && !form.category_other.trim()) problems.push('Specify the category.')
     if (!form.expected_date) problems.push('Pick the expected date.')
     else if (form.expected_date < today) problems.push('The expected date cannot be in the past.')
     if (form.plate_number.trim() && !isValidPlateNumber(form.plate_number)) {
@@ -654,6 +739,7 @@ function ScheduleVisitModal({ suppliers, onClose, onCreated }) {
     try {
       const { data } = await createScheduledVisit({
         ...form,
+        category_other: form.category === OTHER ? form.category_other.trim() : '',
         plate_number: formatPlateNumber(form.plate_number.trim()),
         supplier: form.supplier || null,
       })
@@ -695,6 +781,10 @@ function ScheduleVisitModal({ suppliers, onClose, onCreated }) {
               <input className="sp-text-input" type="date" min={today} value={form.expected_date} onChange={set('expected_date')} />
             </div>
           </div>
+          {form.category === OTHER && (
+            <CategoryOtherInput value={form.category_other}
+              onChange={value => setForm(f => ({ ...f, category_other: value }))} />
+          )}
           <div className="sv-form-row">
             <div className="sp-field">
               <label className="sp-label">Plate <span className="sp-label-optional">(optional)</span></label>
@@ -974,7 +1064,7 @@ function ScheduledVisitsSection({ suppliers, showSchedule, onCloseSchedule }) {
                           by {v.created_by_name || 'CDSO'}
                         </span>
                       </td>
-                      <td>{categoryLabel(VISIT_CATEGORIES, v.category)}</td>
+                      <td>{v.category_label || categoryLabel(VISIT_CATEGORIES, v.category)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(v.expected_date)}</td>
                       <td>
                         {v.plate_number
@@ -1063,12 +1153,29 @@ const PAGE_BLURB = {
   visits:    'Coordinate visitors and suppliers ahead of time so gate staff know who to expect.',
 }
 
+const SUPPLIERS_PER_PAGE = 10
+
+// The whole roster is already here (the Schedule Visit form lists every
+// supplier), so the search and the pager work on it in the browser.
+const supplierMatches = (s, q) => {
+  const category = s.category === OTHER && s.category_other
+    ? s.category_other
+    : categoryLabel(SUPPLIER_CATEGORIES, s.category)
+  // Plates are matched with their spaces taken out, so "ABC1234" finds "ABC 1234".
+  const bare = q.replace(/\s+/g, '')
+  return s.company_name.toLowerCase().includes(q)
+    || (category || '').toLowerCase().includes(q)
+    || (s.plates ?? []).some(p => p.plate_number.replace(/\s+/g, '').toLowerCase().includes(bare))
+}
+
 export default function SupplierManagement() {
   const [tab, setTab]                 = useState('suppliers')
   const [suppliers, setSuppliers]     = useState([])
   const [pageLoading, setPageLoading] = useState(true)
   const [showAdd, setShowAdd]         = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
+  const [search, setSearch]           = useState('')
+  const [page, setPage]               = useState(1)
 
   const loadSuppliers = () => {
     getSuppliers()
@@ -1085,6 +1192,14 @@ export default function SupplierManagement() {
   const handleCreated  = (s)  => setSuppliers(prev => [s, ...prev])
   const handleUpdated  = (s)  => setSuppliers(prev => prev.map(x => x.id === s.id ? s : x))
   const handleDeleted  = (id) => setSuppliers(prev => prev.filter(x => x.id !== id))
+
+  const query      = search.trim().toLowerCase()
+  const matching   = query ? suppliers.filter(s => supplierMatches(s, query)) : suppliers
+  const totalPages = Math.max(1, Math.ceil(matching.length / SUPPLIERS_PER_PAGE))
+  // Clamped rather than reset, so deleting the last card on the last page
+  // steps back a page instead of showing an empty one.
+  const current    = Math.min(page, totalPages)
+  const shown      = matching.slice((current - 1) * SUPPLIERS_PER_PAGE, current * SUPPLIERS_PER_PAGE)
 
   return (
     <>
@@ -1130,16 +1245,60 @@ export default function SupplierManagement() {
               <p className="sp-empty-hint">Add a supplier to allow their vehicles automatic entry.</p>
             </div>
           ) : (
-            <div className="sp-list">
-              {suppliers.map(s => (
-                <SupplierCard
-                  key={s.id}
-                  supplier={s}
-                  onUpdated={handleUpdated}
-                  onDeleted={handleDeleted}
-                />
-              ))}
-            </div>
+            <>
+              <div className="sp-toolbar">
+                <div className="um-search-wrapper sp-search">
+                  <Search size={16} />
+                  <input className="um-search-input" type="text" value={search}
+                    placeholder="Search by company, plate or category…"
+                    aria-label="Search suppliers"
+                    onChange={e => { setSearch(e.target.value); setPage(1) }} />
+                </div>
+                <span className="sp-toolbar-count">
+                  {query
+                    ? `${matching.length} of ${suppliers.length} supplier${suppliers.length !== 1 ? 's' : ''}`
+                    : `${suppliers.length} supplier${suppliers.length !== 1 ? 's' : ''}`}
+                </span>
+              </div>
+
+              {shown.length === 0 ? (
+                <div className="sp-empty-state">
+                  <Search size={40} className="sp-empty-icon" />
+                  <p>No suppliers match “{search.trim()}”.</p>
+                  <p className="sp-empty-hint">Try a company name, a plate number or a category.</p>
+                </div>
+              ) : (
+                <div className="sp-list">
+                  {shown.map(s => (
+                    <SupplierCard
+                      key={s.id}
+                      supplier={s}
+                      onUpdated={handleUpdated}
+                      onDeleted={handleDeleted}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {totalPages > 1 && (
+                <div className="um-pagination sp-pager">
+                  <span className="um-pagination-info">
+                    Showing {(current - 1) * SUPPLIERS_PER_PAGE + 1} to {Math.min(current * SUPPLIERS_PER_PAGE, matching.length)} of {matching.length} suppliers
+                  </span>
+                  <div className="um-pagination-controls">
+                    <button className="um-page-btn" disabled={current === 1} onClick={() => setPage(current - 1)}
+                      aria-label="Previous page">
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span className="um-page-current">Page {current} of {totalPages}</span>
+                    <button className="um-page-btn" disabled={current === totalPages} onClick={() => setPage(current + 1)}
+                      aria-label="Next page">
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

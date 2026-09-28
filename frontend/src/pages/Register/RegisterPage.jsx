@@ -210,6 +210,11 @@ const VEHICLE_COLORS = [
   'Maroon', 'Orange', 'Red', 'Silver', 'White', 'Yellow',
 ]
 
+/* Vehicle types, in the order the dropdown has always shown them. "Other" is
+   the same escape hatch as the colour's: it reveals a text box, and what is
+   typed there is the vehicle type that gets stored. */
+const VEHICLE_TYPE_OPTIONS = ['Sedan', 'SUV', 'Motorcycle', 'Tricycle', 'E-Bike', 'Van', 'Truck']
+
 
 /* Applying for a pass is a dead end otherwise — the only way back to the login
    page was the browser's back button. `onBack` is optional so the header can
@@ -449,6 +454,9 @@ export default function RegisterPage() {
     plate_number: '',
     conduction_number: '',
     vehicle_type: '',
+    // The dropdown selection, apart from the submitted vehicle_type so "Other"
+    // can reveal a free-text field — the same split as the colour below.
+    vehicle_type_choice: '',
     // vehicle_color holds the submitted value; vehicle_color_choice tracks the
     // dropdown selection so "Other" can reveal a free-text field.
     vehicle_color: '',
@@ -666,6 +674,16 @@ export default function RegisterPage() {
     }))
   }
 
+  /* ── Vehicle type dropdown ──
+     A preset fills vehicle_type directly and runs the ordinary change handler,
+     so the tricycle and e-bike side effects still apply; "Other" clears it and
+     reveals a text box for the applicant's own description. */
+  const handleVehicleTypeChoice = (e) => {
+    const choice = e.target.value
+    setFormData((prev) => ({ ...prev, vehicle_type_choice: choice }))
+    handleInputChange({ target: { name: 'vehicle_type', value: choice === 'Other' ? '' : choice } })
+  }
+
   // Debounced live duplicate check — warns in the field hint before the user submits
   useEffect(() => {
     const plate = formData.plate_number?.trim()
@@ -761,6 +779,15 @@ export default function RegisterPage() {
     // Whatever the browser would have refused on its own. The form carries
     // noValidate, so this is the only thing standing in for it.
     problems.push(...fieldProblems(formEl))
+
+    // A listed type typed into "Other" is sent back to the list: the e-bike and
+    // tricycle questions only appear for a type picked there.
+    if (formData.vehicle_type_choice === 'Other') {
+      const typed = formData.vehicle_type.trim().toLowerCase()
+      const listed = VEHICLE_TYPE_OPTIONS.find(t => t.toLowerCase() === typed)
+      if (listed) problems.push(`${listed} is in the Vehicle Type list — choose it there instead of Other.`)
+      else if (typed === 'other') problems.push('Specify your vehicle type.')
+    }
 
     // Format checks. These still mark their fields red, so the list and the
     // form agree on what to look at.
@@ -879,6 +906,7 @@ export default function RegisterPage() {
       delete payload.details_confirmed
       // UI-only helper for the colour dropdown — the backend stores vehicle_color.
       delete payload.vehicle_color_choice
+      delete payload.vehicle_type_choice
 
       const result = await registrationApi.submitOpenRegistration(payload)
       setIssuedControlNumber(result?.control_number || '')
@@ -1402,17 +1430,34 @@ export default function RegisterPage() {
 
               <div className="form-group">
                 <label>Vehicle Type <span className="required">*</span></label>
-                <select name="vehicle_type" value={formData.vehicle_type} onChange={handleInputChange} required>
+                <select
+                  name="vehicle_type_choice"
+                  value={formData.vehicle_type_choice}
+                  onChange={handleVehicleTypeChoice}
+                  required
+                >
                   <option value="">Select Type</option>
-                  <option value="Sedan">Sedan</option>
-                  <option value="SUV">SUV</option>
-                  <option value="Motorcycle">Motorcycle</option>
-                  <option value="Tricycle">Tricycle</option>
-                  <option value="E-Bike">E-Bike</option>
-                  <option value="Van">Van</option>
-                  <option value="Truck">Truck</option>
+                  {VEHICLE_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                   <option value="Other">Other</option>
                 </select>
+                {formData.vehicle_type_choice === 'Other' && (
+                  <input
+                    type="text"
+                    name="vehicle_type"
+                    value={formData.vehicle_type}
+                    // Upper-cased like the colour's free text; a preset keeps its
+                    // listed spelling, which is why this is not in handleInputChange.
+                    onChange={(e) => handleInputChange({
+                      target: { name: 'vehicle_type', value: e.target.value.toUpperCase() },
+                    })}
+                    required
+                    autoFocus
+                    maxLength={50}
+                    placeholder="Specify vehicle type (e.g. Jeepney)"
+                    aria-label="Specify vehicle type"
+                    style={{ marginTop: 8 }}
+                  />
+                )}
               </div>
 
               <div className="form-group">

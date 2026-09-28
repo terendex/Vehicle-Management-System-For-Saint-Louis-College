@@ -4816,7 +4816,7 @@ class RegistrationPeriodActivateView(APIView):
 # Imported here rather than at the top of the file, where the other models are.
 # Not required by anything — these are ordinary module-level imports that
 # happen to sit mid-file. Recorded, not moved: this pass comments code.
-from .models import Supplier, SupplierPlate, canonical_identifier
+from .models import Supplier, SupplierPlate, canonical_identifier, clean_category_other
 from .serializers import SupplierSerializer, SupplierPlateSerializer
 
 
@@ -4893,11 +4893,15 @@ class SupplierListCreateView(APIView):
         category = request.data.get('category') or Supplier.Category.OTHER   # unstated means "Other", which is a real answer here
         if category not in Supplier.Category.values:   # checked against the model's own choices, which Django does not enforce on .create()
             return Response({'category': 'Invalid supplier category.'}, status=400)
+        category_other, error = clean_category_other(category, request.data.get('category_other'))
+        if error:
+            return Response({'category_other': error}, status=400)
 
         # Two statements, not one transaction: a supplier with no plates is a
         # usable row an admin can add plates to, so a failure here does not
         # leave anything that has to be cleaned up.
-        supplier = Supplier.objects.create(company_name=company_name, category=category)
+        supplier = Supplier.objects.create(company_name=company_name, category=category,
+                                           category_other=category_other)
         SupplierPlate.objects.bulk_create(   # one INSERT for the whole list, not one per plate
             SupplierPlate(supplier=supplier, plate_number=p) for p in plate_numbers
         )
@@ -4926,11 +4930,18 @@ class SupplierDetailView(APIView):
             # The switch the gate reads: deactivating a supplier stops its
             # plates being admitted without removing the record of them.
             supplier.is_active = bool(request.data['is_active'])
-        if 'category' in request.data:
-            category = request.data['category']
+        if 'category' in request.data or 'category_other' in request.data:
+            category = request.data.get('category', supplier.category)
             if category not in Supplier.Category.values:
                 return Response({'category': 'Invalid supplier category.'}, status=400)   # returned before the save, so nothing partial lands
+            # Judged together: moving to "Other" needs its text in the same
+            # request, and moving off it clears the text.
+            category_other, error = clean_category_other(
+                category, request.data.get('category_other', supplier.category_other))
+            if error:
+                return Response({'category_other': error}, status=400)
             supplier.category = category
+            supplier.category_other = category_other
         supplier.save()                          # a full save covering whichever of the three blocks ran
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Supplier updated | {supplier.company_name} | Active: {supplier.is_active} | By: {request.user.full_name}")
@@ -5479,7 +5490,8 @@ def _visit_search_filter(request):
     q = (params.get('q') or '').strip()
     if q:
         match = (Q(visitor_name__icontains=q) | Q(purpose__icontains=q)
-                 | Q(supplier__company_name__icontains=q))
+                 | Q(supplier__company_name__icontains=q)
+                 | Q(category_other__icontains=q))   # what an "Other" category was specified as
         plate = _normalize_plate(q)
         if plate:
             match |= Q(plate_number__icontains=plate)
@@ -5572,6 +5584,9 @@ class ScheduledVisitListCreateView(APIView):
             return error
         if category not in ScheduledVisit.Category.values:
             return Response({'category': 'Invalid category.'}, status=400)
+        category_other, error = clean_category_other(category, request.data.get('category_other'))
+        if error:
+            return Response({'category_other': error}, status=400)
 
         # Optional: a visitor need not be tied to a supplier at all, and the
         # FK is SET_NULL, so one that is may outlive the company record.
@@ -5583,6 +5598,7 @@ class ScheduledVisitListCreateView(APIView):
         visit = ScheduledVisit.objects.create(
             visitor_name=visitor_name,
             category=category,
+            category_other=category_other,
             supplier=supplier,
             plate_number=_normalize_plate(request.data.get('plate_number') or ''),   # normalised so a gate scan can match it; blank is allowed, the vehicle may not be known yet
             purpose=(request.data.get('purpose') or '').strip(),
@@ -5710,7 +5726,6 @@ def _scheduled_visit_report(request):
     from report_utils import name_case
     qs, desc = _filter_scheduled_visits(request)
     today = timezone.localdate()
-    cat_labels = dict(ScheduledVisit.Category.choices)
     rows = []
     for i, v in enumerate(qs[:5000], start=1):
         status_key = _visit_status(v, today)
@@ -5731,7 +5746,7 @@ def _scheduled_visit_report(request):
             f"SV-{v.pk}",
             name_case(v.visitor_name) + (f" ({v.supplier.company_name})" if v.supplier and
                               v.supplier.company_name != v.visitor_name else ''),
-            cat_labels.get(v.category, v.category),
+            v.category_label,
             v.expected_date.strftime('%b %d, %Y'),
             v.plate_number or '—',
             v.purpose or '—',

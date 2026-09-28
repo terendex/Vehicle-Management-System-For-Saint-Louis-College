@@ -257,7 +257,7 @@ def supplier_slip(entry):
         'overstay_minutes': 0,
         'sections': [
             [['Company', supplier.company_name if supplier else 'N/A', KEY],
-             ['Category', supplier.get_category_display() if supplier else 'N/A']],
+             ['Category', supplier.category_label if supplier else 'N/A']],
             *([_scheduled_rows(visit)] if visit else []),
             [['Entered', _when(entry.scanned_at), KEY],
              ['Guard', entry.scanned_by.full_name if entry.scanned_by else 'N/A']],
@@ -361,7 +361,7 @@ def supplier_pass_slip(plate):
         'overstay_minutes': 0,
         'sections': [
             [['Company', supplier.company_name, KEY],
-             ['Category', supplier.get_category_display()]],
+             ['Category', supplier.category_label]],
             [['Registered', _when(plate.created_at)],
              ['Printed', _when(timezone.now())]],
         ],
@@ -425,7 +425,7 @@ def expected_visit_slip(visit):
     from vehicles.scheduled_visits import visit_outcome, visit_status
     expected = visit.expected_date
     when = f"{expected.strftime('%b')} {expected.day}, {expected.year}"   # fits the bold row on 48mm
-    who = [['Visitor', visit.visitor_name, KEY], ['Category', visit.get_category_display()]]
+    who = [['Visitor', visit.visitor_name, KEY], ['Category', visit.category_label]]
     if visit.supplier and visit.supplier.company_name != visit.visitor_name:
         who.append(['Company', visit.supplier.company_name])
     visit_rows = [['Expected', when, KEY], ['Day', expected.strftime('%A')]]

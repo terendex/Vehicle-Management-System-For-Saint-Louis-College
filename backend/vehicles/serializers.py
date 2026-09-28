@@ -87,6 +87,15 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
             'created_at',
         )
 
+    def validate_vehicle_type(self, value):
+        # The form's "Other" reveals a text box; the specified type is what is
+        # stored, never the bare word. Same cleaner the edit flows use.
+        from .registration_edits import clean_vehicle_type
+        cleaned, error = clean_vehicle_type(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return cleaned
+
     @staticmethod
     def build_block_counts(registrations):
         """Count blocking violations for a whole page of registrations at once.
@@ -453,8 +462,11 @@ class SupplierSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Supplier
-        fields = ['id', 'company_name', 'category', 'is_active', 'plate_count', 'plates', 'created_at', 'updated_at']
+        fields = ['id', 'company_name', 'category', 'category_other', 'category_label',
+                  'is_active', 'plate_count', 'plates', 'created_at', 'updated_at']
         read_only_fields = ['id', 'plate_count', 'created_at', 'updated_at']
+
+    category_label = serializers.CharField(read_only=True)
 
 
 class ScheduledVisitSerializer(serializers.ModelSerializer):
@@ -474,11 +486,12 @@ class ScheduledVisitSerializer(serializers.ModelSerializer):
     # CDSO's table has no use for it and would pay a query per row.
     is_inside       = serializers.SerializerMethodField()
     inside_since    = serializers.SerializerMethodField()   # this stay's entry time, for "Inside · 4:32 PM"
+    category_label  = serializers.CharField(read_only=True)   # "Other: Catering" rather than "Other"
 
     class Meta:
         model  = ScheduledVisit
         fields = [
-            'id', 'visitor_name', 'category', 'supplier', 'supplier_name',
+            'id', 'visitor_name', 'category', 'category_other', 'category_label', 'supplier', 'supplier_name',
             'plate_number', 'purpose', 'expected_date', 'notes', 'is_arrived', 'arrived_at',
             'created_by_name', 'auto_admit', 'pass_reference', 'outcome', 'is_inside', 'inside_since',
             'archived_at', 'archived_by_name', 'archive_reason', 'created_at',

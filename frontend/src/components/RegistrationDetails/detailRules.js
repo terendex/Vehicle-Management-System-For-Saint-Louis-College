@@ -18,6 +18,10 @@ export const VEHICLE_TYPES = [
   'Sedan', 'SUV', 'Motorcycle', 'Tricycle', 'E-Bike', 'Van', 'Truck', 'Other',
 ]
 
+/* A prompt, not a value: choosing it reveals a text box, and the typed text is
+   what is stored (the server refuses the bare word). */
+export const OTHER_VEHICLE_TYPE = 'Other'
+
 /* A–Z, and matching the registration form's list exactly. "Other" is the
    escape hatch that reveals the free-text box, so it stays pinned last rather
    than being alphabetised in between Orange and Red. */
@@ -74,7 +78,10 @@ export function detailFieldProblem(field, value, { editable = [] } = {}) {
     case 'department':
       return text ? null : 'Choose your department.'
     case 'vehicle_type':
-      return text ? null : 'Choose your vehicle type.'
+      if (!text || text.toLowerCase() === OTHER_VEHICLE_TYPE.toLowerCase()) {
+        return 'Choose your vehicle type, or specify it under Other.'
+      }
+      return null
     case 'vehicle_color':
       return text ? null : 'Choose or enter your vehicle colour.'
     default:

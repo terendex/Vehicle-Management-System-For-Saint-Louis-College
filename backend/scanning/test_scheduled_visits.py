@@ -149,9 +149,45 @@ class ScheduledVisitGateTests(TestCase):
     def test_create_records_who_scheduled_it(self):
         self.client.force_authenticate(user=self.admin)
         resp = self.client.post('/api/vehicles/scheduled-visits/',
-                                {'visitor_name': 'X', 'expected_date': str(self.today)}, format='json')
+                                {'visitor_name': 'X', 'category': 'guest',
+                                 'expected_date': str(self.today)}, format='json')
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.data['created_by_name'], 'CDSO')
+
+    # ── "Other" must say what it means ─────────────────────────────────────
+    def _schedule(self, **body):
+        self.client.force_authenticate(user=self.admin)
+        return self.client.post('/api/vehicles/scheduled-visits/', {
+            'visitor_name': 'X', 'expected_date': str(self.today), **body}, format='json')
+
+    def test_other_without_its_text_is_refused(self):
+        for body in ({'category': 'other'}, {'category': 'other', 'category_other': '   '}, {}):
+            resp = self._schedule(**body)
+            self.assertEqual(resp.status_code, 400, body)
+            self.assertIn('category_other', resp.data)
+        self.assertFalse(ScheduledVisit.objects.exists())
+
+    def test_other_is_stored_with_its_text_and_read_back_as_one_label(self):
+        resp = self._schedule(category='other', category_other='  Catering   service ')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['category_other'], 'Catering service')
+        self.assertEqual(resp.data['category_label'], 'Other: Catering service')
+        # The CDSO's search finds a visit by what "Other" was specified as.
+        found = self.client.get('/api/vehicles/scheduled-visits/', {'q': 'catering'})
+        self.assertEqual([v['id'] for v in found.data], [resp.data['id']])
+
+    def test_a_listed_category_drops_any_stray_other_text(self):
+        resp = self._schedule(category='delivery', category_other='Catering')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['category_other'], '')
+        self.assertEqual(resp.data['category_label'], 'Delivery')
+
+    def test_expected_visit_card_prints_the_specified_category(self):
+        from scanning.slips import expected_visit_slip
+        visit = self._visit(category='other', category_other='Catering')
+        slip = expected_visit_slip(visit)
+        rows = [row for section in slip['sections'] for row in section]
+        self.assertIn(['Category', 'Other: Catering'], [row[:2] for row in rows])
 
     def test_hand_tick_is_audited_and_timestamped(self):
         from accounts.models import AuditLog
