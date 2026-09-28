@@ -96,7 +96,7 @@ function countdownText(ms) {
   const hh = String(Math.floor((s % 86400) / 3600)).padStart(2, '0')
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
   const ss = String(s % 60).padStart(2, '0')
-  return `${d ? `${d}d ` : ''}${hh}:${mm}:${ss} left`
+  return `${d ? `${d}d ` : ''}${hh}:${mm}:${ss}`
 }
 
 function ConfiscationCell({ c }) {
@@ -141,7 +141,8 @@ function ConfiscationCell({ c }) {
   return (
     <span className="vm-conf vm-conf-active">
       <Timer size={12} /> Confiscated
-      <strong className="vm-conf-clock">{countdownText(endsAt - now)}</strong>
+      {/* The digits never split; only "left" may drop to the next line. */}
+      <strong className="vm-conf-clock"><span>{countdownText(endsAt - now)}</span> left</strong>
       <small>Ends {format(endsAt, 'MMM d, yyyy h:mm a')}</small>
     </span>
   )
@@ -628,9 +629,12 @@ export default function ViolationsManagement() {
               </thead>
               <tbody>
                 {paginated.map((v) => (
+                  // data-label names each cell in the stacked card layout,
+                  // where the header row is hidden (see .vm-card's container
+                  // query in the CSS).
                   <tr key={v.id} className={rowClass(v)}>
-                    <td className="vm-plate">{v.plate_number}</td>
-                    <td>
+                    <td className="vm-plate vm-cell-plate" data-label="Plate">{v.plate_number}</td>
+                    <td className="vm-cell-owner" data-label="Owner">
                       <div className="vm-owner">
                         <span className="vm-owner-name">{v.owner_name || '—'}</span>
                         {v.owner_email && (
@@ -638,7 +642,7 @@ export default function ViolationsManagement() {
                         )}
                       </div>
                     </td>
-                    <td>
+                    <td className="vm-cell-type" data-label="Type / Offense">
                       <div className="vm-type-cell">
                         <span className={`vm-type-pill vm-type-${v.violation_type}`}>
                           {TYPE_LABELS[v.violation_type] ?? v.violation_type}
@@ -646,8 +650,8 @@ export default function ViolationsManagement() {
                         <OffenseBadge num={v.offense_number} />
                       </div>
                     </td>
-                    <td><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
-                    <td className="vm-time" title={fmtDate(v.issued_at)}>
+                    <td className="vm-cell-notes" data-label="Notes"><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
+                    <td className="vm-time vm-cell-issued" data-label="Issued" title={fmtDate(v.issued_at)}>
                       {timeAgo(v.issued_at)}
                       {(v.on_duty_guard_name || v.issued_by_name) && (
                         <span className="vm-issued-guard">
@@ -657,9 +661,9 @@ export default function ViolationsManagement() {
                         </span>
                       )}
                     </td>
-                    <td><ConfiscationCell c={v.confiscation} /></td>
-                    <td><StatusBadge v={v} /></td>
-                    <td><ActionButtons v={v} /></td>
+                    <td className="vm-cell-conf" data-label="Confiscation"><ConfiscationCell c={v.confiscation} /></td>
+                    <td className="vm-cell-status" data-label="Status"><StatusBadge v={v} /></td>
+                    <td className="vm-cell-actions" data-label="Actions"><ActionButtons v={v} /></td>
                   </tr>
                 ))}
               </tbody>

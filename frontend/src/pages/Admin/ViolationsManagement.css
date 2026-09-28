@@ -248,9 +248,14 @@
   background: #fff;
   border: 1px solid #D3E1EC;
   border-radius: 14px;
-  overflow-x: auto;
+  overflow-x: auto;           /* a safety net only - the layout below is built never to need it */
   position: relative;
   box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
+  /* The table switches to stacked cards on the CARD's width, not the
+     window's: the admin sidebar takes a different share of each screen, so
+     a viewport breakpoint fires too early on one and too late on another. */
+  container-type: inline-size;
+  container-name: vm-card;
 }
 
 .vm-table thead tr th:first-child { border-radius: 13px 0 0 0; }
@@ -272,18 +277,33 @@
   /* Fixed layout + <colgroup> keeps every row on the same grid — without it
      the long Notes text steals width from Owner/Issued row by row. */
   table-layout: fixed;
-  min-width: 1200px;
+  /* No min-width: the table fills whatever the card gives it, and below
+     the container breakpoint it becomes stacked cards instead of
+     scrolling sideways. */
 }
 
 /* Column widths (sum = 100%) */
-.vm-col-plate    { width: 9%; }
-.vm-col-owner    { width: 16%; }
+.vm-col-plate    { width: 8%; }
+.vm-col-owner    { width: 15%; }
 .vm-col-type     { width: 13%; }
-.vm-col-notes    { width: 16%; }
+.vm-col-notes    { width: 17%; }
 .vm-col-issued   { width: 13%; }
-.vm-col-conf     { width: 13%; }
+.vm-col-conf     { width: 14%; }
 .vm-col-status   { width: 10%; }
 .vm-col-actions  { width: 10%; }
+
+/* Nothing may be wider than its cell: a long type pill ("Activity While
+   Confiscated") wraps instead of spilling into Notes. */
+.vm-table .vm-type-pill {
+  white-space: normal;
+  max-width: 100%;
+}
+/* A status pill wraps between its parts ("Lifted" / "· false alarm"),
+   never inside a word. */
+.vm-table .vm-status {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
 
 .vm-table th {
   background: #F4F8FB;
@@ -359,7 +379,6 @@
 .vm-time {
   color: #64839C;
   font-size: 0.8rem;
-  white-space: nowrap;
 }
 
 .vm-issued-guard {
@@ -367,9 +386,6 @@
   font-size: 0.7rem;
   color: #5C7B92;
   margin-top: 2px;
-  /* .vm-time is nowrap for the "17 days ago" line; guard names are long
-     enough to need wrapping. */
-  white-space: normal;
   line-height: 1.35;
 }
 
@@ -870,9 +886,9 @@
 .vm-conf-clock {
   font-size: 13px;
   font-weight: 800;
-  white-space: nowrap;                   /* "13d 04:29:52 left" stays on one line */
   font-variant-numeric: tabular-nums;   /* digits the same width, so the clock does not jitter */
 }
+.vm-conf-clock span { white-space: nowrap; }   /* "13d 04:29:52" never splits; "left" may wrap */
 .vm-conf-active { color: #9B1C1C; }
 .vm-conf-ended  { color: #0F7A5A; }
 .vm-conf-none   { color: #9AB0C2; }
@@ -894,24 +910,88 @@
 }
 .vm-or-input:focus { border-color: #03396C; }
 
-/* ── Responsive ──────────────────────────────────────────────────
-   The eight-column table carries its own min-width and scrolls inside
-   .vm-card, so the narrow screens only tighten that grid. The rest of
-   the work is the toolbar — five filter buttons, a period switcher, a
-   search box and a refresh — which is what falls apart first. */
+/* ── Responsive table ────────────────────────────────────────────
+   Keyed to the card's own width (container-type on .vm-card), so it
+   follows the space the table actually has, sidebar or not.
+
+   Wide:   the eight-column table, filling the card, no sideways scroll.
+   Narrow: each violation becomes a stacked card - the header row is
+           hidden and every cell prints its own label (data-label). */
+
+/* A little tighter before the switch, so 8 columns still breathe. */
+@container vm-card (max-width: 1180px) {
+  .vm-table th,
+  .vm-table td { padding: 11px 10px; }
+  .vm-table    { font-size: 0.8rem; }
+}
+
+@container vm-card (max-width: 960px) {
+  .vm-table,
+  .vm-table tbody,
+  .vm-table tr,
+  .vm-table td { display: block; width: 100%; }
+  .vm-table colgroup,
+  .vm-table thead { display: none; }
+
+  /* One card per violation: a two-column grid of labelled fields. */
+  .vm-table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 18px;
+    padding: 16px 18px;
+    border-bottom: 1px solid #E3ECF3;
+  }
+  .vm-table tbody tr:last-child { border-bottom: none; }
+  .vm-table tbody tr:hover { background: #FAFCFD; }
+
+  .vm-table td {
+    padding: 0;
+    border: none;
+    border-radius: 0 !important;       /* drop the table's rounded-corner cells */
+    min-width: 0;
+  }
+  .vm-table td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #7A95AA;
+  }
+
+  /* Card head: the plate on the left, status on the right. */
+  .vm-table .vm-cell-plate  { order: 1; font-size: 15px; }
+  .vm-table .vm-cell-status { order: 2; }
+  .vm-table .vm-cell-owner  { order: 3; }
+  .vm-table .vm-cell-type   { order: 4; }
+  .vm-table .vm-cell-conf   { order: 5; }
+  .vm-table .vm-cell-issued { order: 6; }
+  .vm-table .vm-cell-notes  { order: 7; grid-column: 1 / -1; }
+  .vm-table .vm-cell-actions { order: 8; grid-column: 1 / -1; }
+  .vm-table .vm-cell-plate::before,
+  .vm-table .vm-cell-actions::before { display: none; }   /* the plate and buttons speak for themselves */
+
+  .vm-notes { -webkit-line-clamp: 4; }
+}
+
+/* A phone: one field per line. */
+@container vm-card (max-width: 520px) {
+  .vm-table tbody tr {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+  .vm-table .vm-cell-status { order: 2; }
+}
+
+/* ── Responsive page ─────────────────────────────────────────────
+   The rest of the work is the toolbar — five filter buttons, a period
+   switcher, a search box and a refresh — which is what falls apart
+   first. */
 
 /* --- Tablet --- */
 @media (max-width: 900px) {
-  /* Tighter cells before the columns start clipping their pills. */
-  .vm-table {
-    min-width: 1100px;
-  }
-
-  .vm-table th,
-  .vm-table td {
-    padding: 11px 11px;
-  }
-
   .vm-page {
     gap: 1.25rem;
   }
@@ -958,22 +1038,6 @@
 
 /* --- Mobile --- */
 @media (max-width: 640px) {
-  .vm-table {
-    min-width: 960px;
-    font-size: 0.8rem;
-  }
-
-  .vm-table th,
-  .vm-table td {
-    padding: 10px 9px;
-  }
-
-  /* Two lines of notes on a phone, three on a desktop — the row is
-     already the tallest thing on the screen. */
-  .vm-notes {
-    -webkit-line-clamp: 2;
-  }
-
   .vm-owner-email {
     font-size: 10px;
   }
