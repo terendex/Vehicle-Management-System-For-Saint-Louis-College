@@ -12,8 +12,9 @@ from django.db import connection
 from django.test import TestCase
 
 from accounts.db_delete_rules import sync_fk_delete_rules
-from accounts.models import AuditLog, User
+from accounts.models import AuditLog, User, delete_user_with_owned_records
 from vehicles.models import Vehicle, VehicleRegistration
+from violations.models import Violation
 
 
 class DbDeleteRulesTests(TestCase):
@@ -31,6 +32,10 @@ class DbDeleteRulesTests(TestCase):
         )
         self.log = AuditLog.objects.create(
             actor=self.admin, action=AuditLog.Action.USER_UPDATED, target_user=self.owner,
+        )
+        self.violation = Violation.objects.create(
+            vehicle=self.vehicle, owner=self.owner, issued_by=self.admin,
+            violation_type=Violation.Type.UNAUTHORIZED_ENTRY, offense_number=1,
         )
 
     def _raw_delete_user(self, user):
@@ -52,6 +57,20 @@ class DbDeleteRulesTests(TestCase):
         # Owned records go with the account, as delete_users_with_owned_records() does.
         self.assertFalse(Vehicle.objects.filter(pk=self.vehicle.pk).exists())
         self.assertFalse(VehicleRegistration.objects.filter(pk=self.reg.pk).exists())
+        # ...and so do their violations, instead of lingering with no owner.
+        self.assertFalse(Violation.objects.filter(pk=self.violation.pk).exists())
+
+    def test_raw_delete_keeps_violations_the_account_only_issued(self):
+        # issued_by is who wrote it up, not whose it is: history, kept.
+        self._raw_delete_user(self.admin)
+        self.violation.refresh_from_db()
+        self.assertIsNone(self.violation.issued_by_id)
+
+    def test_app_delete_removes_violations_whose_vehicle_was_unlinked(self):
+        # Archiving unlinks the vehicle; the violation still names its owner.
+        Vehicle.objects.filter(pk=self.vehicle.pk).update(user=None)
+        delete_user_with_owned_records(self.owner)
+        self.assertFalse(Violation.objects.filter(pk=self.violation.pk).exists())
 
     def test_orm_delete_is_unchanged(self):
         # A bare ORM delete still follows the model's SET_NULL, not the DB's CASCADE.

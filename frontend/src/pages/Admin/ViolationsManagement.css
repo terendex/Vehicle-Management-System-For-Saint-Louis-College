@@ -312,8 +312,9 @@
 .vm-table tbody tr:hover { background: #F7FAFC; }
 .vm-table tr:last-child td { border-bottom: none; }
 
-.vm-row-unreleased { background: #FEF9E4; }
-.vm-row-notified   { background: #EAF2F8; }
+/* Rows stay white whatever their status — the Status and Confiscation
+   columns already say it. Only a settled row is set back, so open ones
+   stand out. */
 .vm-row-resolved   { opacity: 0.55; }
 
 .vm-plate {
@@ -812,8 +813,6 @@
 }
 
 /* ── Row states ──────────────────────────────────────────────────── */
-.vm-row-fee td { background: #FDF4F4 !important; }
-.vm-row-warning td { background: #FEF9E4 !important; }
 
 /* ── Status badges (new) ─────────────────────────────────────────── */
 .vm-status-warning { color: #8A6B00; background: #FDF0BE; border-color: #F7E08A; }
@@ -851,8 +850,8 @@
 .vm-btn-lift:hover:not(:disabled) { background: #E9E1F7; }
 
 /* ── Confiscation column ─────────────────────────────────────────── */
-/* A pill-coloured label on top, the live clock and the end date beneath,
-   stacked so the countdown never shares a line with the label. */
+/* Plain coloured text on the white row — no box. The label on top, the
+   live clock and the end date beneath. */
 .vm-conf {
   display: inline-flex;
   flex-direction: column;
@@ -861,23 +860,21 @@
   font-size: 12px;
   font-weight: 700;
   line-height: 1.3;
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid transparent;
 }
 .vm-conf svg { display: inline; vertical-align: -2px; margin-right: 4px; }
 .vm-conf small {
   font-size: 11px;
   font-weight: 500;
-  opacity: 0.85;
+  color: #64839C;                        /* the end date is secondary: the row's muted grey */
 }
 .vm-conf-clock {
   font-size: 13px;
   font-weight: 800;
+  white-space: nowrap;                   /* "13d 04:29:52 left" stays on one line */
   font-variant-numeric: tabular-nums;   /* digits the same width, so the clock does not jitter */
 }
-.vm-conf-active { background: #FADEDE; color: #9B1C1C; border-color: #F3C0C0; }
-.vm-conf-ended  { background: #EFF9F5; color: #0F7A5A; border-color: #CBEBDD; }
+.vm-conf-active { color: #9B1C1C; }
+.vm-conf-ended  { color: #0F7A5A; }
 .vm-conf-none   { color: #9AB0C2; }
 
 /* ── Fine zero ───────────────────────────────────────────────────── */

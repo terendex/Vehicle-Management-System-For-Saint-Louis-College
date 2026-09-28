@@ -46,13 +46,13 @@ _SQL = {_NO_ACTION: 'NO ACTION', _CASCADE: 'CASCADE', _SET_NULL: 'SET NULL'}
 # such helper, so the database does the sweep instead.
 #
 # Keep this in step with delete_users_with_owned_records(). Violations are
-# deliberately NOT here: the helper finds them through vehicle__user, which no
-# single foreign key reproduces (an archived account's vehicles are already
-# unlinked), so a hand delete leaves them in place with the owner nulled,
-# name/email snapshot intact. That is the conservative side to err on.
+# here through Violation.owner, the account the ladder is counted against: a
+# hand delete of an account removes its violations, as the app's delete does,
+# instead of leaving them behind nameless with the owner nulled.
 OWNED_BY_USER = {
     ('vehicles.Vehicle', 'user'): _CASCADE,
     ('vehicles.VehicleRegistration', 'user'): _CASCADE,
+    ('violations.Violation', 'owner'): _CASCADE,
 }
 
 

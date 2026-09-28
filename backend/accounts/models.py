@@ -370,7 +370,14 @@ def delete_users_with_owned_records(users):
     # The cost: a 3rd-offense registration hold is enforced by
     # Violation.registration_blocked, so deleting an account clears any hold
     # against its plates. Someone deleted and re-registered starts clean.
-    _, vio_counts  = Violation.objects.filter(vehicle__user__in=users).delete()   # step 1: their violations
+    #
+    # Matched through `owner` as well as the vehicle: a violation keeps its
+    # owner after the vehicle is unlinked from the account, and the database's
+    # own cascade on a hand delete (db_delete_rules.OWNED_BY_USER) keys on
+    # `owner` — both paths have to remove the same rows.
+    from django.db.models import Q
+    _, vio_counts  = Violation.objects.filter(                                    # step 1: their violations
+        Q(vehicle__user__in=users) | Q(owner__in=users)).delete()
 
     # Registrations first: they reference Vehicle with SET_NULL, so clearing
     # them first avoids a pointless UPDATE-to-null on rows about to be deleted.

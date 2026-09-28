@@ -416,11 +416,7 @@ export default function ViolationsManagement() {
   }
 
   function rowClass(v) {
-    if (v.status === 'cleared' || v.is_resolved) return 'vm-row-resolved'
-    if (v.status === 'fee_imposed') return 'vm-row-fee'
-    if (v.status === 'warning') return 'vm-row-warning'
-    if (v.is_released) return 'vm-row-notified'
-    return ''
+    return (v.status === 'cleared' || v.is_resolved) ? 'vm-row-resolved' : ''
   }
 
   function StatusBadge({ v }) {
