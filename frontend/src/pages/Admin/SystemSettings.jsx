@@ -268,6 +268,11 @@ export default function SystemSettings() {
     const problems = [...fieldProblems(e.currentTarget)]
     if (!/^\d{1,3}$/.test(num)) problems.push('Gate number must be numeric, e.g. 2.')
     if (!gateForm.label.trim()) problems.push('Give the gate a label.')
+    // Guards pick by label, logs store the number, so the two must agree.
+    const labelNum = gateForm.label.match(/\bgate\s*(\d{1,3})\b/i)?.[1]
+    if (/^\d{1,3}$/.test(num) && labelNum && Number(labelNum) !== Number(num)) {
+      problems.push(`The label says Gate ${labelNum} but the gate number is ${Number(num)}.`)
+    }
     if (await notify.validation(problems, { title: 'Gate not added' })) return
     setAddingGate(true)
     try {
@@ -284,6 +289,25 @@ export default function SystemSettings() {
   }
 
   const handleToggleGate = async (gate) => {
+    if (gate.is_active) {
+      // The server refuses this too; checking here skips a pointless confirm.
+      // With no active gate, login falls back to gate1/gate4 regardless.
+      if (!gates.some((g) => g.id !== gate.id && g.is_active)) {
+        await notify.warning(`${gate.label} is the only active gate.`, {
+          title: 'Gate not deactivated',
+          description: 'Guards need at least one gate to sign in at. Add or activate another gate first.',
+        })
+        return
+      }
+      if (!(await notify.confirm({
+        title:        'Deactivate gate?',
+        message:      `Deactivate ${gate.label}?`,
+        description:  'It disappears from the guard gate-login page and guards can no longer sign in at it. '
+                    + 'Its scan history is kept, and you can activate it again at any time.',
+        confirmLabel: 'Deactivate',
+        danger:       true,
+      }))) return
+    }
     setTogglingGateId(gate.id)
     try {
       const { data } = await updateGate(gate.id, { is_active: !gate.is_active })
@@ -828,8 +852,13 @@ export default function SystemSettings() {
                     <div className="ss-row-text">
                       <label className="ss-row-label" htmlFor="scan_dedup_seconds">Grace period</label>
                       <span className="ss-row-hint">
-                        Allowed range: 5 – 300 seconds. Takes effect for new WebSocket connections.
+                        Allowed range: 5 – 300 seconds. Recommended: 60. Takes effect for new WebSocket connections.
                       </span>
+                      {Number(form.scan_dedup_seconds) < 30 && (
+                        <span className="ss-row-hint ss-row-hint--warn">
+                          Short windows can log a car twice when its plate is hidden or misread for a few seconds.
+                        </span>
+                      )}
                     </div>
                     <div className="ss-row-control">
                       <input

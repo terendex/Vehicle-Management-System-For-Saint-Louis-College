@@ -2,11 +2,12 @@
 REM ---------------------------------------------------------------------------
 REM run-maintenance.cmd - the daily maintenance job, for Task Scheduler.
 REM
-REM The three jobs (event rollover, expired-account archiving, retention purge)
-REM are defined as Celery tasks on a beat schedule, but neither a worker nor a
-REM beat process is deployed - see CAMPUS_SETUP.md. `manage.py run_maintenance`
-REM runs all three in-process with no broker, and this wrapper is what the
-REM scheduled task invokes.
+REM The jobs (event rollover, expired-account archiving, retention purge) are
+REM defined as Celery tasks on a beat schedule, but neither a worker nor a beat
+REM process is deployed. The server now runs them itself daily (see
+REM CAMPUS_SETUP.md), so this is an optional backstop: `manage.py
+REM run_maintenance` runs them in-process with no broker, and this wrapper is
+REM what a scheduled task would invoke.
 REM
 REM A wrapper rather than putting the command in schtasks /TR directly: the repo
 REM path contains spaces, and the nested quoting schtasks needs for that is both

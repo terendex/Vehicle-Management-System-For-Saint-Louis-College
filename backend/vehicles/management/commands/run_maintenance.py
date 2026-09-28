@@ -2,19 +2,17 @@
 
 These jobs are defined as Celery tasks and scheduled in
 `config/celery.py`'s beat_schedule, which means they only run when a Celery
-worker AND a beat scheduler are running. The Railway deployment has neither —
-both would be extra always-on containers — so without this command the events
-list silently stops rolling over and old records are never purged.
+worker AND a beat scheduler are running. The Railway deployment has neither.
+The server now runs every one of them itself on a daily in-process thread
+(vehicles/scheduler.py), so this command is for running them on demand.
 
 A Celery task object is directly callable and executes its body in-process, so
-this needs no broker and no worker. Point a scheduler at it once a day:
+this needs no broker and no worker:
 
     python manage.py run_maintenance
 
-Prefer running it on the campus machine rather than in the cloud: both jobs key
-off `date.today()`, which reads the OS clock. The campus box runs on Manila
-time, matching the campus day; a UTC container would roll events over about
-eight hours early.
+The jobs key off the campus (Manila) date from Django's TIME_ZONE, not the OS
+clock, so it gives the same answer on a UTC container as on the campus PC.
 """
 from django.core.management.base import BaseCommand
 
@@ -38,7 +36,8 @@ class Command(BaseCommand):
         # still run even if the purge fails.
         result = auto_manage_events()
         self.stdout.write(self.style.SUCCESS(
-            f"auto_manage_events: activated {result['activated']}, archived {result['archived']}"
+            f"auto_manage_events: activated {result['activated']}, archived {result['archived']}, "
+            f"reset {result['pending']} to pending"
         ))
 
         # Before anything that deletes: the day's snapshot should still hold

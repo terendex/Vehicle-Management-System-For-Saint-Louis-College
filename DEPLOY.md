@@ -248,13 +248,12 @@ hosting cost.
   codebase. Restoring it needs a worker service (start command
   `cd backend && celery -A config worker --loglevel=info --pool=solo`, same
   variables) plus Redis as a broker — two extra always-on containers.
-- **`auto_manage_events`** is on a beat schedule that nothing is running, so the
-  events list stops rolling over. Fix it for free with
-  `python manage.py run_maintenance` on a schedule — see
-  **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)**. No broker, no worker, no cost.
-  `auto_archive_expired_accounts` and `purge_old_records` are the exceptions: the
-  server runs both itself on a daily in-process thread, so owner-account expiry
-  and the retention window work with no scheduling. Set
+- **The daily jobs do not need Celery.** `auto_manage_events` (event status:
+  today active, past archived), `auto_archive_expired_accounts` and
+  `purge_old_records` all run on the server's own daily in-process thread
+  (`vehicles/scheduler.py`), keyed on the Manila date from `TIME_ZONE`, so the
+  events list rolls over, owner-account expiry and the retention window all work
+  with no scheduling. Set
   `DISABLE_DAILY_SCHEDULER=1` here if you would rather the campus machine own
   them — its clock is Manila time, and these jobs are date-keyed. Note that
   disabling it also stops retention, which is what deletes archived accounts.

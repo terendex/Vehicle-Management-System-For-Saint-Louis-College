@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { FileText, Download, Calendar, Loader2, FileBarChart2 } from 'lucide-react'
 import { toast } from './Feedback/notify'
 import { reportFileName } from '../utils/reportName'
-import { openReportTab, downloadBlob } from '../utils/saveFile'
+import { openReportTab, downloadBlob, saveReportFile } from '../utils/saveFile'
 import { confirmPdfExport } from '../utils/confirmReport'
 import './ReportExportBar.css'
 
@@ -50,8 +50,8 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
     return params
   }
 
-  // A PDF is opened for reading, an Excel file still downloads - there is
-  // nothing to preview in a spreadsheet. `isPdf` is decided from the filename
+  // A PDF is opened for reading, an Excel file is saved where the person picks
+  // - there is nothing to preview in a spreadsheet. `isPdf` is decided from the filename
   // so both callers of this helper (the two format buttons and each
   // extraReports entry) get it right.
   //
@@ -64,10 +64,26 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
   // is the same fallback a blocked popup already took.
   const download = async (key, fetch, fileName, successLabel, reportName = label) => {
     const isPdf = fileName.toLowerCase().endsWith('.pdf')
-    if (isPdf && !(await confirmPdfExport({
+    // A spreadsheet is filed, not read here, so it asks where to go first.
+    // Nothing may be awaited before this call: the Save-as dialog needs the
+    // click's user gesture.
+    if (!isPdf) {
+      let outcome
+      try {
+        outcome = await saveReportFile(fileName, () => { setBusy(key); return fetch(dateParams()) })
+      } catch (err) {
+        toast.error(err?.saveMessage || 'Failed to generate report.')
+      } finally {
+        setBusy(null)
+      }
+      if (outcome === 'saved')      toast.success(`${successLabel} saved.`)
+      if (outcome === 'downloaded') toast.success(`${successLabel} downloaded.`)
+      return
+    }
+    if (!(await confirmPdfExport({
       label: reportName, summary: activeFilterSummary, from, to, count: recordCount,
     }))) return
-    const tab = isPdf ? openReportTab() : null
+    const tab = openReportTab()
     setBusy(key)
     try {
       const blob = await fetch(dateParams())

@@ -117,9 +117,12 @@ def find(kind, pk, extra=''):
     if kind == 'eventpass':
         # The identifier is compared in the form the event stores and the gate
         # reads, so a pass printed for “ABC 1234” still opens as ABC1234.
+        from django.utils import timezone
         from vehicles.models import Event, canonical_identifier
         ident = canonical_identifier(extra)
-        event = Event.objects.filter(pk=pk, archived=False).first()
+        # Today's or a coming event — a past one has no pass. By date rather
+        # than the archived flag, which the daily job rolls up to an hour late.
+        event = Event.objects.filter(pk=pk, date__gte=timezone.localdate()).first()
         if event and ident and ident in (event.organizer_plates or []):
             return EventPass(event, ident)
         return None

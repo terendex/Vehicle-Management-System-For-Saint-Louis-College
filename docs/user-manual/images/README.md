@@ -345,10 +345,10 @@ Edit Parking Slots mode: draw and adjust bays over the zone’s reference image.
 
 Events reserve part of campus parking and note organizer plates.
 
-1. **Event Parking Capacity**: A temporary capacity per zone for an event day. The parking counts use it while it is set; leave a zone blank to use its bays.
+1. **Event Parking Capacity**: A capacity set by hand per zone, replacing its drawn spaces in the counts. Not tied to an event: it stays until cleared, and a row with one is marked Override in force.
 2. **Add Event**: Create an event: name, date, times, how much parking it takes, and organizer plates.
 3. **Event card**: Date, time, organizer plates, and how much of campus parking the event holds.
-4. **Event actions**: Activate the event, reschedule it, show its details, or delete it.
+4. **Event actions**: Reschedule the event, show its details, or delete it. Its Active / Pending / Archived status follows the date by itself.
 5. **Archived Events**: Past events, kept for reference.
 
 > Each organizer plate has a **Print Event Pass** button. It prints a standing pass for that plate

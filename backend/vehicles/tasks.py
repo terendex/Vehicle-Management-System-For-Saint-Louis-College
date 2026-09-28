@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 from celery import shared_task
 from django.db import models
@@ -184,16 +183,36 @@ def auto_archive_expired_accounts():
 
 @shared_task(name="vehicles.auto_manage_events")
 def auto_manage_events():
-    """Activate events whose date is today; archive events whose date has passed."""
+    """Point every event's stored flags at its date: today's active, past ones
+    archived, coming ones pending.
+
+    Runs daily on the in-process scheduler (vehicles/scheduler.py). Campus
+    (Manila) date, never date.today(): the cloud server's own clock is UTC, and
+    the first pass after Manila midnight would still be yesterday there. Three
+    fixed queries whatever the number of events, and each also repairs a row
+    whose flags were edited by hand to disagree with its date.
+    """
+    from django.db.models import Q
     from .models import Event
 
-    today = date.today()
+    today = timezone.localdate()
 
-    activated = Event.objects.filter(date=today, is_active=False, archived=False).update(is_active=True)
-    archived  = Event.objects.filter(date__lt=today, archived=False).update(is_active=False, archived=True)
+    activated = (Event.objects.filter(date=today).filter(Q(is_active=False) | Q(archived=True))
+                 .update(is_active=True, archived=False))
+    archived  = (Event.objects.filter(date__lt=today).filter(Q(is_active=True) | Q(archived=False))
+                 .update(is_active=False, archived=True))
+    pending   = (Event.objects.filter(date__gt=today).filter(Q(is_active=True) | Q(archived=True))
+                 .update(is_active=False, archived=False))
 
-    log.info("[auto_manage_events] Activated %d, archived %d events (today=%s)", activated, archived, today)
-    return {"activated": activated, "archived": archived}
+    # .update() fires no post_save, so the realtime signal never sees these —
+    # an Events page left open overnight would keep yesterday's badges.
+    if activated or archived or pending:
+        from realtime.broadcast import broadcast_change
+        broadcast_change("event", "changed")
+
+    log.info("[auto_manage_events] Activated %d, archived %d, reset %d to pending (today=%s)",
+             activated, archived, pending, today)
+    return {"activated": activated, "archived": archived, "pending": pending}
 
 
 @shared_task(name="vehicles.auto_backup")

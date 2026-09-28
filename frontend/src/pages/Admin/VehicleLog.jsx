@@ -4,7 +4,7 @@ import { getAccessLogs, exportVehicleLogExcel, exportVehicleLogPdf } from '../..
 import { displayStatus } from '../../utils/logStatus'
 import { useGates } from '../../hooks/useGates'
 import { reportFileName } from '../../utils/reportName'
-import { openReportTab } from '../../utils/saveFile'
+import { openReportTab, saveReportFile } from '../../utils/saveFile'
 import { confirmPdfExport } from '../../utils/confirmReport'
 import { notify } from '../../components/Feedback/notify'
 import {
@@ -226,8 +226,8 @@ export default function VehicleLog() {
 
   const runExport = async (fn, ext, setBusy) => {
     // PDFs only, and asked before the tab is opened below - cancelling after
-    // the window.open would leave a blank tab sitting there. Excel is left
-    // alone: it lands in Downloads and can just be deleted.
+    // the window.open would leave a blank tab sitting there. Excel does not
+    // come through here: it asks where to save instead (exportExcel below).
     if (ext === 'pdf') {
       const summary = [
         gateFilter ? gateLabel(gateFilter) : '',
@@ -255,7 +255,21 @@ export default function VehicleLog() {
     }
   }
 
-  const exportExcel = () => runExport(exportVehicleLogExcel, 'xlsx', setExporting)
+  // Excel is saved where the person picks. Nothing is awaited before
+  // saveReportFile: its Save-as dialog needs the click's user gesture.
+  const exportExcel = async () => {
+    try {
+      await saveReportFile(reportFileName('Vehicle Log Report', 'xlsx'), () => {
+        setExporting(true)
+        return exportVehicleLogExcel(buildExportParams())
+      })
+    } catch (err) {
+      notify.error(err?.saveMessage || 'The report could not be generated. Please try again.',
+        { title: 'Excel report not saved' })
+    } finally {
+      setExporting(false)
+    }
+  }
   const exportPdf   = () => runExport(exportVehicleLogPdf,   'pdf',  setExportingPdf)
 
   const clearFilters = () => {

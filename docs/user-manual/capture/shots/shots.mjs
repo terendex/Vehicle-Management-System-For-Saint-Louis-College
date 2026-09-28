@@ -358,10 +358,10 @@ export const SHOTS = [
     caption: 'Events reserve part of campus parking and note organizer plates.',
     prepare: async (p) => { await clickTab(p, /^Events$/) },
     marks: [
-      m(1, 'Event Parking Capacity', 'A temporary capacity per zone for an event day. The parking counts use it while it is set; leave a zone blank to use its bays.', card(text('Zone Capacity Overrides'))),
+      m(1, 'Event Parking Capacity', 'A capacity set by hand per zone, replacing its drawn spaces in the counts. Not tied to an event: it stays until cleared, and a row with one is marked Override in force.', card(text('Zone Capacity Overrides'))),
       m(2, 'Add Event', 'Create an event: name, date, times, how much parking it takes, and organizer plates.', btn(/Add Event/)),
       m(3, 'Event card', 'Date, time, organizer plates, and how much of campus parking the event holds.', card(text('Research Congress 2026'))),
-      m(4, 'Event actions', 'Activate the event, reschedule it, show its details, or delete it.', (p) => { const b = p.locator('main').getByText('Research Congress 2026', { exact: true }).locator('xpath=ancestor::*[.//button[contains(.,"Activate")]][1]').getByRole('button'); return [b.first(), b.last()] }),
+      m(4, 'Event actions', 'Reschedule the event, show its details, or delete it. Its Active / Pending / Archived status follows the date by itself.', (p) => { const b = p.locator('main').getByText('Research Congress 2026', { exact: true }).locator('xpath=ancestor::*[.//button[@title="Reschedule event"]][1]').getByRole('button'); return [b.first(), b.last()] }),
       m(5, 'Archived Events', 'Past events, kept for reference.', btn(/Archived Events/)),
     ],
   }),

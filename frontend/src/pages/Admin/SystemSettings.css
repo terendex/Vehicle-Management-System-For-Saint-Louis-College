@@ -250,6 +250,8 @@
   max-width: 52ch;
 }
 
+.ss-row-hint--warn { color: #8A6B00; }
+
 .ss-row-control {
   display: flex;
   align-items: center;

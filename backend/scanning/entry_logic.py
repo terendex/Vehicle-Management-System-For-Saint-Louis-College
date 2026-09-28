@@ -168,12 +168,11 @@ def organizer_event_for(*identifiers):
     organizer, or None. A registered vehicle is looked up by all of its
     identifiers, since the list may name it by any one of them.
 
-    "Under way" is Event.is_under_way — switched on, not archived, today, and
-    inside its start/end times when it has them — the same test the parking
-    reserve uses. This used to check `is_active` alone, so an event nobody
-    switched off kept tagging its organizers at the gate for weeks, while the
-    parking screens (which did check the clock) had long stopped reserving for
-    it.
+    "Under way" is Event.is_under_way — dated today (campus clock) and inside
+    its start/end times when it has them — the same test the parking reserve
+    uses. This used to check `is_active` alone, so an event nobody switched off
+    kept tagging its organizers at the gate for weeks, while the parking
+    screens (which did check the clock) had long stopped reserving for it.
     """
     from vehicles.models import canonical_identifier    # imported here to avoid a circular import at start-up
     wanted = {canonical_identifier(i) for i in identifiers} - {''}   # tidy each identifier; drop blanks
@@ -183,8 +182,8 @@ def organizer_event_for(*identifiers):
     for ident in wanted:
         listed |= Q(organizer_plates__contains=[ident])  # "or this identifier appears in the organizer list"
     candidates = Event.objects.filter(
-        listed, is_active=True, archived=False, date=timezone.localdate(),
-    )                                                   # today's live events naming any of those identifiers
+        listed, date=timezone.localdate(),
+    )                                                   # today's events naming any of those identifiers — the date is the status
     # Several events can be on today, so take the first one whose start/end
     # times mean it is actually running at this moment.
     return next((ev for ev in candidates if ev.is_under_way()), None)

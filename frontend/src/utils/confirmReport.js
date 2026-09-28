@@ -16,8 +16,9 @@ import notify from '../components/Feedback/notify'
  * notice, and the empty case is called out in words rather than left to
  * arrive as a page with nothing on it.
  *
- * PDFs only. Excel downloads silently to disk and can simply be deleted;
- * a PDF opens in a new tab, which is the interruption worth confirming.
+ * PDFs only. Excel already asks where to save (saveFile.saveReportFile), and
+ * that dialog is its own chance to back out; a PDF opens in a new tab, which is
+ * the interruption worth confirming.
  */
 export function confirmPdfExport({ label = 'This report', summary = '', from = '', to = '', count = null } = {}) {
   const details = []

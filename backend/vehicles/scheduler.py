@@ -44,9 +44,10 @@ log = logging.getLogger(__name__)
 # this interval is what "hourly" means in practice.
 CHECK_INTERVAL_SECONDS = 3600
 
-# Jobs the server runs by itself, in order: back up, archive, then purge. All
-# three are what the System Settings cards promise happens automatically, so
-# none may depend on someone remembering to register a Windows scheduled task.
+# Jobs the server runs by itself, in order: back up, archive, then purge. Each
+# is something a screen promises happens automatically (System Settings, the
+# Events list), so none may depend on someone remembering to register a
+# Windows scheduled task.
 #
 # Order matters. Archiving stamps archived_at, and the purge measures the
 # retention window from it — so a run that archives and purges in that order
@@ -57,8 +58,14 @@ CHECK_INTERVAL_SECONDS = 3600
 # taken ahead of the purge still contains the records the purge is about to
 # remove, so the day's backup is the copy someone can go back to if the
 # retention window turns out to have been set too short.
+#
+# auto_manage_events rolls event status over (today active, past archived).
+# It deletes nothing, so it sits with the other archiving jobs; the gate and
+# the parking reserve read the date directly, so the up-to-an-hour wait for
+# this pass after midnight never lets a finished event act.
 DAILY_JOBS = (
     'auto_backup',
+    'auto_manage_events',
     'auto_archive_expired_accounts',
     'auto_archive_past_visits',
     'purge_old_records',

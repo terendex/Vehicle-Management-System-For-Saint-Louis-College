@@ -92,10 +92,14 @@ def reserving_event():
     nine in the morning — the whole point of recording a time was so the
     reservation follows the clock rather than the calendar.
     """
+    from django.utils import timezone
+
     from .models import Event
 
     best = None
-    for ev in Event.objects.filter(is_active=True, archived=False):
+    # By date, not the stored is_active flag: that is rolled by a daily job and
+    # lags midnight by up to an hour.
+    for ev in Event.objects.filter(date=timezone.localdate()):
         if not ev.is_under_way():
             continue
         if ev.share_fraction <= 0:

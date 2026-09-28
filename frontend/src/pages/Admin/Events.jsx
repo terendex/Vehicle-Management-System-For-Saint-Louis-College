@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, Fragment } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   CalendarDays, Plus, Trash2, ChevronDown, ChevronUp,
-  Loader2, ToggleLeft, ToggleRight, X, AlertTriangle,
+  Loader2, X, AlertTriangle,
   ParkingCircle, Tag, Check, Archive, CalendarClock, Clock,
-  Printer, Monitor,
+  Printer, Monitor, Search, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import notify, { toast } from '../../components/Feedback/notify'
@@ -15,6 +15,9 @@ import { lookupSlip, printSlipOnServer } from '../../api/scanning'
 import { printSlipInBrowser } from '../../utils/slipPrint'
 import { zoneApi } from '../../api/parking'
 import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
+// The search box and the pager are User Management's (.um-search-*,
+// .um-pagination), as on the Suppliers list, so it takes that page's styles.
+import './UserManagement.css'
 import './Events.css'
 
 // How much of campus parking an event is expected to take up. Fractions rather
@@ -31,6 +34,74 @@ const PARKING_SHARES = [
   { value: 'full',           label: 'All of parking',            short: 'All full' },
 ]
 const shareShort = (v) => PARKING_SHARES.find(s => s.value === v)?.short ?? null
+
+// Today on the campus clock as YYYY-MM-DD. The server dates every event by
+// Manila time and refuses a past date, so the pickers must agree with it —
+// toISOString() is UTC, which before 08:00 here still offers yesterday.
+const manilaToday = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())
+
+// An event's status is its date: active on the day, archived after, pending
+// before. Nobody switches it. The server sends `status`; the flags are the
+// fallback for a server that predates the field.
+const eventStatus = (ev) =>
+  ev.status ?? (ev.archived ? 'archived' : ev.is_active ? 'active' : 'pending')
+const STATUS_LABEL = { active: 'Active', pending: 'Pending', archived: 'Archived' }
+
+const fmtDate = (d) =>
+  new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+
+const EVENTS_PER_PAGE = 10
+
+// The server sends every event, so the search and the pagers work on the list
+// in the browser, as the Suppliers list does. Identifiers are compared with
+// spaces and hyphens taken out, so "ABC 1234" finds ABC1234 and "FM001" finds
+// FM-001 — the forms the list stores them in.
+const bareId = (s) => s.replace(/[\s-]+/g, '').toLowerCase()
+const eventMatches = (ev, q) =>
+  ev.name.toLowerCase().includes(q)
+  || ev.date.includes(q)                                        // 2026-10-05
+  || fmtDate(ev.date).toLowerCase().includes(q)                 // "Oct 5, 2026"
+  || (ev.time_display || '').toLowerCase().includes(q)
+  || STATUS_LABEL[eventStatus(ev)].toLowerCase().includes(q)
+  || (bareId(q) !== '' && (ev.organizer_plates ?? []).some(p => bareId(p).includes(bareId(q))))
+
+// Coming events soonest first: today's, then the next one due. The server's
+// order (latest date first) put next year's event on page one and today's on
+// the last page. Archived keep the server's order, most recent first.
+const bySoonest = (a, b) =>
+  a.date.localeCompare(b.date) || (a.start_time || '').localeCompare(b.start_time || '')
+
+// One page of a list, with the page number clamped rather than reset, so
+// deleting the last card on the last page steps back a page instead of
+// showing an empty one.
+const pageOf = (list, page) => {
+  const pages   = Math.max(1, Math.ceil(list.length / EVENTS_PER_PAGE))
+  const current = Math.min(page, pages)
+  return { current, pages, rows: list.slice((current - 1) * EVENTS_PER_PAGE, current * EVENTS_PER_PAGE) }
+}
+
+function Pager({ current, pages, total, noun, onPage }) {
+  if (pages <= 1) return null
+  return (
+    <div className="um-pagination ev-pager">
+      <span className="um-pagination-info">
+        Showing {(current - 1) * EVENTS_PER_PAGE + 1} to {Math.min(current * EVENTS_PER_PAGE, total)} of {total} {noun}
+      </span>
+      <div className="um-pagination-controls">
+        <button className="um-page-btn" disabled={current === 1} onClick={() => onPage(current - 1)}
+          aria-label="Previous page">
+          <ChevronLeft size={16} />
+        </button>
+        <span className="um-page-current">Page {current} of {pages}</span>
+        <button className="um-page-btn" disabled={current === pages} onClick={() => onPage(current + 1)}
+          aria-label="Next page">
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // What an organizer may be listed by: a plate, a conduction sticker (a new car
 // with no plate yet), or an e-bike control number (FM-001). The server stores
@@ -113,10 +184,13 @@ function AddEventModal({ onClose, onCreated }) {
               className="ev-text-input"
               type="date"
               value={form.date}
-              min={new Date().toISOString().slice(0, 10)}
+              min={manilaToday()}
               onChange={e => setForm(p => ({ ...p, date: e.target.value }))}
               required
             />
+            <span className="ev-field-hint">
+              Turns active by itself on this date and moves to Archived the day after.
+            </span>
           </div>
           {/* Times are optional — an all-day event genuinely has none, and a
               blank pair reads as "All day" rather than as midnight-to-midnight.
@@ -157,8 +231,8 @@ function AddEventModal({ onClose, onCreated }) {
               ))}
             </select>
             <span className="ev-field-hint">
-              Held back from the free-space count while the event is running, so the
-              gate stops admitting before the bays the event needs are taken.
+              Held back from the free-space count shown to guards and owners while the
+              event is running. It does not turn anyone away at the gate.
             </span>
           </div>
 
@@ -326,7 +400,6 @@ function EventCard({ event, onUpdated, onDeleted }) {
   const [expanded, setExpanded]         = useState(false)
   const [plateInput, setPlateInput]     = useState('')
   const [plateError, setPlateError]     = useState('')
-  const [toggling, setToggling]         = useState(false)
   const [deleting, setDeleting]         = useState(false)
   const [confirmDel, setConfirmDel]     = useState(false)
   const [saving, setSaving]             = useState(false)
@@ -346,20 +419,24 @@ function EventCard({ event, onUpdated, onDeleted }) {
     sched.parking_share !== (event.parking_share || 'none')
   const plateRef = useRef(null)
 
-  const localPlates = event.organizer_plates ?? []
-
-  const handleToggleActive = async () => {
-    setToggling(true)
-    try {
-      const { data } = await patchEvent(event.id, { is_active: !event.is_active })
-      onUpdated(data)
-      toast.success(data.is_active ? 'Event activated.' : 'Event deactivated.')
-    } catch {
-      toast.error('Failed to update event.')
-    } finally {
-      setToggling(false)
-    }
+  // useState above only reads the event once. When a live update (another
+  // admin, another tab) brings new times or share, the fields must follow —
+  // otherwise they show the old values, Save lights up, and saving would
+  // quietly put them back. Adjusted during render, React's pattern for state
+  // that follows a prop, rather than in an effect.
+  const serverSched = `${event.start_time || ''}|${event.end_time || ''}|${event.parking_share || 'none'}`
+  const [seenSched, setSeenSched] = useState(serverSched)
+  if (seenSched !== serverSched) {
+    setSeenSched(serverSched)
+    setSched({
+      start_time:    event.start_time || '',
+      end_time:      event.end_time || '',
+      parking_share: event.parking_share || 'none',
+    })
   }
+
+  const localPlates = event.organizer_plates ?? []
+  const status = eventStatus(event)
 
   const handleSaveSchedule = async () => {
     setSchedSaving(true)
@@ -445,13 +522,10 @@ function EventCard({ event, onUpdated, onDeleted }) {
     }
   }
 
-  const fmtDate = (d) =>
-    new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
-
   const cardClass = [
     'ev-card',
-    event.archived  ? ' ev-card--archived' : '',
-    event.is_active ? ' ev-card--active'   : '',
+    status === 'archived' ? ' ev-card--archived' : '',
+    status === 'active'   ? ' ev-card--active'   : '',
   ].join('')
 
   return (
@@ -460,9 +534,17 @@ function EventCard({ event, onUpdated, onDeleted }) {
         <div className="ev-card-meta">
           <div className="ev-card-name-row">
             <span className="ev-card-name">{event.name}</span>
-            {event.archived  && <span className="ev-archived-badge"><Archive size={11} /> Archived</span>}
-            {event.is_active && !event.archived && <span className="ev-active-badge">Active</span>}
-            {!event.is_active && !event.archived && <span className="ev-pending-badge">Pending</span>}
+            {status === 'archived' && (
+              <span className="ev-archived-badge" title="Its date has passed">
+                <Archive size={11} /> Archived
+              </span>
+            )}
+            {status === 'active' && (
+              <span className="ev-active-badge" title="Today — active automatically">Active</span>
+            )}
+            {status === 'pending' && (
+              <span className="ev-pending-badge" title="Turns active by itself on its date">Pending</span>
+            )}
           </div>
           <div className="ev-card-sub">
             <CalendarDays size={13} />
@@ -489,7 +571,9 @@ function EventCard({ event, onUpdated, onDeleted }) {
         </div>
 
         <div className="ev-card-actions">
-          {event.archived ? (
+          {/* No Activate/Deactivate: the status is the date. Rescheduling is
+              how an event is moved — including bringing an archived one back. */}
+          {status === 'archived' ? (
             <button
               className="ev-reschedule-btn"
               onClick={() => { setRescheduling(true); setNewDate('') }}
@@ -499,28 +583,13 @@ function EventCard({ event, onUpdated, onDeleted }) {
               Reschedule
             </button>
           ) : (
-            <>
-              <button
-                className={`ev-status-btn${event.is_active ? ' ev-status-btn--on' : ''}`}
-                onClick={handleToggleActive}
-                disabled={toggling}
-                title={event.is_active ? 'Deactivate' : 'Activate'}
-              >
-                {toggling
-                  ? <Loader2 size={13} className="ev-spinner" />
-                  : event.is_active ? <ToggleRight size={15} /> : <ToggleLeft size={15} />
-                }
-                {event.is_active ? 'Deactivate' : 'Activate'}
-              </button>
-
-              <button
-                className="ev-reschedule-btn"
-                onClick={() => { setRescheduling(true); setNewDate(event.date) }}
-                title="Reschedule event"
-              >
-                <CalendarClock size={14} />
-              </button>
-            </>
+            <button
+              className="ev-reschedule-btn"
+              onClick={() => { setRescheduling(true); setNewDate(event.date) }}
+              title="Reschedule event"
+            >
+              <CalendarClock size={14} />
+            </button>
           )}
 
           <button
@@ -550,7 +619,7 @@ function EventCard({ event, onUpdated, onDeleted }) {
             type="date"
             className="ev-text-input ev-reschedule-input"
             value={newDate}
-            min={new Date().toISOString().slice(0, 10)}
+            min={manilaToday()}
             onChange={e => setNewDate(e.target.value)}
           />
           <button
@@ -698,21 +767,36 @@ function EventCard({ event, onUpdated, onDeleted }) {
 
 // ── Zone capacity row ─────────────────────────────────────────────────
 function ZoneCapacityRow({ zone, onSaved }) {
-  const [override, setOverride] = useState(
-    zone.capacity_override != null ? String(zone.capacity_override) : ''
-  )
+  const saved = zone.capacity_override != null ? String(zone.capacity_override) : ''
+  const [override, setOverride] = useState(saved)
   const [saving, setSaving] = useState(false)
-  const dirty = String(zone.capacity_override ?? '') !== override
+  // Follow the server when a live update changes the saved override (another
+  // admin, another tab) — otherwise the box keeps the old number, Save lights
+  // up, and saving would put it back. Adjusted during render, as the event
+  // cards do.
+  const [seen, setSeen] = useState(saved)
+  if (seen !== saved) { setSeen(saved); setOverride(saved) }
+  const dirty = saved !== override
+  const inForce = zone.capacity_override != null
 
   const handleSave = async () => {
+    // Whole bays only. The box is type=number, which still lets "2.5" through,
+    // and the server would refuse it with a less specific message.
+    if (override !== '' && !/^\d+$/.test(override.trim())) {
+      await notify.error('Enter a whole number of spaces (0 or more), or leave it blank to use the bays drawn.',
+        { title: 'Capacity not saved' })
+      return
+    }
     setSaving(true)
     try {
       const val = override === '' ? null : Number(override)
       await zoneApi.setCapacity(zone.id, val)
       onSaved(zone.id, val)
-      toast.success(`Capacity updated for ${zone.name}.`)
-    } catch {
-      toast.error('Failed to update capacity.')
+      toast.success(val == null
+        ? `${zone.name} is back to its ${zone.space_count} drawn spaces.`
+        : `${zone.name} now counts as ${val} spaces.`)
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update capacity.')
     } finally {
       setSaving(false)
     }
@@ -721,7 +805,12 @@ function ZoneCapacityRow({ zone, onSaved }) {
   return (
     <div className="ev-zone-row">
       <div className="ev-zone-info">
-        <span className="ev-zone-name">{zone.name}</span>
+        <span className="ev-zone-name">
+          {zone.name}
+          {/* An override has no end date — it stays until someone clears it —
+              so a row that has one says so rather than looking like the rest. */}
+          {inForce && <span className="ev-override-badge" title="Stays in force until cleared">Override in force</span>}
+        </span>
         <span className="ev-zone-type">{zone.vehicle_category}</span>
       </div>
       <div className="ev-zone-capacity-cell">
@@ -737,7 +826,8 @@ function ZoneCapacityRow({ zone, onSaved }) {
           onChange={e => setOverride(e.target.value)}
         />
         {override && (
-          <button className="ev-clear-override" onClick={() => setOverride('')} title="Clear override">
+          <button className="ev-clear-override" onClick={() => setOverride('')}
+            title="Clear override — press Save to apply" aria-label={`Clear the override for ${zone.name}`}>
             <X size={12} />
           </button>
         )}
@@ -763,7 +853,12 @@ export default function Events({ embedded = false }) {
   const [events, setEvents]               = useState([])
   const [pageLoading, setPageLoading]     = useState(true)
   const [showAdd, setShowAdd]             = useState(false)
-  const [showArchived, setShowArchived]   = useState(false)
+  // null until someone presses the toggle: then the search decides (see
+  // archivedOpen). A press is obeyed until the search text changes again.
+  const [showArchived, setShowArchived]   = useState(null)
+  const [search, setSearch]               = useState('')
+  const [page, setPage]                   = useState(1)       // coming events
+  const [archivedPage, setArchivedPage]   = useState(1)
 
   const loadEventsData = () => {
     Promise.all([
@@ -798,6 +893,21 @@ export default function Events({ embedded = false }) {
   const handleEventUpdated = (ev) => setEvents(prev => prev.map(e => e.id === ev.id ? ev : e))
   const handleEventDeleted = (id) => setEvents(prev => prev.filter(e => e.id !== id))
 
+  const query    = search.trim().toLowerCase()
+  const matching = query ? events.filter(e => eventMatches(e, query)) : events
+  const upcoming = matching.filter(e => eventStatus(e) !== 'archived').sort(bySoonest)
+  const archived = matching.filter(e => eventStatus(e) === 'archived')
+  const upPage   = pageOf(upcoming, page)
+  const oldPage  = pageOf(archived, archivedPage)
+  // A search that finds past events opens them, rather than leaving the only
+  // matches behind a collapsed toggle.
+  const archivedOpen = showArchived ?? (query !== '' && archived.length > 0)
+  // Any change to the search starts both lists back on page 1, and hands the
+  // archived toggle back to the search.
+  const onSearch = (value) => {
+    setSearch(value); setPage(1); setArchivedPage(1); setShowArchived(null)
+  }
+
   return (
     <Wrapper>
       <div className="ev-page">
@@ -831,9 +941,14 @@ export default function Events({ embedded = false }) {
             <section className="ev-section">
               <div className="ev-section-head">
                 <h2 className="ev-section-title">Event Parking Capacity</h2>
+                {/* Said plainly because the old wording ("temporary", "for an
+                    event day") suggested the override ended with an event. It
+                    is not tied to one: it stays until cleared, and an event's
+                    "Parking taken up" is held back on top of it. */}
                 <p className="ev-section-desc">
-                  For an event day, set a temporary capacity per zone. The parking counts use it
-                  for as long as it is set — clear it after the event.
+                  Replace a zone's capacity by hand — for example when an event closes part of a lot.
+                  It is not tied to any event and stays in force until you clear it. An event's own
+                  "Parking taken up" is held back on top of it, so for one event use one or the other.
                 </p>
               </div>
 
@@ -845,12 +960,16 @@ export default function Events({ embedded = false }) {
                   <ParkingCircle size={15} />
                   <span>Zone Capacity Overrides</span>
                   <span className="ev-capacity-hint">
-                    Set a temporary capacity limit per zone. Leave blank to use the zone's default.
+                    The number replaces the zone's drawn spaces in the free and full counts guards
+                    and owners see. Leave blank to use the spaces drawn.
                   </span>
                 </div>
 
                 {zones.length === 0 ? (
-                  <p className="ev-empty">No parking zones configured.</p>
+                  <p className="ev-empty">
+                    No parking zones yet. Create one on the Parking Spaces tab; its capacity can then be
+                    overridden here.
+                  </p>
                 ) : (
                   <div className="ev-zone-table">
                     <div className="ev-zone-header">
@@ -873,8 +992,9 @@ export default function Events({ embedded = false }) {
                 <div>
                   <h2 className="ev-section-title">Events &amp; Organizers</h2>
                   <p className="ev-section-desc">
-                    While an event is running, an unregistered organizer plate is let in at the gate
-                    and gets an event slip. Registered vehicles keep their usual rules.
+                    An event is Pending until its date, Active on the day and Archived after — no
+                    switching needed. While it is running, an unregistered organizer plate is let in
+                    at the gate and gets an event slip. Registered vehicles keep their usual rules.
                   </p>
                 </div>
                 {/* Sits with the list it adds to, now that the page header is gone */}
@@ -885,19 +1005,67 @@ export default function Events({ embedded = false }) {
                 )}
               </div>
 
-              {(() => {
-                const upcoming = events.filter(e => !e.archived)
-                const archived = events.filter(e => e.archived)
-                return (
-                  <>
-                    {upcoming.length === 0 ? (
-                      <div className="ev-empty-state">
-                        <CalendarDays size={36} className="ev-empty-icon" />
-                        <p>No upcoming events. Add one to get started.</p>
-                      </div>
-                    ) : (
-                      <div className="ev-events-list">
-                        {upcoming.map(ev => (
+              {/* One search over both lists. Shown once there is anything to
+                  search, so an empty page is just the empty state. */}
+              {events.length > 0 && (
+                <div className="ev-toolbar">
+                  <div className="um-search-wrapper ev-search">
+                    <Search size={16} />
+                    <input className="um-search-input" type="text" value={search}
+                      placeholder="Search name, date, status or plate…"
+                      aria-label="Search events"
+                      onChange={e => onSearch(e.target.value)} />
+                  </div>
+                  <span className="ev-toolbar-count">
+                    {query
+                      ? `${matching.length} of ${events.length} event${events.length !== 1 ? 's' : ''}`
+                      : `${events.length} event${events.length !== 1 ? 's' : ''}`}
+                  </span>
+                </div>
+              )}
+
+              {upcoming.length === 0 ? (
+                <div className="ev-empty-state">
+                  {query ? <Search size={36} className="ev-empty-icon" /> : <CalendarDays size={36} className="ev-empty-icon" />}
+                  <p>
+                    {query
+                      ? `No upcoming events match “${search.trim()}”.`
+                      : 'No upcoming events. Add one to get started.'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="ev-events-list">
+                    {upPage.rows.map(ev => (
+                      <EventCard
+                        key={ev.id}
+                        event={ev}
+                        onUpdated={handleEventUpdated}
+                        onDeleted={handleEventDeleted}
+                      />
+                    ))}
+                  </div>
+                  <Pager current={upPage.current} pages={upPage.pages} total={upcoming.length}
+                    noun="upcoming events" onPage={setPage} />
+                </>
+              )}
+
+              {archived.length > 0 && (
+                <div className="ev-archived-section">
+                  <button
+                    className="ev-archived-toggle"
+                    onClick={() => setShowArchived(!archivedOpen)}
+                    aria-expanded={archivedOpen}
+                  >
+                    <Archive size={14} />
+                    Archived Events ({archived.length})
+                    {archivedOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+
+                  {archivedOpen && (
+                    <>
+                      <div className="ev-events-list ev-events-list--archived">
+                        {oldPage.rows.map(ev => (
                           <EventCard
                             key={ev.id}
                             event={ev}
@@ -906,36 +1074,12 @@ export default function Events({ embedded = false }) {
                           />
                         ))}
                       </div>
-                    )}
-
-                    {archived.length > 0 && (
-                      <div className="ev-archived-section">
-                        <button
-                          className="ev-archived-toggle"
-                          onClick={() => setShowArchived(p => !p)}
-                        >
-                          <Archive size={14} />
-                          Archived Events ({archived.length})
-                          {showArchived ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-
-                        {showArchived && (
-                          <div className="ev-events-list ev-events-list--archived">
-                            {archived.map(ev => (
-                              <EventCard
-                                key={ev.id}
-                                event={ev}
-                                onUpdated={handleEventUpdated}
-                                onDeleted={handleEventDeleted}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )
-              })()}
+                      <Pager current={oldPage.current} pages={oldPage.pages} total={archived.length}
+                        noun="archived events" onPage={setArchivedPage} />
+                    </>
+                  )}
+                </div>
+              )}
             </section>
           </>
         )}

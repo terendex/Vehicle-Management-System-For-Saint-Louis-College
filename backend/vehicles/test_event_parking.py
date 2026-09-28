@@ -5,7 +5,7 @@ halves matter to the gate: the share decides how many bays stop being offered,
 and the time decides *when* they stop — an evening event must not make the car
 park read as half gone at nine in the morning.
 """
-from datetime import date, time, timedelta
+from datetime import time, timedelta
 
 from django.test import TestCase
 from django.utils import timezone
@@ -78,9 +78,18 @@ class UnderWayTests(TestCase):
         ev = _event(date=timezone.localdate() - timedelta(days=1))
         self.assertFalse(ev.is_under_way())
 
-    def test_inactive_and_archived_events_reserve_nothing(self):
-        self.assertFalse(_event(is_active=False).is_under_way())
-        self.assertFalse(_event(archived=True).is_under_way())
+    def test_past_and_coming_events_are_never_under_way(self):
+        today = timezone.localdate()
+        self.assertFalse(_event(date=today - timedelta(days=1)).is_under_way())
+        self.assertFalse(_event(date=today + timedelta(days=1)).is_under_way())
+
+    def test_the_date_decides_not_the_stored_flags(self):
+        # The flags are rolled by a daily job that runs up to an hour after
+        # midnight; a stale pair must not switch today's event off.
+        ev = _event()
+        Event.objects.filter(pk=ev.pk).update(is_active=False, archived=True)
+        ev.refresh_from_db()
+        self.assertTrue(ev.is_under_way())
 
 
 class ReservationTests(TestCase):
@@ -149,7 +158,7 @@ class EventApiTests(APITestCase):
     def test_create_with_times_and_share(self):
         r = self.client.post(EVENTS, {
             'name': 'Intramurals',
-            'date': date.today().isoformat(),
+            'date': timezone.localdate().isoformat(),
             'start_time': '08:00',
             'end_time': '17:00',
             'parking_share': 'two_thirds',
@@ -162,7 +171,7 @@ class EventApiTests(APITestCase):
 
     def test_times_are_optional(self):
         r = self.client.post(EVENTS, {
-            'name': 'All Day Mass', 'date': date.today().isoformat(),
+            'name': 'All Day Mass', 'date': timezone.localdate().isoformat(),
         }, format='json')
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         self.assertIsNone(r.data['start_time'])
@@ -171,7 +180,7 @@ class EventApiTests(APITestCase):
 
     def test_end_before_start_is_refused(self):
         r = self.client.post(EVENTS, {
-            'name': 'Backwards', 'date': date.today().isoformat(),
+            'name': 'Backwards', 'date': timezone.localdate().isoformat(),
             'start_time': '15:00', 'end_time': '09:00',
         }, format='json')
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
@@ -179,7 +188,7 @@ class EventApiTests(APITestCase):
 
     def test_unknown_share_is_refused(self):
         r = self.client.post(EVENTS, {
-            'name': 'Bad Share', 'date': date.today().isoformat(),
+            'name': 'Bad Share', 'date': timezone.localdate().isoformat(),
             'parking_share': 'most_of_it',
         }, format='json')
         self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)

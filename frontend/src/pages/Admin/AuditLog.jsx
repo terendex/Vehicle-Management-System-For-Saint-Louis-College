@@ -6,7 +6,8 @@ import {
   RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
 } from 'lucide-react'
 import { reportFileName } from '../../utils/reportName'
-import { openReportTab } from '../../utils/saveFile'
+import { openReportTab, saveReportFile } from '../../utils/saveFile'
+import { notify } from '../../components/Feedback/notify'
 import { confirmPdfExport } from '../../utils/confirmReport'
 import './AuditLog.css'
 
@@ -159,14 +160,18 @@ export default function AuditLog() {
     URL.revokeObjectURL(url)
   }
 
-  // Server-generated Excel report of ALL rows matching the current filters
+  // Server-generated Excel report of ALL rows matching the current filters,
+  // saved where the person picks. Nothing is awaited before saveReportFile:
+  // its Save-as dialog needs the click's user gesture.
   const exportExcel = async () => {
-    setExporting(true)
     try {
-      const blob = await usersApi.exportAuditLogsExcel(buildExportParams())
-      downloadBlob(blob, 'xlsx')
-    } catch {
-      // download failed silently — surface nothing destructive
+      await saveReportFile(reportFileName('Audit Log Report', 'xlsx'), () => {
+        setExporting(true)
+        return usersApi.exportAuditLogsExcel(buildExportParams())
+      })
+    } catch (err) {
+      notify.error(err?.saveMessage || 'The report could not be generated. Please try again.',
+        { title: 'Excel report not saved' })
     } finally {
       setExporting(false)
     }

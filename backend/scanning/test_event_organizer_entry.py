@@ -166,7 +166,8 @@ class OrganizerEntryTests(TestCase):
         event = _event()
         slip = self._check()['event_slip']
         _backdate(slip['id'], 10)
-        Event.objects.filter(pk=event.pk).update(is_active=False)   # event over
+        Event.objects.filter(pk=event.pk).update(                   # event over: its day is gone
+            date=timezone.localdate() - timedelta(days=1))
         self.assertIsNone(get_organizer_event('ORG1234'))
         with short_entry_window:
             exited = self._check()
@@ -207,7 +208,7 @@ class OrganizerEntryTests(TestCase):
         with short_entry_window:
             self.assertEqual(self._check()['status'], 'exited')
         AccessLog.objects.filter(status='exited').update(scanned_at=timezone.now() - timedelta(seconds=120))
-        Event.objects.filter(pk=event.pk).update(is_active=False)
+        Event.objects.filter(pk=event.pk).update(date=timezone.localdate() - timedelta(days=1))
         with patch('scanning.views._supplier_rule_denial', return_value=None):
             again = self._check()
         self.assertTrue(again.get('is_supplier'))
@@ -306,5 +307,13 @@ class EventPassTests(TestCase):
         self.assertEqual(parse_code('SLC-EVENT-PASS:55:ORG1234'), ('eventpass', 55, 'ORG1234'))
 
     def test_an_archived_event_has_no_pass(self):
-        event = _event(archived=True)
+        event = _event(date=timezone.localdate() - timedelta(days=1))   # its day has passed
         self.assertEqual(self._pass(event, 'ORG1234').status_code, 404)
+
+    def test_a_pending_event_already_has_a_pass(self):
+        # Passes are printed ahead of the day; the slip says the event is not
+        # under way yet.
+        event = _event(date=timezone.localdate() + timedelta(days=3))
+        slip = self._pass(event, 'ORG1234')
+        self.assertEqual(slip.status_code, 200)
+        self.assertEqual(slip.data['state'], 'inactive')

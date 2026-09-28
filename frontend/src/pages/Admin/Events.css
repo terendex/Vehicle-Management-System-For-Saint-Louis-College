@@ -233,9 +233,26 @@
 }
 
 .ev-zone-name {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   font-size: 0.88rem;
   font-weight: 600;
   color: #0B2340;
+}
+
+/* Same pill as the event status badges; amber, like Pending, because an
+   override is a standing change someone has to remember to clear. */
+.ev-override-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 20px;
+  background: #FEF9E4;
+  color: #7A5C00;
+  border: 1px solid #F7E08A;
+  letter-spacing: 0.4px;
 }
 
 .ev-zone-type {
@@ -412,31 +429,6 @@
   gap: 8px;
   flex-shrink: 0;
 }
-
-.ev-status-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px;
-  border-radius: 7px;
-  border: 1.5px solid #D3E1EC;
-  background: #fff;
-  color: #4A6B85;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-
-.ev-status-btn--on {
-  border-color: #0F7A5A;
-  color: #0F7A5A;
-  background: #EFF9F5;
-}
-
-.ev-status-btn:hover:not(:disabled) { opacity: 0.8; }
-.ev-status-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .ev-expand-btn {
   display: flex;
@@ -857,6 +849,40 @@
   flex-direction: column;
   gap: 10px;
   margin-top: 6px;
+}
+
+/* ── Search + pager ─────────────────────────────────────────────
+   The search box and the pager are User Management's (.um-search-*,
+   .um-pagination), as on the Suppliers list; these only fit them around
+   a list of cards. */
+
+.ev-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.ev-search { width: 340px; max-width: 100%; }
+
+.ev-toolbar-count {
+  font-size: 13px;
+  font-weight: 500;
+  color: #4A6B85;
+}
+
+.um-pagination.ev-pager {
+  margin-top: 0.75rem;
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .ev-search { width: 100%; }
 }
 
 .ev-archived-toggle {

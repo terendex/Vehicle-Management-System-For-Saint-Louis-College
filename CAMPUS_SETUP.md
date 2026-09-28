@@ -324,13 +324,14 @@ Neither is deployed, because both would be extra always-on containers:
   deletes AccessLog rows, Violation rows, and **archived accounts** older than
   it. **Runs by itself; no setup needed** (see below). Only archived accounts
   are ever deleted — a live account is never touched, and audit history survives.
-- **`auto_manage_events`** — activates events dated today, archives past ones.
-  Without it the events list silently stops rolling over. *This is the one that
-  still needs the scheduled task below.*
+- **`auto_manage_events`** — marks events dated today Active, past ones
+  Archived, and future ones Pending (by the Manila date). **Runs by itself; no
+  setup needed.** The gate and parking read the event's date directly, so they
+  are right even before the day's pass runs.
 
-### Archiving and retention run themselves
+### Event rollover, archiving and retention run themselves
 
-The server runs both jobs in-process: a daemon thread started with the ASGI app
+The server runs these jobs in-process: a daemon thread started with the ASGI app
 checks hourly whether each has already run today, and runs it if not
 (`backend/vehicles/scheduler.py`). This exists because the System Settings cards
 promise expiry and retention happen automatically, and those promises should not
@@ -350,15 +351,16 @@ machine, and on the cloud instance if the campus box is the one you trust for
 Manila-time dates. **Note this also stops the retention purge**, which is the
 only thing that ever deletes archived accounts.
 
-### Events rollover still needs scheduling
+### Optional: a scheduled task as a backstop
 
-`python manage.py run_maintenance` runs all three synchronously, with no broker
-and no worker, ignoring the daily ledger. Schedule it here rather than in the
-cloud: the jobs key off `date.today()`, which reads the OS clock, and this
-machine runs on Manila time. A UTC container would roll events over about eight
-hours early.
+Nothing needs scheduling any more — the thread above covers every job. The dates
+come from Django's `TIME_ZONE` (Asia/Manila), not the OS clock, so a UTC cloud
+container rolls events over at Manila midnight just as this machine does.
 
-Register it once, from the repository root:
+`python manage.py run_maintenance` still runs every job synchronously, with no
+broker and no worker, ignoring the daily ledger. If you want it on a schedule
+anyway (for a machine running with `DISABLE_DAILY_SCHEDULER=1`), register it
+once, from the repository root:
 
 ```powershell
 schtasks /Create /TN "SLC VMS Daily Maintenance" /SC DAILY /ST 00:05 `

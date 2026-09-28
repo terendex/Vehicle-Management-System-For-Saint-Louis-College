@@ -1829,6 +1829,13 @@ class GateListView(APIView):
             return Response({'error': "Gate ID must look like 'gate2', 'gate5', etc."}, status=status.HTTP_400_BAD_REQUEST)
         if not label:
             return Response({'error': 'A display label is required (e.g. "Gate 2 — North Entrance").'}, status=status.HTTP_400_BAD_REQUEST)
+        # The label is what guards pick from, the slug is what the logs store.
+        # "Gate 2" on the kiosk writing gate5 onto every scan would make the
+        # reports disagree with what the guard thought they chose.
+        named = _re.search(r'\bgate\s*(\d{1,3})\b', label, _re.IGNORECASE)
+        if named and int(named.group(1)) != int(gate_id[4:]):
+            return Response({'error': f'The label says Gate {named.group(1)} but the gate number is {int(gate_id[4:])}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         # Checked in Python so the admin gets a sentence rather than an
         # IntegrityError from the column's own uniqueness.
         if Gate.objects.filter(gate_id=gate_id).exists():
@@ -1862,7 +1869,16 @@ class GateDetailView(APIView):
         if label:
             gate.label = label
         if 'is_active' in request.data:
-            gate.is_active = bool(request.data.get('is_active'))
+            new_active = bool(request.data.get('is_active'))
+            # Refused rather than allowed: with no active gate, the kiosk list
+            # and Gate.active_ids() both fall back to gate1/gate4, so "every
+            # gate deactivated" would quietly mean "the founding gates still work".
+            if gate.is_active and not new_active \
+                    and not Gate.objects.filter(is_active=True).exclude(pk=gate.pk).exists():
+                return Response({'error': f'{gate.label} is the only active gate. Guards need at least one '
+                                          'gate to sign in at — add or activate another gate first.'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            gate.is_active = new_active
         # Both columns are written whichever branch ran; harmless, since each
         # is either the new value or the one already on the row.
         gate.save(update_fields=['label', 'is_active'])

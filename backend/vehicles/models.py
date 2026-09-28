@@ -999,7 +999,8 @@ class RegistrationPeriod(models.Model):
 # A campus event. While one is under way it can reserve part of the parking and
 # mark its organizers at the gate.
 class Event(models.Model):
-    """A campus event. Organizer plates are noted temporarily; activating closes parts of parking."""
+    """A campus event. Active on its date, pending before, archived after — never switched by hand.
+    While under way it admits its organizer plates and holds back its share of parking."""
 
     class ParkingShare(models.TextChoices):
         """How much of campus parking the event is expected to take up.
@@ -1036,8 +1037,14 @@ class Event(models.Model):
         max_length=20, choices=ParkingShare.choices, default=ParkingShare.NONE,
         help_text="How much of campus parking this event is expected to fill.",
     )
-    is_active        = models.BooleanField(default=False)   # the switch that makes the event take effect
-    archived         = models.BooleanField(default=False)   # finished events are kept but ignored
+    # Both follow the date and are never set by hand: save() writes them from
+    # it, and the daily auto_manage_events job rolls them over at midnight.
+    # Nothing that decides anything reads them — the gate and the parking
+    # reserve ask `status_on()` — so the hour before the job runs cannot let a
+    # finished event act. They stay as columns for the list screen and for a
+    # server still running code that reads them (campus and cloud share one DB).
+    is_active        = models.BooleanField(default=False)   # the event is today
+    archived         = models.BooleanField(default=False)   # the event's day has passed
     organizer_plates = models.JSONField(default=list, blank=True)   # identifiers recognised at the gate as organizers
     created_by       = models.ForeignKey(
         'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
@@ -1051,6 +1058,36 @@ class Event(models.Model):
 
     def __str__(self):
         return self.name
+
+    # Where the event stands, from its date alone. Campus (Manila) date, never
+    # date.today(): a cloud server's own clock is UTC, eight hours behind, and
+    # would call today's event "pending" until 08:00.
+    def status_on(self, today=None) -> str:
+        """'active' on the event's day, 'archived' after it, 'pending' before."""
+        from django.utils import timezone as _tz
+        today = today or _tz.localdate()
+        if self.date == today:
+            return 'active'
+        return 'archived' if self.date < today else 'pending'
+
+    @property
+    def status(self) -> str:
+        return self.status_on()
+
+    def sync_status(self, today=None):
+        """Point the stored flags at what the date says."""
+        status = self.status_on(today)
+        self.is_active = status == 'active'
+        self.archived  = status == 'archived'
+
+    def save(self, *args, **kwargs):
+        # A create or an edit can never leave the flags disagreeing with the
+        # date — including a reschedule, which is only a date change.
+        self.sync_status()
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            kwargs['update_fields'] = {*update_fields, 'is_active', 'archived'}
+        super().save(*args, **kwargs)
 
     # The chosen share as a number the capacity maths can multiply by.
     @property
@@ -1078,14 +1115,14 @@ class Event(models.Model):
         """True while the clock is inside the event's window today.
 
         An event with no times set is under way for the whole of its day — the
-        absence of a window means "all day", not "never".
+        absence of a window means "all day", not "never". The date decides, not
+        the stored is_active/archived flags, which can lag it by up to an hour
+        after midnight until the daily job rolls them.
         """
         from django.utils import timezone as _tz     # imported here so the module stays import-light
-        if not self.is_active or self.archived:
-            return False                             # switched off, or finished
         now = now or _tz.localtime()                 # default to now, campus time
         if now.date() != self.date:
-            return False                             # not today
+            return False                             # not today: pending, or finished
         current = now.time()
         if self.start_time and current < self.start_time:
             return False                             # not started yet
@@ -1342,7 +1379,7 @@ class Camera(models.Model):
     # one for a field that deliberately has no fixed list of choices.
     @property
     def gate_label(self) -> str:
-        """Human name for the gate, or the raw slug for gates added later.
+        """Human name for the gate; the raw slug only if no Gate row matches.
 
         NOT get_gate_id_display(): Django only generates that for fields that
         declare `choices`, and gate_id deliberately has none because gates are
@@ -1355,7 +1392,16 @@ class Camera(models.Model):
             return ''                                # a parking camera has no gate
         if self.gate_id in self.GateId.values:
             return self.GateId(self.gate_id).label   # one of the two original gates: use its label
-        return self.gate_id                          # a gate added later: show the slug as stored
+        # A gate added later: its label lives on the scanning.Gate row. Imported
+        # here because scanning.models imports this module.
+        try:
+            from scanning.models import Gate
+            label = Gate.objects.filter(gate_id=self.gate_id).values_list('label', flat=True).first()
+            if label:
+                return label
+        except Exception:
+            pass                                     # decoration for __str__; never fail an audited write over it
+        return self.gate_id                          # no such row: show the slug as stored
 
     def __str__(self):
         gate = f' — {self.gate_label}' if self.gate_id else ''

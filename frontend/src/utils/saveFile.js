@@ -141,3 +141,46 @@ export async function discardSaveLocation(target) {
     /* nothing to do — an empty leftover file is not worth surfacing */
   }
 }
+
+export const EXCEL_FILE_TYPE = {
+  description: 'Excel workbook',
+  accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+}
+
+/**
+ * A server-generated report saved where the person chooses: "Save as" first,
+ * then the report is generated and written there.
+ *
+ * Every Excel export goes through this, so they all ask the same way. Call it
+ * from the click handler with nothing awaited before it — see the gesture rule
+ * at the top of this file. `fetchBlob` runs only once a location is chosen, so
+ * cancelling the dialog costs no server work.
+ *
+ * Resolves 'saved' (written where they picked), 'downloaded' (no picker in this
+ * browser — the ordinary download) or 'cancelled'. Rejects when the report
+ * could not be made or written; the error's `saveMessage`, when set, is a
+ * sentence to show as-is.
+ */
+export async function saveReportFile(fileName, fetchBlob, fileType = EXCEL_FILE_TYPE) {
+  const target = await pickSaveLocation(fileName, fileType)
+  if (!target) return 'cancelled'
+
+  let blob
+  try {
+    blob = await fetchBlob()
+  } catch (err) {
+    await discardSaveLocation(target)            // no report, so no empty file left where they asked
+    throw err
+  }
+
+  try {
+    return (await saveBlobTo(target, blob, fileName)) ? 'saved' : 'downloaded'
+  } catch (err) {
+    // The commonest cause on Windows: that same file is open in Excel, which
+    // locks it against writing. Worth saying, because it looks like a failure
+    // of the report when it is not.
+    err.saveMessage = 'The report was made but could not be saved there. If that file is '
+      + 'open in Excel, close it and export again, or save under a different name.'
+    throw err
+  }
+}

@@ -4237,8 +4237,12 @@ class SystemSettingsView(APIView):
 #     vehicle pass
 #
 # Both of those read `is_under_way()`, which is true only while the event is
-# active, unarchived, dated today and inside its window — so an event that is
-# merely on record changes nothing.
+# dated today and inside its window — so an event that is merely on record
+# changes nothing.
+#
+# Nobody switches an event on or off. Its status is its date on the campus
+# clock: pending before, active on the day, archived after (Event.status_on).
+# Rescheduling is the only way to change it.
 #
 # Four small helpers come first because the list and detail views share every
 # one of them; the two views are then mostly about which fields a request is
@@ -4262,12 +4266,16 @@ def _serialize_event(ev):
         'parking_share':    ev.parking_share,               # the stored choice
         'parking_share_label': ev.get_parking_share_display(),   # and its wording, so no screen spells it itself
         'parking_share_fraction': ev.share_fraction,        # the same choice as a 0.0-1.0 multiplier, for anything doing the arithmetic
-        # The three states are not the same question and all three go out:
-        # is_under_way is "right now"; is_active is the switch; archived is
-        # "finished with". An event can be active and still not under way.
+        # Two different questions. status is the day — 'pending', 'active' or
+        # 'archived', from the date on the campus clock; is_under_way is "right
+        # now", inside the times. An active event can still not be under way.
+        # is_active/archived are the same status as booleans, derived here
+        # rather than read off the row, which the daily job rolls up to an
+        # hour after midnight.
+        'status':           ev.status,
         'is_under_way':     ev.is_under_way(),
-        'is_active':        ev.is_active,
-        'archived':         ev.archived,
+        'is_active':        ev.status == 'active',
+        'archived':         ev.status == 'archived',
         'organizer_plates': ev.organizer_plates,   # already canonical on the row — see _clean_organizer_plates
         'created_at':       ev.created_at.isoformat(),
         'created_by_name':  ev.created_by.full_name if ev.created_by else None,   # None when the creating account has since been deleted
@@ -4292,6 +4300,22 @@ def _parse_event_time(raw):
     # Raised rather than returned: every caller wraps this and turns the message
     # into a field error, so the wording here is what the admin reads.
     raise ValueError('Invalid time format. Use HH:MM (24-hour).')
+
+
+# The day of an event, from a form. Shared by add and reschedule, since the
+# date is the event's status: a past date would file it straight into Archived.
+def _parse_event_date(raw):
+    """'YYYY-MM-DD' -> a date no earlier than today (campus clock). Raises ValueError."""
+    from datetime import datetime as _dt
+    try:
+        day = _dt.strptime(str(raw), '%Y-%m-%d').date()
+    except ValueError:
+        raise ValueError('Invalid date format. Use YYYY-MM-DD.') from None
+    # timezone.localdate(), not date.today(): the cloud server's clock is UTC,
+    # which before 08:00 Manila would refuse today as "in the past".
+    if day < timezone.localdate():
+        raise ValueError('The date cannot be in the past.')
+    return day
 
 
 def _clean_organizer_plates(raw):
@@ -4384,10 +4408,9 @@ class EventListCreateView(APIView):
             return Response({'date': 'Date is required.'}, status=400)
 
         try:
-            from datetime import datetime as _dt
-            date_obj = _dt.strptime(str(date_str), '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'date': 'Invalid date format. Use YYYY-MM-DD.'}, status=400)
+            date_obj = _parse_event_date(date_str)
+        except ValueError as exc:
+            return Response({'date': str(exc)}, status=400)
 
         plates = _clean_organizer_plates(organizer_plates)
         # Built but not saved. The times are applied onto the unsaved object so
@@ -4399,7 +4422,7 @@ class EventListCreateView(APIView):
         errors = _apply_event_times(ev, request.data, {})   # a fresh dict: this is a create, so nothing has been collected yet
         if errors:
             return Response(errors, status=400)
-        ev.save()                                # is_active and archived take the model's defaults; an event is not switched on by creating it
+        ev.save()                                # save() sets the status from the date: today's is active at once, a later one pending
         # The plate COUNT, not the plates: who was admitted is on the scan
         # records, and an audit line is not the place to list vehicles.
         audit(request, AuditLog.Action.RECORD_CREATED,
@@ -4432,26 +4455,23 @@ class EventDetailView(APIView):
                 return Response({'name': 'Name cannot be empty.'}, status=400)
             ev.name = name
 
-        # Moving the date is the one edit with side effects, because both
-        # "finished" and "running" were answers about the OLD date and neither
-        # survives the move.
+        # The status is the date, so it cannot be set on its own. Refused out
+        # loud rather than ignored: a screen still showing the old Activate
+        # button would otherwise report "activated" while nothing changed.
+        if 'is_active' in request.data or 'archived' in request.data:
+            return Response(
+                {'is_active': "An event's status follows its date — it turns active on its day "
+                              "and is archived after. Reschedule it to change when it runs."},
+                status=400)
+
+        # Rescheduling. save() re-derives the status from the new date, so an
+        # archived event moved to today comes back active, and one moved to a
+        # later day goes back to pending.
         if 'date' in request.data:
             try:
-                from datetime import datetime as _dt, date as _date
-                new_date = _dt.strptime(str(request.data['date']), '%Y-%m-%d').date()
-                ev.date = new_date
-                today = _date.today()
-                # Rescheduling unarchives the event; activation follows the new date
-                ev.archived  = False
-                ev.is_active = (new_date == today)   # moved to today: on. Moved anywhere else: off until its day comes
-            except ValueError:
-                return Response({'date': 'Invalid date format.'}, status=400)
-
-        # After the date block on purpose: a request that names both gets the
-        # switch it explicitly asked for, rather than the one the new date
-        # implies. That is what lets an admin arm tomorrow's event early.
-        if 'is_active' in request.data:
-            ev.is_active = bool(request.data['is_active'])
+                ev.date = _parse_event_date(request.data['date'])
+            except ValueError as exc:
+                return Response({'date': str(exc)}, status=400)
 
         if 'organizer_plates' in request.data:
             # Replaces the list outright — there is no add-one endpoint, so the
