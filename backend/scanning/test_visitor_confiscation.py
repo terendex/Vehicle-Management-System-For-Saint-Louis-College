@@ -160,6 +160,32 @@ class PenaltyTermTests(_VisitorCase):
         self.assertIsNone(visitor_confiscation('OWN1234', '', 'AN OWNER'))
 
 
+class ConfiscatedListShowsVisitorsTests(_VisitorCase):
+    """The Confiscated accounts card read "0" while the gate was refusing a
+    visitor and the violations table said "Confiscated"."""
+
+    URL = '/api/violations/confiscated/'
+
+    def test_a_confiscated_visitor_is_listed_once(self):
+        self._visit_and_overstay()
+        self._set_clock(self.now + timedelta(days=8))
+        self._visit_and_overstay()                   # 2nd offence: still one person
+        row, = self.client.get(self.URL).data
+        self.assertEqual(row['kind'], 'visitor')
+        self.assertEqual(row['full_name'], 'JUAN DELA CRUZ')
+        self.assertEqual(row['plates'], ['ABC1234'])
+        self.assertEqual(row['confiscation_level'], 2)
+        self.assertEqual(row['days_left'], 14)
+
+    def test_a_lifted_or_served_penalty_is_not_listed(self):
+        self._visit_and_overstay()
+        self._set_clock(self.now + timedelta(days=8))
+        self.assertEqual(self.client.get(self.URL).data, [])
+        Violation.objects.update(status=Violation.Status.LIFTED)
+        self._set_clock(self.now - timedelta(days=8))
+        self.assertEqual(self.client.get(self.URL).data, [])
+
+
 class VisitorOverstayCardTests(_VisitorCase):
 
     def setUp(self):

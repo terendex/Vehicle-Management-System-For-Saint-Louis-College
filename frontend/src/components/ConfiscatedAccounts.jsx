@@ -106,7 +106,10 @@ export default function ConfiscatedAccounts({ compact = false }) {
               {rows.map(row => (
                 <li key={row.id} className={`ca-row ca-level-${row.confiscation_level}`}>
                   <div className="ca-row-main">
-                    <span className="ca-name">{row.full_name}</span>
+                    <span className="ca-name">
+                      {row.full_name}
+                      {row.kind === 'visitor' && <span className="ca-visitor">Visitor</span>}
+                    </span>
                     <span className="ca-plates">
                       {row.plates?.length ? row.plates.join(' · ') : 'No plate on file'}
                     </span>
@@ -126,7 +129,13 @@ export default function ConfiscatedAccounts({ compact = false }) {
                     )}
                   </div>
 
-                  {isAdmin && (
+                  {/* A visitor has no account to lift: their penalty is read
+                      from their violations, so it ends when those are lifted. */}
+                  {isAdmin && row.kind === 'visitor' && (
+                    <p className="ca-hint">Lift or clear the violation on the Violations page to end this.</p>
+                  )}
+
+                  {isAdmin && row.kind !== 'visitor' && (
                     <div className="ca-actions">
                       <button
                         className="ca-btn"

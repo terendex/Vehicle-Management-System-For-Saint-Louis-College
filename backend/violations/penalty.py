@@ -333,6 +333,58 @@ def confiscated_owners():
             .order_by('-confiscated_at'))        # most recently confiscated first
 
 
+# Every visitor currently serving a penalty, for the same screens. A visitor has
+# no account row for confiscated_owners() to find, so without this the card read
+# "0" while the gate was refusing them and the violations table said
+# "Confiscated".
+def confiscated_visitors() -> list:
+    """One entry per visitor still serving a derived penalty.
+
+    Walks the standing unowned violations newest first and asks
+    visitor_violations() who each one belongs to — the same matching the gate
+    runs — so a visitor with three offences is one entry, not three.
+    """
+    today = timezone.localdate()
+    standing = (Violation.objects
+                .filter(owner__isnull=True, owner_email='',
+                        violation_type__in=NEW_STYLE_TYPES)
+                .exclude(status__in=Violation.INACTIVE_STATUSES)
+                .select_related('vehicle')
+                .order_by('-issued_at'))
+    seen, out = set(), []
+    for v in standing:
+        if v.pk in seen:
+            continue                             # already counted under a newer offence by the same visitor
+        rows = list(visitor_violations(v.plate_number, v.conduction_number, v.owner_name)
+                    .order_by('-issued_at')
+                    .values('pk', 'issued_at', 'plate_number', 'conduction_number'))
+        seen.update(r['pk'] for r in rows)
+        seen.add(v.pk)
+        if not rows:
+            continue
+        level, until = _visitor_term(rows)
+        if until is not None and today > until:
+            continue                             # served in full
+        plates = []
+        for r in rows:
+            ident = r['plate_number'] or r['conduction_number']
+            if ident and ident not in plates:
+                plates.append(ident)
+        out.append({
+            'violation_id': v.pk,
+            'name':         v.owner_name or (v._gate_recorded_name() if v.vehicle_id else '')
+                            or 'Unregistered vehicle',
+            'plates':       plates,
+            'level':        level,
+            'since':        rows[0]['issued_at'],
+            'until':        until,
+            'days_left':    None if until is None else max(0, (until - today).days),
+            'reason':       describe(level, until).replace('Account confiscated',
+                                                           'Visitor entry confiscated'),
+        })
+    return out
+
+
 # ── Penalty state for one violation row ──────────────────────────────────────
 #
 # What the violations table shows in its Confiscation column: whether the

@@ -685,8 +685,33 @@ def _confiscation_payload(user):
     }
 
 
+def _visitor_confiscation_payload(entry):
+    """A visitor's derived penalty in the same shape as an account's.
+
+    `kind` tells the screen there is no account to lift: a visitor's penalty is
+    read from their violations, so it ends when those are lifted or cleared.
+    The id is prefixed so it can never collide with a User id as a list key.
+    """
+    return {
+        'id':                  f"visitor-{entry['violation_id']}",
+        'kind':                'visitor',
+        'user_code':           '',
+        'full_name':           entry['name'],
+        'email':               '',
+        'owner_type':          'visitor',
+        'plates':              entry['plates'],
+        'confiscation_level':  entry['level'],
+        'confiscated_at':      entry['since'],
+        'confiscated_until':   entry['until'],
+        'days_left':           entry['days_left'],
+        'reason':              entry['reason'],
+        'registration_banned': False,
+        'is_indefinite':       entry['until'] is None,
+    }
+
+
 class ConfiscatedAccountsView(APIView):
-    """Every account currently serving a violation penalty.
+    """Every account — and every visitor — currently serving a violation penalty.
 
     Readable by any signed-in role — a guard cannot act on it if they cannot
     see it — while the actions below stay admin-only.
@@ -694,9 +719,14 @@ class ConfiscatedAccountsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from .penalty import confiscated_owners
+        from .penalty import confiscated_owners, confiscated_visitors
         owners = confiscated_owners().prefetch_related('vehicles')
-        return Response([_confiscation_payload(u) for u in owners])
+        rows = ([{**_confiscation_payload(u), 'kind': 'account'} for u in owners]
+                + [_visitor_confiscation_payload(e) for e in confiscated_visitors()])
+        # Newest penalty first across both kinds, matching confiscated_owners().
+        rows.sort(key=lambda r: r['confiscated_at'].timestamp() if r['confiscated_at'] else 0,
+                  reverse=True)
+        return Response(rows)
 
 
 class LiftConfiscationView(APIView):
