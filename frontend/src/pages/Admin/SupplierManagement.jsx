@@ -80,6 +80,10 @@ function AddSupplierModal({ onClose, onCreated }) {
       toast.success('Supplier added.')
       onClose()
     } catch (err) {
+      if (err.response?.data?.owner_plates) {
+        await notify.error(err.response.data.owner_plates, { title: 'Plate belongs to a vehicle owner' })
+        return
+      }
       const msg = err.response?.data
         ? Object.values(err.response.data).flat().join(' ')
         : 'Failed to add supplier.'
@@ -340,6 +344,10 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
       plateRef.current?.focus()
       toast.success(`Plate ${p} added.`)
     } catch (err) {
+      if (err.response?.data?.owner_plates) {
+        await notify.error(err.response.data.owner_plates, { title: 'Plate belongs to a vehicle owner' })
+        return
+      }
       const msg = err.response?.data
         ? Object.values(err.response.data).flat().join(' ')
         : 'Failed to add plate.'

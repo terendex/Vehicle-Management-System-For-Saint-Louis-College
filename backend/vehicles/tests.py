@@ -977,3 +977,58 @@ class ExpiryCannotBeDisabledTests(TestCase):
 
         owner.refresh_from_db()
         self.assertEqual(owner.expires_at, original)
+
+
+class SupplierOwnerPlateTests(TestCase):
+    """A supplier cannot list a plate that belongs to a vehicle owner — the
+    gate resolves the owner's Vehicle first, so the listing would only leak
+    the supplier stay limit onto the owner."""
+
+    def setUp(self):
+        from accounts.models import User
+        from vehicles.models import Supplier, Vehicle
+        self.admin = User.objects.create_user(email='spo@slc.edu.ph', full_name='ADMIN',
+                                              password='x', role='admin')
+        owner = User.objects.create_user(email='spo-owner@slc.edu.ph', full_name='OWNER',
+                                         password='x', role='vehicle_owner', owner_type='student')
+        Vehicle.objects.create(plate_number='OWN1234', vehicle_type='car', is_authorized=True, user=owner)
+        self.supplier = Supplier.objects.create(company_name='ILOCOS FRESH', category='delivery')
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def _add(self, plate):
+        return self.client.post(f'/api/vehicles/suppliers/{self.supplier.pk}/plates/',
+                                {'plate_number': plate}, format='json')
+
+    def test_adding_an_owned_plate_is_refused(self):
+        from vehicles.models import SupplierPlate
+        resp = self._add('own 1234')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('OWN1234', resp.data['owner_plates'])
+        self.assertFalse(SupplierPlate.objects.exists())
+
+    def test_a_pending_registration_holds_its_plate(self):
+        make_reg(plate_number='PND 4321')
+        self.assertIn('owner_plates', self._add('PND4321').data)
+
+    def test_a_conduction_number_counts(self):
+        from accounts.models import User
+        from vehicles.models import Vehicle
+        owner = User.objects.create_user(email='spo-c@slc.edu.ph', full_name='NEW CAR',
+                                         password='x', role='vehicle_owner', owner_type='employee')
+        Vehicle.objects.create(conduction_number='CN12345', vehicle_type='car', user=owner)
+        self.assertIn('owner_plates', self._add('CN12345').data)
+
+    def test_the_gates_unowned_placeholder_does_not_block(self):
+        from vehicles.models import Vehicle
+        Vehicle.objects.create(plate_number='SUP1234', vehicle_type='car', is_authorized=False)
+        self.assertEqual(self._add('SUP1234').status_code, 201)
+
+    def test_create_with_an_owned_plate_is_refused_whole(self):
+        from vehicles.models import Supplier
+        resp = self.client.post('/api/vehicles/suppliers/',
+                                {'company_name': 'NEW CO', 'plates': ['FRE5678', 'OWN 1234']}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('OWN1234', resp.data['owner_plates'])
+        self.assertNotIn('FRE5678', resp.data['owner_plates'])
+        self.assertFalse(Supplier.objects.filter(company_name='NEW CO').exists())

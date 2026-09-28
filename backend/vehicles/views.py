@@ -4816,8 +4816,34 @@ class RegistrationPeriodActivateView(APIView):
 # Imported here rather than at the top of the file, where the other models are.
 # Not required by anything — these are ordinary module-level imports that
 # happen to sit mid-file. Recorded, not moved: this pass comments code.
-from .models import Supplier, SupplierPlate
+from .models import Supplier, SupplierPlate, canonical_identifier
 from .serializers import SupplierSerializer, SupplierPlateSerializer
+
+
+# Which of these plates already belong to a vehicle owner. The gate resolves a
+# Vehicle before it ever reads the supplier roster, so a supplier listing on an
+# owner's plate never admits anyone — it only leaks the supplier stay limit
+# onto the owner at Record Exit, and quietly takes over if the owner's vehicle
+# is later deleted. Checked against owned Vehicle rows AND pending/accepted
+# registrations, which hold their plate before the Vehicle exists. The unowned
+# Vehicle rows the gate creates for suppliers and visitors are not owners, so
+# they do not count.
+def _owner_plate_clashes(plate_numbers):
+    idents = {canonical_identifier(p): p for p in plate_numbers if p}
+    if not idents:
+        return []
+    keys = list(idents)
+    held = set()
+    for plate, conduction in Vehicle.objects.filter(user__isnull=False).filter(
+            Q(plate_number__in=keys) | Q(conduction_number__in=keys)
+    ).values_list('plate_number', 'conduction_number'):
+        held.update((plate, conduction))
+    for plate, conduction in VehicleRegistration.objects.filter(
+            status__in=[VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED],
+    ).filter(Q(plate_number__in=keys) | Q(conduction_number__in=keys)
+    ).values_list('plate_number', 'conduction_number'):
+        held.update((plate, conduction))
+    return [original for key, original in idents.items() if key in held]
 
 
 # List every supplier, and add one.
@@ -4857,6 +4883,12 @@ class SupplierListCreateView(APIView):
             existing = SupplierPlate.objects.filter(plate_number__in=plate_numbers).values_list('plate_number', flat=True)
             if existing:
                 return Response({'plates': f"Plate(s) already registered: {', '.join(existing)}."}, status=400)
+            owned = _owner_plate_clashes(plate_numbers)
+            if owned:
+                return Response({'owner_plates': (
+                    f"Plate(s) already registered to a vehicle owner: {', '.join(owned)}. "
+                    "A supplier cannot use a plate that belongs to a registered vehicle."
+                )}, status=400)
 
         category = request.data.get('category') or Supplier.Category.OTHER   # unstated means "Other", which is a real answer here
         if category not in Supplier.Category.values:   # checked against the model's own choices, which Django does not enforce on .create()
@@ -4932,6 +4964,11 @@ class SupplierPlateView(APIView):
         # an admin can look it up, and the answer is not this endpoint's to give.
         if SupplierPlate.objects.filter(plate_number=plate_number).exists():
             return Response({'plate_number': 'This plate is already registered to a supplier.'}, status=400)
+        if _owner_plate_clashes([plate_number]):
+            return Response({'owner_plates': (
+                f"{plate_number} is already registered to a vehicle owner. "
+                "A supplier cannot use a plate that belongs to a registered vehicle."
+            )}, status=400)
         sp = SupplierPlate.objects.create(supplier=supplier, plate_number=plate_number)
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Supplier plate added | {plate_number} to {supplier.company_name} | By: {request.user.full_name}")
