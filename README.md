@@ -424,7 +424,7 @@ FRONTEND_URL=https://YOUR-TUNNEL-URL.trycloudflare.com
 BACKEND_URL=https://YOUR-TUNNEL-URL.trycloudflare.com
 ```
 
-`FRONTEND_URL` matters most — emailed links (password reset, registration status) and the Registration Form QR are built from it.
+`FRONTEND_URL` matters most — emailed links (password reset, registration status) are built from it.
 
 Then **restart Daphne** so the new `.env` is loaded.
 

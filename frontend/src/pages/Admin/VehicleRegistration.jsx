@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { QRCodeSVG } from 'qrcode.react'
 import { format } from 'date-fns'
-import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, QrCode, Printer, SlidersHorizontal, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
+import { Copy, Check, X, Eye, ShieldCheck, Mail, User, Car, KeyRound, Receipt, CalendarDays, AlertCircle, Search, ChevronLeft, ChevronRight, AlertTriangle, Printer, SlidersHorizontal, ClipboardList, BadgeCheck, GraduationCap, Briefcase, Users } from 'lucide-react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import ReportExportBar from '../../components/ReportExportBar'
 import { openReportTab, downloadBlob } from '../../utils/saveFile'
@@ -192,43 +192,6 @@ export default function VehicleRegistration() {
   // Live-refresh when a registration is created/approved/rejected anywhere
   const refreshAll = () => { fetchRegistrations(); fetchSummary() }
   useLiveUpdates(refreshAll, ['vehicleregistration', 'vehicle'])
-
-  const qrPrintRef = useRef(null)
-
-  // QR of the public registration form URL — shown/printed at CDSO so
-  // walk-in applicants can scan it and register on their own phone
-  const handleViewRegistrationFormQR = () => {
-    const link = `${window.location.origin}/register`
-    setQrDisplayData({
-      type: 'register-link',
-      payload: link,
-      title: 'Registration Form QR',
-      subtitle: 'Walk-in applicants scan this to open the vehicle registration form',
-    })
-    setIsQRModalOpen(true)
-  }
-
-  const handlePrintQR = () => {
-    const svg = qrPrintRef.current?.querySelector('svg')
-    if (!svg || !qrDisplayData) return
-    const win = window.open('', '_blank', 'width=480,height=640')
-    if (!win) return
-    win.document.write(`<!DOCTYPE html><html><head><title>${qrDisplayData.title}</title>
-      <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 40px; }
-        h1 { font-size: 20px; color: #03396C; margin-bottom: 8px; }
-        p { color: #3E5B72; font-size: 13px; margin: 4px 0; }
-        svg { width: 300px; height: 300px; margin: 24px 0; }
-        .link { font-size: 12px; word-break: break-all; color: #2E4C63; margin-top: 8px; }
-      </style></head><body>
-      <h1>Vehicle Registration — Saint Louis College</h1>
-      <p>Scan this QR code with your phone camera to open the vehicle registration form.</p>
-      ${svg.outerHTML}
-      <p class="link">${qrDisplayData.payload}</p>
-      <script>window.onload = function () { window.print() }</script>
-    </body></html>`)
-    win.document.close()
-  }
 
   const handleViewVehicleQR = () => {
     if (!selectedReg) return
@@ -458,9 +421,6 @@ export default function VehicleRegistration() {
             <h1 className="page-title">Vehicle Registration Management</h1>
             <p className="page-subtitle">Review and process vehicle pass applications.</p>
           </div>
-          <button className="btn-primary" onClick={handleViewRegistrationFormQR}>
-            <QrCode size={18} /> Registration Form QR
-          </button>
         </div>
 
         <ReportExportBar
@@ -1199,24 +1159,19 @@ export default function VehicleRegistration() {
               <button className="modal-close-btn" onClick={() => setIsQRModalOpen(false)}><X size={24} /></button>
             </div>
             <p className="qr-viewer-subtitle">{qrDisplayData.subtitle}</p>
-            <div className="qr-display-wrapper" ref={qrPrintRef}>
+            <div className="qr-display-wrapper">
               <QRCodeSVG value={qrDisplayData.payload} size={220} level="H" includeMargin={true} />
             </div>
             <div className="qr-data-box">
-              <p className="qr-label">{qrDisplayData.type === 'register-link' ? 'Registration Link' : 'Encoded Data'}</p>
+              <p className="qr-label">Encoded Data</p>
               <code className="qr-code-data">{qrDisplayData.payload}</code>
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button className="btn-primary" onClick={handleCopyQRData} style={{ flex: 1, justifyContent: 'center' }}>
                 {qrViewerCopied
                   ? <><Check size={16} />Copied!</>
-                  : <><Copy size={16} /> {qrDisplayData.type === 'register-link' ? 'Copy Link' : 'Copy Data'}</>}
+                  : <><Copy size={16} /> Copy Data</>}
               </button>
-              {qrDisplayData.type === 'register-link' && (
-                <button className="btn-outline" onClick={handlePrintQR} style={{ flex: 1, justifyContent: 'center' }}>
-                  <Printer size={16} /> Print
-                </button>
-              )}
             </div>
           </div>
         </div>

@@ -5006,7 +5006,7 @@ class SupplierPlateView(APIView):
 
 # The column set, defined once: the Excel and the PDF share it, so the two
 # files have the same columns in the same order.
-REGISTRATION_REPORT_HEADERS = ['#', 'Date', 'Plate', 'Registrant', 'Type', 'Vehicle', 'Status']
+REGISTRATION_REPORT_HEADERS = ['#', 'Date', 'Plate / Conduction No.', 'Registrant', 'Type', 'Vehicle', 'Status']
 
 
 def _filter_registrations_report(request):
@@ -5045,7 +5045,8 @@ def _filter_registrations_report(request):
     if search:
         # Plate or name, the two things somebody looking for one registration
         # actually has to hand.
-        qs = qs.filter(Q(plate_number__icontains=search) | Q(full_name__icontains=search))
+        qs = qs.filter(Q(plate_number__icontains=search) | Q(conduction_number__icontains=search)
+                       | Q(full_name__icontains=search))
 
     # `desc` is the filter written out for the report's subtitle, so a printed
     # copy says on its face what it was filtered to — a page of numbers with no
@@ -5083,7 +5084,10 @@ def _registration_report_rows(qs):
             # An em dash rather than a blank for every empty field, so a gap in
             # a printed table reads as "nothing recorded" instead of looking
             # like a column that failed to render.
-            r.plate_number or '—',
+            # A brand-new car registers on its conduction sticker and has no
+            # plate yet — the management table shows that number in the same
+            # column, and so does the report.
+            r.plate_number or r.conduction_number or '—',
             name_case(r.full_name) or '—',
             reg_labels.get(r.registrant_type, r.registrant_type or '—'),   # falls back to the stored value, then to a dash
             # Free text typed on the form, so it arrives as "sedan", "Sedan"
@@ -5151,10 +5155,11 @@ class RegistrationReportPdfView(APIView):
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
-            # Millimetres, summing to 237 of the 267 available (A4 landscape
+            # Millimetres, summing to 247 of the 267 available (A4 landscape
             # less report_utils' 15mm margins), so the table sits short of the
-            # full width rather than filling it.
-            col_widths_mm=[10, 30, 30, 60, 40, 40, 27],
+            # full width rather than filling it. The identifier column is the
+            # wider one since it names both a plate and a conduction number.
+            col_widths_mm=[10, 30, 40, 60, 40, 40, 27],
         )
 
 

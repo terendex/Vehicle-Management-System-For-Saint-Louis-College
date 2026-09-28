@@ -184,16 +184,15 @@ export const SHOTS = [
     who: 'admin', path: '/admin/vehicles', title: 'Vehicle Registration Management',
     caption: 'Management › Vehicle Registration. Review and process vehicle pass applications.',
     marks: [
-      m(1, 'Registration Form QR', 'Shows a QR code applicants can scan to open the online application form.', btn(/Registration Form QR/)),
-      m(2, 'Registrations report', 'Pick a date range, then export a PDF or Excel report, or a one-page summary PDF. The export carries the screen’s own filters too — registrant type, payment and status — and the bar names them beside the label, so a table narrowed to Employees produces a report of employees.', css('.report-bar')),
-      m(3, 'Total registrations', 'All applications received.', card(text('Total Registrations', 'main', false))),
+      m(1, 'Registrations report', 'Pick a date range, then export a PDF or Excel report, or a one-page summary PDF. The export carries the screen’s own filters too — registrant type, payment and status — and the bar names them beside the label, so a table narrowed to Employees produces a report of employees.', css('.report-bar')),
+      m(2, 'Total registrations', 'All applications received.', card(text('Total Registrations', 'main', false))),
       // Was matched on the words "Refine within", which only appear while a
       // status tile is selected; the block reads "Refine the table" otherwise.
-      m(4, 'Quick filters', 'Click a payment state or registrant type to narrow the list below.', css('.vr-stats-refine')),
-      m(5, 'Search', 'Find an application by name, plate or type.', ph('Search name, plate, type')),
-      m(6, 'Type, payment and status filters', 'Pending Review lists the applications still waiting for your decision.', union(css('main select >> nth=0'), css('main select >> nth=2'))),
-      m(7, 'Applications table', 'Each row shows the applicant, plate, schedule, payment and status.', css('main table')),
-      m(8, 'View', 'Opens the application to check documents and approve or reject it.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
+      m(3, 'Quick filters', 'Click a payment state or registrant type to narrow the list below.', css('.vr-stats-refine')),
+      m(4, 'Search', 'Find an application by name, plate or type.', ph('Search name, plate, type')),
+      m(5, 'Type, payment and status filters', 'Pending Review lists the applications still waiting for your decision.', union(css('main select >> nth=0'), css('main select >> nth=2'))),
+      m(6, 'Applications table', 'Each row shows the applicant, plate, schedule, payment and status.', css('main table')),
+      m(7, 'View', 'Opens the application to check documents and approve or reject it.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
     ],
   }),
   fig(AD, '04-registration-review', {

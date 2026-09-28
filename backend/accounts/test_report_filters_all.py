@@ -206,3 +206,31 @@ class RegistrationReportFilterTests(APITestCase):
                                      payment_status='paid')
         self.assertEqual(plates, {'RG00003'})
         self.assertEqual(len(desc), 3)
+
+
+class RegistrationReportConductionTests(APITestCase):
+    """A brand-new car registers on its conduction sticker and has no plate yet.
+    The report printed a dash for it where the screen shows the number."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.new_car = VehicleRegistration.objects.create(
+            plate_number='', conduction_number='CS12345A678', full_name='NAME, KO, G',
+            email='newcar@slc.edu.ph', status='pending', registrant_type='employee')
+        cls.plated = VehicleRegistration.objects.create(
+            plate_number='YAB2500', conduction_number='', full_name='NUGAO, KRIS',
+            email='plated@slc.edu.ph', status='pending', registrant_type='employee')
+
+    def rows(self, **params):
+        from vehicles.views import _registration_report_rows
+        qs, _ = _filter_registrations_report(
+            _req('/api/vehicles/registrations/report/excel/', params))
+        return {row[3]: row[2] for row in _registration_report_rows(qs)}   # registrant -> identifier cell
+
+    def test_the_identifier_column_shows_the_conduction_number(self):
+        rows = self.rows()
+        self.assertEqual(rows['Name, Ko, G'], 'CS12345A678')
+        self.assertEqual(rows['Nugao, Kris'], 'YAB2500')
+
+    def test_the_report_search_finds_a_conduction_number(self):
+        self.assertEqual(list(self.rows(search='cs12345')), ['Name, Ko, G'])
