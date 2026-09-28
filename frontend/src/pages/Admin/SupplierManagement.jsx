@@ -446,7 +446,6 @@ function SupplierCard({ supplier, onUpdated, onDeleted }) {
           <div className="sp-card-name-row">
             <Truck size={16} className="sp-card-icon" />
             <span className="sp-card-name">{supplier.company_name}</span>
-            {!supplier.is_active && <span className="sp-inactive-badge">Inactive</span>}
           </div>
           <div className="sp-card-sub">
             <Tag size={12} />

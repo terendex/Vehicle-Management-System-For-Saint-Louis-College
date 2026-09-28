@@ -186,16 +186,6 @@
 }
 .sp-category-other:hover { border-color: #9FBBD1; }
 
-.sp-inactive-badge {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #6B8CA6;
-  background: #EEF4F9;
-  border: 1px solid #D3E1EC;
-  border-radius: 20px;
-  padding: 1px 8px;
-}
-
 /* ── Card Actions ────────────────────────────────────────────── */
 
 .sp-card-actions {
