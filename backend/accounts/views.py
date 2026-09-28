@@ -822,6 +822,7 @@ AUDIT_REPORT_HEADERS = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details'
 # Turns audit rows into the flat cells both report formats take.
 def _audit_report_rows(qs):
     from django.utils import timezone as tz
+    from report_utils import name_case
     action_labels = dict(AuditLog.Action.choices)   # built once, outside the loop
     rows = []
     for i, log in enumerate(qs, start=1):    # start=1 so '#' reads as a human numbering
@@ -829,7 +830,7 @@ def _audit_report_rows(qs):
         # scheduled jobs write rows with nobody behind them and because
         # deleting an account nulls the FK while leaving its history. An empty
         # cell would read as a rendering fault rather than as "no person".
-        actor = log.actor.full_name if log.actor else 'System'
+        actor = name_case(log.actor.full_name) if log.actor else 'System'
         role  = (log.actor.role if log.actor else '').replace('_', ' ').title()   # 'vehicle_owner' -> 'Vehicle Owner'
         rows.append([
             i,

@@ -5059,7 +5059,7 @@ def _filter_registrations_report(request):
 # Turns registration rows into the flat list of cells both report formats take.
 def _registration_report_rows(qs):
     from django.utils import timezone as tz
-    from report_utils import sentence_case
+    from report_utils import name_case, sentence_case
     # The label maps are built once, outside the loop: a get_..._display() call
     # per row would do this lookup thousands of times over.
     reg_labels    = dict(VehicleRegistration.RegistrantType.choices)
@@ -5073,7 +5073,7 @@ def _registration_report_rows(qs):
             # a printed table reads as "nothing recorded" instead of looking
             # like a column that failed to render.
             r.plate_number or '—',
-            r.full_name or '—',
+            name_case(r.full_name) or '—',
             reg_labels.get(r.registrant_type, r.registrant_type or '—'),   # falls back to the stored value, then to a dash
             # Free text typed on the form, so it arrives as "sedan", "Sedan"
             # and "SUV" all at once. sentence_case raises only the first
@@ -5707,6 +5707,7 @@ SCHEDULED_VISIT_REPORT_HEADERS = ['#', 'Ref', 'Visitor', 'Category', 'Expected',
 
 def _scheduled_visit_report(request):
     """(rows, subtitle) for both report formats, from the table's own filter."""
+    from report_utils import name_case
     qs, desc = _filter_scheduled_visits(request)
     today = timezone.localdate()
     cat_labels = dict(ScheduledVisit.Category.choices)
@@ -5728,7 +5729,7 @@ def _scheduled_visit_report(request):
         rows.append([
             i,
             f"SV-{v.pk}",
-            v.visitor_name + (f" ({v.supplier.company_name})" if v.supplier and
+            name_case(v.visitor_name) + (f" ({v.supplier.company_name})" if v.supplier and
                               v.supplier.company_name != v.visitor_name else ''),
             cat_labels.get(v.category, v.category),
             v.expected_date.strftime('%b %d, %Y'),
@@ -5736,7 +5737,7 @@ def _scheduled_visit_report(request):
             v.purpose or '—',
             status,
             arrived,
-            v.created_by.full_name if v.created_by else '—',
+            name_case(v.created_by.full_name) if v.created_by else '—',
         ])
     return rows, ('; '.join(desc) if desc else 'All active visits') + f" · {len(rows)} entries"
 

@@ -4,7 +4,7 @@ import {
   AlertTriangle, CheckCircle, Filter,
   RotateCcw, Search, Bell, X,
   ChevronLeft, ChevronRight, Loader2,
-  FileText, ShieldOff, ClipboardCheck,
+  FileText, ShieldOff, ClipboardCheck, Timer,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
@@ -84,6 +84,67 @@ function OffenseBadge({ num }) {
   if (!num) return null
   const cls = num === 3 ? 'vm-offense-3' : num === 2 ? 'vm-offense-2' : 'vm-offense-1'
   return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`}</span>
+}
+
+// ─── Confiscation column ──────────────────────────────────────────────────────
+// `c` is the server's penalty_state for the person behind the row. The clock
+// ticks here, per cell, rather than in the page: a page-level tick would
+// re-render the whole table (and remount its inline components) every second.
+function countdownText(ms) {
+  const s = Math.floor(ms / 1000)
+  const d = Math.floor(s / 86400)
+  const hh = String(Math.floor((s % 86400) / 3600)).padStart(2, '0')
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return `${d ? `${d}d ` : ''}${hh}:${mm}:${ss} left`
+}
+
+function ConfiscationCell({ c }) {
+  const endsAt = c?.ends_at ? new Date(c.ends_at).getTime() : null
+  const [now, setNow] = useState(() => Date.now())
+  const running = c?.state === 'active' && endsAt !== null && now < endsAt
+
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [running])
+
+  if (!c) return <span className="vm-conf-none">—</span>
+
+  if (c.state === 'lifted') {
+    return (
+      <span className="vm-conf vm-conf-ended">
+        <CheckCircle size={12} /> Lifted early
+        <small>by the CDSO</small>
+      </span>
+    )
+  }
+  if (c.state === 'active' && c.indefinite) {
+    return (
+      <span className="vm-conf vm-conf-active">
+        <ShieldOff size={12} /> Confiscated
+        <small>Indefinite — until the CDSO lifts it</small>
+      </span>
+    )
+  }
+  // 'ended' from the server, or an 'active' one whose clock has run out
+  // while the page was open — the cell flips on its own, no refresh needed.
+  if (!running) {
+    return (
+      <span className="vm-conf vm-conf-ended">
+        <CheckCircle size={12} /> Confiscation ended
+        {endsAt && <small>{format(endsAt, 'MMM d, yyyy h:mm a')}</small>}
+      </span>
+    )
+  }
+  return (
+    <span className="vm-conf vm-conf-active">
+      <Timer size={12} /> Confiscated
+      <strong className="vm-conf-clock">{countdownText(endsAt - now)}</strong>
+      <small>Ends {format(endsAt, 'MMM d, yyyy h:mm a')}</small>
+    </span>
+  )
 }
 
 // ─── OR Entry Modal ────────────────────────────────────────────────────────────
@@ -268,9 +329,6 @@ export default function ViolationsManagement() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-
-  const confiscatedCount = violations.filter(isConfiscated).length
-  const warningCount     = violations.filter(isActiveWarn).length
 
   // The screen's filters, in the query-parameter names the report endpoint
   // reads. ReportExportBar drops anything that is 'all' or empty, and its own
@@ -472,20 +530,6 @@ export default function ViolationsManagement() {
               offence.
             </p>
           </div>
-          {(confiscatedCount > 0 || warningCount > 0) && (
-            <div className="vm-header-stats">
-              {confiscatedCount > 0 && (
-                <span className="vm-stat-chip vm-stat-fee">
-                  <ShieldOff size={13} /> {confiscatedCount} 3rd offence
-                </span>
-              )}
-              {warningCount > 0 && (
-                <span className="vm-stat-chip vm-stat-warn">
-                  <AlertTriangle size={13} /> {warningCount} Active Warnings
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         <ReportExportBar
@@ -508,12 +552,6 @@ export default function ViolationsManagement() {
                 onClick={() => setFilter(opt.value)}
               >
                 {opt.label}
-                {opt.value === 'confiscated' && confiscatedCount > 0 && (
-                  <span className="vm-badge vm-badge-red">{confiscatedCount}</span>
-                )}
-                {opt.value === 'warning' && warningCount > 0 && (
-                  <span className="vm-badge vm-badge-yellow">{warningCount}</span>
-                )}
               </button>
             ))}
             <span className="vm-filter-sep" />
@@ -576,6 +614,7 @@ export default function ViolationsManagement() {
                 <col className="vm-col-type" />
                 <col className="vm-col-notes" />
                 <col className="vm-col-issued" />
+                <col className="vm-col-conf" />
                 <col className="vm-col-status" />
                 <col className="vm-col-actions" />
               </colgroup>
@@ -586,6 +625,7 @@ export default function ViolationsManagement() {
                   <th>Type / Offense</th>
                   <th>Notes</th>
                   <th>Issued</th>
+                  <th>Confiscation</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -621,6 +661,7 @@ export default function ViolationsManagement() {
                         </span>
                       )}
                     </td>
+                    <td><ConfiscationCell c={v.confiscation} /></td>
                     <td><StatusBadge v={v} /></td>
                     <td><ActionButtons v={v} /></td>
                   </tr>

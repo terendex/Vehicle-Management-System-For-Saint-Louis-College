@@ -1211,7 +1211,7 @@ class VehicleLogReportAPITests(TestCase):
                         vehicle_color='Red', vehicle_type='car',
                         entrant_category='visitor')
         rows, _ = self._rows()
-        row = next(r for r in rows if self._col(r, 'Owner') == 'JUAN DELA CRUZ')
+        row = next(r for r in rows if self._col(r, 'Owner') == 'Juan Dela Cruz')   # stored upper-case, reported name-cased
         self.assertEqual(self._col(row, 'Plate'), f'NP-{log.id}')
         self.assertEqual(self._col(row, 'Category'), 'Visitor')
         self.assertIn('No plate', self._col(row, 'Remarks'))

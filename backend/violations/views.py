@@ -93,7 +93,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
     # issued_by / on_duty_guard are read by the serializer too — without them
     # here each row costs an extra user lookup.
     queryset           = Violation.objects.select_related(
-        'vehicle__user', 'issued_by', 'on_duty_guard',
+        'vehicle__user', 'issued_by', 'on_duty_guard', 'owner',   # owner: the Confiscation column reads it
     ).all()
     serializer_class   = ViolationSerializer
     permission_classes = [IsStaffRole]
@@ -544,6 +544,7 @@ def _filter_violations_report(request):
 # Turns rows into the flat cells both report formats take.
 def _violation_report_rows(qs):
     from django.utils import timezone as tz
+    from report_utils import name_case
     # Built once outside the loop: get_..._display() per row would repeat this
     # lookup for every violation in the file.
     type_labels   = dict(Violation.Type.choices)
@@ -557,12 +558,12 @@ def _violation_report_rows(qs):
         # live objects are the fallback for older rows that predate the
         # snapshot, not the other way round.
         plate     = v.identifier or '—'
-        owner     = v.owner_name or (v.vehicle.user.full_name
-                                     if (v.vehicle and v.vehicle.user) else '') or '—'
+        owner     = name_case(v.owner_name or (v.vehicle.user.full_name
+                                               if (v.vehicle and v.vehicle.user) else '')) or '—'
         # 'System' rather than a dash: a row with no issuer was written by the
         # detector, not by a person, and a reader should not be left wondering
         # whose name went missing.
-        issued_by = v.issued_by.full_name if v.issued_by else 'System'
+        issued_by = name_case(v.issued_by.full_name) if v.issued_by else 'System'
         rows.append([
             i,
             tz.localtime(v.issued_at).strftime('%b %d, %Y %I:%M %p'),

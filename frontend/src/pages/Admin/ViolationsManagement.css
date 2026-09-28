@@ -127,16 +127,6 @@
   border-color: #03396C;
 }
 
-.vm-badge {
-  background: #D93B3B;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 10px;
-  line-height: 1.4;
-}
-
 .vm-filter-sep {
   width: 1px;
   height: 18px;
@@ -282,17 +272,18 @@
   /* Fixed layout + <colgroup> keeps every row on the same grid — without it
      the long Notes text steals width from Owner/Issued row by row. */
   table-layout: fixed;
-  min-width: 1080px;
+  min-width: 1200px;
 }
 
 /* Column widths (sum = 100%) */
 .vm-col-plate    { width: 9%; }
-.vm-col-owner    { width: 20%; }
-.vm-col-type     { width: 15%; }
-.vm-col-notes    { width: 20%; }
-.vm-col-issued   { width: 14%; }
+.vm-col-owner    { width: 16%; }
+.vm-col-type     { width: 13%; }
+.vm-col-notes    { width: 16%; }
+.vm-col-issued   { width: 13%; }
+.vm-col-conf     { width: 13%; }
 .vm-col-status   { width: 10%; }
-.vm-col-actions  { width: 12%; }
+.vm-col-actions  { width: 10%; }
 
 .vm-table th {
   background: #F4F8FB;
@@ -859,29 +850,35 @@
 }
 .vm-btn-lift:hover:not(:disabled) { background: #E9E1F7; }
 
-/* ── Header stats ────────────────────────────────────────────────── */
-.vm-header-stats {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.vm-stat-chip {
+/* ── Confiscation column ─────────────────────────────────────────── */
+/* A pill-coloured label on top, the live clock and the end date beneath,
+   stacked so the countdown never shares a line with the label. */
+.vm-conf {
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   font-size: 12px;
   font-weight: 700;
-  padding: 5px 12px;
-  border-radius: 20px;
-  white-space: nowrap;
+  line-height: 1.3;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
 }
-.vm-stat-fee  { background: #FADEDE; color: #9B1C1C; border: 1.5px solid #F3C0C0; }
-.vm-stat-warn { background: #FDF0BE; color: #7A5C00; border: 1.5px solid #F7E08A; }
-
-/* ── Badge colours ───────────────────────────────────────────────── */
-.vm-badge-red    { background: #C62828; color: #fff; }
-.vm-badge-yellow { background: #8A6B00; color: #fff; }
+.vm-conf svg { display: inline; vertical-align: -2px; margin-right: 4px; }
+.vm-conf small {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+}
+.vm-conf-clock {
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;   /* digits the same width, so the clock does not jitter */
+}
+.vm-conf-active { background: #FADEDE; color: #9B1C1C; border-color: #F3C0C0; }
+.vm-conf-ended  { background: #EFF9F5; color: #0F7A5A; border-color: #CBEBDD; }
+.vm-conf-none   { color: #9AB0C2; }
 
 /* ── Fine zero ───────────────────────────────────────────────────── */
 .vm-fine-zero { background: #EEF4F9; color: #64839C; border-color: #D3E1EC; }
@@ -901,7 +898,7 @@
 .vm-or-input:focus { border-color: #03396C; }
 
 /* ── Responsive ──────────────────────────────────────────────────
-   The seven-column table carries its own min-width and scrolls inside
+   The eight-column table carries its own min-width and scrolls inside
    .vm-card, so the narrow screens only tighten that grid. The rest of
    the work is the toolbar — five filter buttons, a period switcher, a
    search box and a refresh — which is what falls apart first. */
@@ -910,7 +907,7 @@
 @media (max-width: 900px) {
   /* Tighter cells before the columns start clipping their pills. */
   .vm-table {
-    min-width: 980px;
+    min-width: 1100px;
   }
 
   .vm-table th,
@@ -920,10 +917,6 @@
 
   .vm-page {
     gap: 1.25rem;
-  }
-
-  .vm-header-stats {
-    width: 100%;
   }
 
   /* Filters above, search below, each owning a full row. Sharing one
@@ -969,7 +962,7 @@
 /* --- Mobile --- */
 @media (max-width: 640px) {
   .vm-table {
-    min-width: 840px;
+    min-width: 960px;
     font-size: 0.8rem;
   }
 

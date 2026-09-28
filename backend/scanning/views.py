@@ -2099,6 +2099,7 @@ VEHICLE_LOG_REPORT_CAP = 5000
 # Turns merged visits into the flat cells both report formats take.
 def _vehicle_log_report_rows(logs, exit_by_entry_id):
     from django.utils import timezone as tz
+    from report_utils import name_case
     from .models import Gate
 
     # All three label maps are built once, before the loop. gate_labels in
@@ -2126,8 +2127,8 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
         # A hand-recorded plateless vehicle has no owner account — the driver's
         # name the guard wrote down is the only name it has, and printing
         # 'Unregistered' over the top of it loses the one identifier there is.
-        owner = (getattr(getattr(log.vehicle, 'user', None), 'full_name', '')
-                 or log.driver_name or 'Unregistered')
+        owner = name_case(getattr(getattr(log.vehicle, 'user', None), 'full_name', '')
+                          or log.driver_name) or 'Unregistered'
 
         # Remarks collects everything that does not have a column of its own,
         # joined at the end. Order is deliberate: what the vehicle was, then
@@ -2141,7 +2142,7 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
                 remarks.append(log.entry_note)
         if log.scheduled_visit_id:
             remarks.append(f'Expected visit SV-{log.scheduled_visit_id}'
-                           + (f' ({log.scheduled_visit.visitor_name})' if log.scheduled_visit else ''))
+                           + (f' ({name_case(log.scheduled_visit.visitor_name)})' if log.scheduled_visit else ''))
         if log.is_override:
             remarks.append(f'Override: {log.override_reason}' if log.override_reason else 'Override')
         if log.denied_reason:
@@ -2174,7 +2175,7 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             # Stored as authorized; the booking is what makes it a scheduled one.
             ('Scheduled Entry' if log.scheduled_visit_id and log.status == AccessLog.Status.AUTHORIZED
              else status_labels.get(log.status, log.status)),
-            getattr(log.on_duty_guard, 'full_name', '') or '',
+            name_case(getattr(log.on_duty_guard, 'full_name', '')),
             # Time only, no date: the entry column already carries the date,
             # and a visit that crosses midnight is rare enough to read from it.
             tz.localtime(exit_time).strftime('%I:%M %p') if exit_time else '',

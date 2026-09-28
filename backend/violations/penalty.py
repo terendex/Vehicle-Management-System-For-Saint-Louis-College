@@ -264,6 +264,17 @@ def visitor_violations(plate='', conduction='', name=''):
             .exclude(status__in=Violation.INACTIVE_STATUSES))
 
 
+def _visitor_term(rows) -> tuple:
+    """(level, last day) of the penalty these standing violations add up to,
+    served or not. `rows` are newest first; the term counts from the newest."""
+    level = min(len(rows), 3)
+    issued_on = timezone.localtime(rows[0]['issued_at']).date()
+    if level in CONFISCATION_DAYS:
+        from datetime import timedelta
+        return level, issued_on + timedelta(days=CONFISCATION_DAYS[level])
+    return level, _period_end()                  # 3rd strike: the rest of the period, or indefinite
+
+
 def visitor_confiscation(plate='', conduction='', name='') -> dict | None:
     """The penalty a visitor is serving right now, or None.
 
@@ -277,14 +288,8 @@ def visitor_confiscation(plate='', conduction='', name='') -> dict | None:
     if not rows:
         return None
 
-    level = min(len(rows), 3)
+    level, until = _visitor_term(rows)
     newest = rows[0]
-    issued_on = timezone.localtime(newest['issued_at']).date()
-    if level in CONFISCATION_DAYS:
-        from datetime import timedelta
-        until = issued_on + timedelta(days=CONFISCATION_DAYS[level])
-    else:
-        until = _period_end()                    # 3rd strike: the rest of the period, or indefinite
 
     today = timezone.localdate()
     if until is not None and today > until:
@@ -326,3 +331,66 @@ def confiscated_owners():
             .filter(role=User.Role.VEHICLE_OWNER, confiscation_level__gt=0)   # owners with a penalty on record
             .filter(Q(confiscated_until__isnull=True) | Q(confiscated_until__gte=today))   # indefinite, or not yet expired
             .order_by('-confiscated_at'))        # most recently confiscated first
+
+
+# ── Penalty state for one violation row ──────────────────────────────────────
+#
+# What the violations table shows in its Confiscation column: whether the
+# person this row names is still serving, and until the exact moment it ends,
+# so the screen can count down and flip to "ended" without a refresh.
+
+def _term_payload(level, until, today):
+    """The shared shape: state, level, last day, and the instant it ends."""
+    if until is None:
+        return {'state': 'active', 'level': level, 'indefinite': True,
+                'until': None, 'ends_at': None}
+    from datetime import datetime, time, timedelta
+    # The last day is inclusive (User.is_confiscated), so the penalty ends at
+    # the midnight that starts the day after it — campus-local.
+    ends_at = timezone.make_aware(datetime.combine(until + timedelta(days=1), time.min))
+    return {'state': 'active' if today <= until else 'ended', 'level': level,
+            'indefinite': False, 'until': until.isoformat(), 'ends_at': ends_at.isoformat()}
+
+
+def penalty_state(violation, cache=None) -> dict | None:
+    """The penalty the person behind this violation is under, or None.
+
+    None for anything that does not sit on the ladder: an old-style type, a
+    cleared / lifted / resolved row, or a deleted owner's row (no account left
+    to penalise, and not a visitor either). Otherwise one of:
+      active  — still serving; `ends_at` is when it runs out (None = indefinite)
+      ended   — served in full
+      lifted  — the CDSO ended it early while this offence still stands
+    Every row for the same person reports the same penalty: a newer offence
+    replaces the running one rather than adding a second.
+
+    `cache` is a dict the caller keeps across rows, so a page of one owner's
+    violations costs one lookup rather than one per row.
+    """
+    if (violation.violation_type not in NEW_STYLE_TYPES or violation.is_resolved
+            or violation.status in Violation.INACTIVE_STATUSES):
+        return None
+    cache = {} if cache is None else cache
+    today = timezone.localdate()
+
+    owner = violation.owner or (violation.vehicle.user if violation.vehicle_id else None)
+    if owner is not None:
+        key = ('owner', owner.pk)
+        if key not in cache:
+            if not owner.confiscation_level:
+                cache[key] = {'state': 'lifted', 'level': 0, 'indefinite': False,
+                              'until': None, 'ends_at': None}
+            else:
+                cache[key] = _term_payload(owner.confiscation_level, owner.confiscated_until, today)
+        return cache[key]
+
+    if violation.owner_email:
+        return None                              # a deleted owner's row: nobody left to serve it
+
+    key = ('visitor', violation.plate_number, violation.conduction_number, violation.owner_name)
+    if key not in cache:
+        rows = list(visitor_violations(violation.plate_number, violation.conduction_number,
+                                       violation.owner_name)
+                    .order_by('-issued_at').values('issued_at'))
+        cache[key] = _term_payload(*_visitor_term(rows), today) if rows else None
+    return cache[key]

@@ -49,6 +49,25 @@ def sentence_case(value, blank='—'):
     return text[:1].upper() + text[1:]
 
 
+# Generational suffixes that stay upper-case when a name is re-cased.
+_NAME_KEEP_UPPER = {'II', 'III', 'IV', 'V', 'VI'}
+
+
+def name_case(value):
+    """A person's name as "Juan Dela Cruz III" rather than "JUAN DELA CRUZ III".
+
+    Names are stored upper-case by the forms' convention, which reads as
+    shouting in a report beside the sentence-case columns around it. Only an
+    ALL-CAPS value is re-cased: a name with any lower-case letter was typed
+    that way on purpose ("McDonald") and title() would flatten it. Plates and
+    company names never come through here - acronyms are common in both.
+    """
+    text = ('' if value is None else str(value)).strip()
+    if not text or text != text.upper():
+        return text
+    return ' '.join(w if w in _NAME_KEEP_UPPER else w.title() for w in text.split())
+
+
 def report_filename(report_name, ext):
     """Filesystem-safe, human-readable report filename with date + time.
 
@@ -139,35 +158,79 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     accepted for API parity with the PDF builder but are not rendered.
     """
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
     ws.title = sheet_title
     n = len(headers)
-    last_col = chr(ord('A') + n - 1)
-
-    # ── Column headers (row 1) ───────────────────────────────────────
     header_row = 1
+    last_row = header_row + len(rows)
+
+    # ── Column widths ────────────────────────────────────────────────
+    # Fitted to the longest value in each column, so "Gate 1 — Main Entrance"
+    # and a full guard name are not cut off at the next cell. The caller's
+    # width is the floor, and the cap keeps one long remark from making a
+    # column a screen wide: anything past it wraps instead. The last column
+    # (Remarks / Details) is the free-text one and gets the widest cap.
+    def text_len(val):
+        return max((len(line) for line in str(val).split('\n')), default=0) if val is not None else 0
+
+    widths = []
+    for c in range(n):
+        longest = max([text_len(headers[c])] + [text_len(row[c]) for row in rows if c < len(row)])
+        floor = col_widths[c] if c < len(col_widths) else 8
+        cap = 60 if c == n - 1 else 40
+        widths.append(min(max(floor, longest + 2), cap))
+        ws.column_dimensions[get_column_letter(c + 1)].width = widths[-1]
+
+    # ── Styling: the PDF's table, in cells ───────────────────────────
+    # Same brand header, alternating row tint and hairline rules as
+    # branded_pdf_response, so the two formats read as one report.
     header_fill = PatternFill('solid', fgColor=REPORT_BRAND_HEX)
+    band_fill   = PatternFill('solid', fgColor='F4F5FA')
+    rule        = Side(style='thin', color='E5E8F0')
+    border      = Border(left=rule, right=rule, top=rule, bottom=rule)
+    head_font   = Font(bold=True, color='FFFFFF', size=11)
+    body_font   = Font(size=10)
+
     for col, title in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=col, value=title)
-        cell.font = Font(bold=True, color='FFFFFF', size=11)
+        cell.font = head_font
         cell.fill = header_fill
-        cell.alignment = Alignment(vertical='center')
+        cell.border = border
+        cell.alignment = Alignment(vertical='center', horizontal='center' if col == 1 else 'left')
+    ws.row_dimensions[header_row].height = 22
 
-    for i, width in enumerate(col_widths):
-        ws.column_dimensions[chr(ord('A') + i)].width = width
-    ws.freeze_panes = f'A{header_row + 1}'
-
-    wrap = Alignment(wrap_text=True, vertical='top')
-    r = header_row
-    for row in rows:
-        r += 1
+    for i, row in enumerate(rows):
+        r = header_row + 1 + i
         for col, val in enumerate(row, start=1):
             cell = ws.cell(row=r, column=col, value=val)
-            if col == n:
-                cell.alignment = wrap
+            cell.font = body_font
+            cell.border = border
+            if i % 2:
+                cell.fill = band_fill
+            # Wrap only what does not fit, so short rows stay one line tall.
+            cell.alignment = Alignment(
+                vertical='top',
+                horizontal='center' if col == 1 else 'left',   # '#' column
+                wrap_text=text_len(val) + 2 > widths[col - 1],
+            )
+
+    # Frozen header plus Excel's own filter dropdowns on every column: the
+    # file is already narrowed to the screen's filters, and this lets the
+    # reader narrow it further (one guard, one gate) without re-exporting.
+    ws.freeze_panes = f'A{header_row + 1}'
+    ws.auto_filter.ref = f'A{header_row}:{get_column_letter(n)}{max(last_row, header_row + 1)}'
+
+    # Printing: landscape, one page wide, header repeated on every page.
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4    # the PDF's paper; without one Excel may drop the orientation
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f'{header_row}:{header_row}'
 
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename="{filename}"'

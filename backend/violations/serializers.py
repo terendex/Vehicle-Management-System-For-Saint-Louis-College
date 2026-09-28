@@ -15,6 +15,9 @@ class ViolationSerializer(serializers.ModelSerializer):
     issued_by_name  = serializers.CharField(source='issued_by.full_name', read_only=True, default='')
     issued_by_code  = serializers.CharField(source='issued_by.user_code', read_only=True, default='')
     on_duty_guard_name = serializers.CharField(source='on_duty_guard.full_name', read_only=True, default='')
+    # The penalty the person behind this row is under (penalty.penalty_state),
+    # for the table's Confiscation column and its countdown.
+    confiscation    = serializers.SerializerMethodField()
 
     class Meta:
         model  = Violation
@@ -53,6 +56,15 @@ class ViolationSerializer(serializers.ModelSerializer):
         recorded = obj._gate_recorded_name()
         return recorded or 'Unregistered vehicle'
 
+
+    def get_confiscation(self, obj):
+        from .penalty import penalty_state      # local: penalty imports this app's models
+        # DRF reuses this child serializer for every row of a list, so the
+        # cache on the instance spans the whole response — one lookup per
+        # person, not per row.
+        if not hasattr(self, '_penalty_cache'):
+            self._penalty_cache = {}
+        return penalty_state(obj, self._penalty_cache)
 
     def get_owner_email(self, obj):
         if obj.owner_email:
