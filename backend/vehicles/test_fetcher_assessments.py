@@ -63,7 +63,7 @@ class DocumentUploadIsClosedTests(TestCase):
             label='Fetcher assessment tests', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='fetcher', full_name='FETCHER, PARENT',
+            registrant_type='fetcher', last_name='FETCHER', first_name='PARENT',
             email='fetcher-assess@example.com', plate_number='FTA 0001',
             vehicle_type='car', drivers_license='N01-20-900001',
             fetcher_type='drop_and_go', fetcher_students=list(STUDENTS),
@@ -123,7 +123,7 @@ class FetcherEmailTests(TestCase):
 
     def setUp(self):
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='fetcher', full_name='FETCHER, PARENT',
+            registrant_type='fetcher', last_name='FETCHER', first_name='PARENT',
             email='fetcher-mail@example.com', plate_number='FTM 0001',
             vehicle_type='car', drivers_license='N01-20-900002',
             fetcher_type='standby', fetcher_students=list(STUDENTS),
@@ -169,7 +169,7 @@ class WithheldFieldsAreAbsentFromEmailsTests(TestCase):
 
     def setUp(self):
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='student', full_name='LEGACY, TESTER',
+            registrant_type='student', last_name='LEGACY', first_name='TESTER',
             email='legacy-test@example.com', plate_number='LEG 0001',
             vehicle_type='car', drivers_license='N01-20-900004',
             # Values from before the DPO change, as an older row would carry them.
@@ -221,7 +221,7 @@ class PendingAcknowledgementPdfTests(TestCase):
 
     def setUp(self):
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='student', full_name='ACK, TESTER',
+            registrant_type='student', last_name='ACK', first_name='TESTER',
             email='ack-test@example.com', plate_number='ACK 0001',
             vehicle_type='car', drivers_license='N01-20-900003',
             program_year='BSIT - 4',

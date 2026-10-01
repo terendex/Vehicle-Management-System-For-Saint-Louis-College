@@ -22,6 +22,7 @@ from accounts.models import User
 from scanning.entry_logic import classify_entrant
 from scanning.models import AccessLog, Office, VisitorPass
 from vehicles.models import Supplier, SupplierPlate, Vehicle
+from accounts.names import name_kwargs
 
 LOOKUP = '/api/scan/owner-lookup/'
 UNREC  = '/api/scan/unrecognized/'
@@ -29,7 +30,7 @@ UNREC  = '/api/scan/unrecognized/'
 
 def _owner(email, name, owner_type):
     return User.objects.create_user(
-        email=email, full_name=name, password='x',
+        email=email, **name_kwargs(name), password='x',
         role='vehicle_owner', owner_type=owner_type)
 
 
@@ -105,7 +106,7 @@ class OwnerLookupTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.guard = User.objects.create_user(
-            email='lookup-guard@slc.edu.ph', full_name='GUARD',
+            email='lookup-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD',
             password='x', role='security')
         cls.owner = _owner('juan@slc.edu.ph', 'JUAN DELA CRUZ', 'student')
         cls.vehicle = _vehicle('ABC1234', cls.owner)
@@ -119,7 +120,7 @@ class OwnerLookupTests(APITestCase):
         self.assertEqual(r.data['count'], 1)
         row = r.data['results'][0]
         self.assertEqual(row['identifier'], 'ABC1234')
-        self.assertEqual(row['owner_name'], 'JUAN DELA CRUZ')
+        self.assertEqual(row['owner_name'], 'DELA CRUZ, JUAN')   # LAST, FIRST
         self.assertEqual(row['classification'], 'student')
 
     def test_lookup_by_partial_name_is_case_insensitive(self):
@@ -197,7 +198,7 @@ class UnrecognizedVehicleTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.guard = User.objects.create_user(
-            email='unrec-guard@slc.edu.ph', full_name='GUARD',
+            email='unrec-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD',
             password='x', role='security', gate_assignment='gate1')
 
     def setUp(self):
@@ -283,7 +284,7 @@ class UnrecognizedVehicleTests(APITestCase):
     def test_another_gate_does_not_see_it(self):
         self._record()
         other = User.objects.create_user(
-            email='gate4-guard@slc.edu.ph', full_name='GUARD 4',
+            email='gate4-guard@slc.edu.ph', last_name='4', first_name='GUARD',
             password='x', role='security', gate_assignment='gate4')
         self.client.force_authenticate(other)
         self.assertEqual(self.client.get(UNREC).data, [])

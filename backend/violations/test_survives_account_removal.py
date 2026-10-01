@@ -26,13 +26,14 @@ from vehicles.models import Vehicle
 from vehicles.serializers import VehicleRegistrationSerializer
 from violations.models import Violation
 from violations.serializers import ViolationSerializer
+from accounts.names import name_kwargs
 
 User = get_user_model()
 
 
 def _owner(email='viol-owner@slc.edu.ph', name='DELA CRUZ, JUAN'):
     return User.objects.create_user(
-        email=email, full_name=name, password='x', role='vehicle_owner')
+        email=email, **name_kwargs(name), password='x', role='vehicle_owner')
 
 
 class SnapshotTests(TestCase):

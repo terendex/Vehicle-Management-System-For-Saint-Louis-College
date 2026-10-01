@@ -35,7 +35,7 @@ class _VisitorCase(APITestCase):
             datetime.combine(timezone.localdate(), time(13, 0)),
             timezone.get_current_timezone()))
         self.guard = User.objects.create_user(
-            email='vc-guard@slc.edu.ph', full_name='GUARD ONE', password='x',
+            email='vc-guard@slc.edu.ph', last_name='ONE', first_name='GUARD', password='x',
             role='security', gate_assignment='main')
         self.client.force_authenticate(self.guard)
 

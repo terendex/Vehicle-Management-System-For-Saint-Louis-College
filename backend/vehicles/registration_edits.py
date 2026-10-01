@@ -63,13 +63,24 @@ def _text(value):
 # cross-field rules (either/or plate, the authorized driver, uniqueness) live in
 # `clean_changes`, which can see the whole proposal and the row it applies to.
 
-def _clean_full_name(value, registration):
-    name = _text(value).upper()          # the form's naming convention
+def _clean_last_name(value, registration):
+    name = ' '.join(_text(value).upper().split())   # the form's naming convention
     if not name:
-        return None, 'Your full name cannot be blank.'
-    if len(name) < 2:
-        return None, 'Enter your full name.'
+        return None, 'Your last name cannot be blank.'
     return name, None
+
+
+def _clean_first_name(value, registration):
+    name = ' '.join(_text(value).upper().split())
+    if not name:
+        return None, 'Your first name cannot be blank.'
+    return name, None
+
+
+def _clean_middle_initial(value, registration):
+    # Optional; "Santos" or "s." is reduced to its letter, as on the form.
+    from accounts.names import clean_initial
+    return clean_initial(_text(value)), None
 
 
 def _clean_license(value, registration):
@@ -85,6 +96,18 @@ def _clean_program_year(value, registration):
     text = _text(value)
     if not text:
         return None, 'Program and year cannot be blank.'
+    # A college student's program comes from the official list, on an edit as
+    # on the form. Other levels keep their composed text ("SHS - STEM - Grade
+    # 11"), which has no list of its own.
+    # An older registration's value that is not on today's list (e.g. "BSCS -
+    # 2") passes through when it is unchanged, so it never blocks an unrelated
+    # edit; it only has to come from the list once someone changes it.
+    if registration.student_level == 'college' and text != (registration.program_year or ''):
+        from .college_programs import INVALID_MESSAGE, normalize_program_year
+        normalized = normalize_program_year(text)
+        if normalized is None:
+            return None, INVALID_MESSAGE
+        return normalized, None
     return text, None
 
 
@@ -226,7 +249,9 @@ class Field:
 
 EDITABLE_FIELDS = {
     f.name: f for f in (
-        Field('full_name',           'Full Name',                _clean_full_name),
+        Field('last_name',           'Last Name',                _clean_last_name),
+        Field('first_name',          'First Name',               _clean_first_name),
+        Field('middle_initial',      'Middle Initial',           _clean_middle_initial),
         Field('drivers_license',     "Driver's License",         _clean_license),
         Field('program_year',        'Program & Year',           _clean_program_year, _student_only),
         Field('department',          'Department',               _clean_department,   _employee_only),

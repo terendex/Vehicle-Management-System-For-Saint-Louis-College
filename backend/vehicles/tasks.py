@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from celery import shared_task
 from django.db import models
@@ -181,6 +182,29 @@ def auto_archive_expired_accounts():
     return {"archived": len(due), "banned": len(banned)}
 
 
+@shared_task(name="vehicles.expire_unpaid_registrations")
+def expire_unpaid_registrations():
+    """Expire online applications whose 3-day payment deadline has passed.
+
+    Hourly on the in-process scheduler (see scheduler.HOURLY_JOBS); the rule
+    and the work are in vehicles.registration_deadline. Idempotent.
+
+    Hourly claims put 24 rows a day in the job ledger, which nothing else ever
+    reads after the hour is over, so this job clears out its own week-old ones.
+    """
+    from datetime import timedelta
+
+    from .models import DailyJobRun
+    from .registration_deadline import expire_overdue
+
+    expired = expire_overdue()
+    DailyJobRun.objects.filter(
+        job__startswith='expire_unpaid_registrations:',
+        run_date__lt=timezone.localdate() - timedelta(days=7),
+    ).delete()
+    return {"expired": len(expired)}
+
+
 @shared_task(name="vehicles.auto_manage_events")
 def auto_manage_events():
     """Point every event's stored flags at its date: today's active, past ones
@@ -279,3 +303,58 @@ def auto_backup():
     log.info("[auto_backup] wrote %s (%d bytes); pruned %d old backup(s)",
              name, size, len(removed))
     return {"created": name, "bytes": size, "pruned": len(removed)}
+
+
+@shared_task(name="vehicles.scheduled_backup")
+def scheduled_backup():
+    """Take the calendar-scheduled backup into the chosen folder, if one is due.
+
+    Separate from auto_backup and deliberately different in kind: that one is
+    "at least N since the last", this one is pinned to the calendar — daily at
+    a time, weekly on a weekday, monthly on a day — and can write somewhere
+    other than the app's own folder.
+
+    Due means: the most recent slot the schedule called for has no scheduled
+    backup in the folder taken at or after it. That gives the same catch-up as
+    every other job here — a PC switched off at 5 PM on Friday takes Friday's
+    backup when it next boots — and it cannot double up, because the file
+    itself is the record of the slot being done. Switching the schedule on (or
+    pointing it at a new folder) after today's time has passed therefore takes
+    one straight away, which doubles as proof the folder works.
+
+    Missing drive or unwritable folder: raises, so the scheduler logs it and
+    retries on the next pass instead of quietly marking the day done. The one
+    exception is a folder that is not a path on this machine at all — the
+    cloud server reading a Windows path set on the campus PC — which is not
+    this machine's job and is skipped.
+    """
+    from accounts.backup_utils import (
+        BackupFolderError, SCHEDULED_PREFIX, latest_scheduled_backup, prune_scheduled,
+        scheduled_dir, scheduled_slots, write_backup,
+    )
+    from django.utils.dateparse import parse_datetime
+    from .models import SystemSettings
+
+    cfg = SystemSettings.get()
+    if cfg.scheduled_backup_frequency == 'off':
+        return {"skipped": "scheduled backups are off"}
+
+    folder_setting = (cfg.scheduled_backup_folder or '').strip()
+    if folder_setting and not os.path.isabs(folder_setting):
+        return {"skipped": "folder is not on this machine"}
+    try:
+        folder = scheduled_dir(folder_setting)
+    except BackupFolderError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+    previous, upcoming = scheduled_slots(cfg)
+    latest = latest_scheduled_backup(folder)
+    if latest and parse_datetime(latest['created_at']) >= previous:
+        return {"skipped": "not due", "next_due": upcoming.isoformat()}
+
+    name, size = write_backup(SCHEDULED_PREFIX, folder=folder)
+    removed = prune_scheduled(cfg.scheduled_backup_keep, folder)
+
+    log.info("[scheduled_backup] wrote %s to %s (%d bytes); pruned %d old backup(s)",
+             name, folder, size, len(removed))
+    return {"created": name, "folder": folder, "bytes": size, "pruned": len(removed)}

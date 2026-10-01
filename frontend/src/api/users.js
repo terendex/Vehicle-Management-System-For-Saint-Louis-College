@@ -30,7 +30,7 @@ export const usersApi = {
     return data
   },
 
-  /** Update user details (full_name, email, role, optional photo). */
+  /** Update user details (last_name, first_name, middle_initial, email, role, optional photo). */
   updateUser: async (id, userData) => {
     if (userData.photo instanceof File) {
       const fd = new FormData()

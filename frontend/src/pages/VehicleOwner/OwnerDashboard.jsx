@@ -224,7 +224,7 @@ export default function OwnerDashboard() {
     if (!hasChangeEdits) return
 
     const problems = detailFormProblems(
-      changeValues, changeInfo?.values || {}, changeInfo?.editable || [])
+      changeValues, changeInfo?.values || {}, changeInfo?.editable || [], changeInfo?.student_level)
     if (await notify.validation(problems, { title: 'Check your details' })) return
 
     setChangeSubmitting(true)
@@ -506,6 +506,8 @@ export default function OwnerDashboard() {
                 errors={changeErrors}
                 disabled={changeSubmitting}
                 idPrefix="odc"
+                studentLevel={changeInfo?.student_level}
+                original={changeInfo?.values || {}}
               />
 
               {hasChangeEdits && (

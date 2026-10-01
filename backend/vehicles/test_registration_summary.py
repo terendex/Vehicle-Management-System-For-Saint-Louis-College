@@ -21,6 +21,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from vehicles.models import RegistrationPeriod, VehicleRegistration
+from accounts.names import name_kwargs
 
 
 # The database now refuses values outside the choices (accounts/db_choice_checks.py),
@@ -41,7 +42,7 @@ class RegistrationSummaryTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.admin = User.objects.create_user(
-            email='summaryadmin@slc.edu.ph', full_name='Summary Admin',
+            email='summaryadmin@slc.edu.ph', last_name='Admin', first_name='Summary',
             password='pw', role='admin', is_staff=True, is_superuser=True)
         self.client.force_authenticate(self.admin)
 
@@ -61,7 +62,7 @@ class RegistrationSummaryTests(TestCase):
         i = self._n
         return VehicleRegistration.objects.create(
             registrant_type=registrant_type, status=status,
-            full_name=f'COUNTED, TESTER {i}', email=f'counted{i}@slc.edu.ph',
+            **name_kwargs(f'COUNTED, TESTER {i}'), email=f'counted{i}@slc.edu.ph',
             plate_number=f'CNT {i:04d}', vehicle_type='car',
             contact_number='+639171234567', address='San Fernando, La Union',
             drivers_license=f'N01-20-90{i:04d}', **over)
@@ -256,7 +257,7 @@ class RegistrationSummaryTests(TestCase):
 
     def test_non_admin_cannot_read_the_counts(self):
         owner = User.objects.create_user(
-            email='summaryowner@slc.edu.ph', full_name='Summary Owner',
+            email='summaryowner@slc.edu.ph', last_name='Owner', first_name='Summary',
             password='pw', role='vehicle_owner')
         self.client.force_authenticate(owner)
         res = self.client.get('/api/vehicles/registrations/summary/')
@@ -319,7 +320,7 @@ class RegistrationPeriodEditTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.admin = User.objects.create_user(
-            email='periodadmin@slc.edu.ph', full_name='Period Admin',
+            email='periodadmin@slc.edu.ph', last_name='Admin', first_name='Period',
             password='pw', role='admin', is_staff=True, is_superuser=True)
         self.client.force_authenticate(self.admin)
         today = timezone.localdate()
@@ -417,7 +418,7 @@ class RegistrationPeriodEditTests(TestCase):
 
     def test_non_admin_cannot_edit_a_period(self):
         owner = User.objects.create_user(
-            email='periodowner@slc.edu.ph', full_name='Period Owner',
+            email='periodowner@slc.edu.ph', last_name='Owner', first_name='Period',
             password='pw', role='vehicle_owner')
         self.client.force_authenticate(owner)
         res = self.patch({'label': 'S.Y. 2099–2100'})

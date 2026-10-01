@@ -43,7 +43,7 @@ class ParkingFlagToGateRefusalTests(_VisitorCase):
 
     def test_an_owner_flagged_in_parking_is_refused_at_the_gate(self):
         owner = User.objects.create_user(
-            email='pf-owner@slc.edu.ph', full_name='PARKED OWNER', password='x',
+            email='pf-owner@slc.edu.ph', last_name='OWNER', first_name='PARKED', password='x',
             role='vehicle_owner', owner_type='student')
         Vehicle.objects.create(plate_number='OWN4321', vehicle_type='car',
                                is_authorized=True, user=owner)
@@ -53,7 +53,7 @@ class ParkingFlagToGateRefusalTests(_VisitorCase):
         owner.refresh_from_db()
         self.assertTrue(owner.is_confiscated)                 # confiscated on the spot
         row, = self._card()
-        self.assertEqual((row['kind'], row['full_name']), ('account', 'PARKED OWNER'))
+        self.assertEqual((row['kind'], row['full_name']), ('account', 'OWNER, PARKED'))
 
         self._set_clock(self.now + timedelta(hours=1))
         res = self._enter('OWN4321')

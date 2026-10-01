@@ -42,4 +42,11 @@ app.conf.beat_schedule = {
         "task":     "vehicles.auto_backup",
         "schedule": crontab(minute=30),
     },
+    # The calendar-pinned backup to the chosen folder. Checked every minute
+    # because the admin picks the exact time; the task returns at once when
+    # the latest slot already has its file.
+    "scheduled-backup-every-minute": {
+        "task":     "vehicles.scheduled_backup",
+        "schedule": crontab(),
+    },
 }

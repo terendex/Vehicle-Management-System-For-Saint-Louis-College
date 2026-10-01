@@ -12,6 +12,7 @@ import useTwofaStore from '../../stores/twofaStore'
 import useAuthStore from '../../stores/authStore'
 import { useGates } from '../../hooks/useGates'
 import { toUpperName, normalizeEmail } from '../../utils/textFormat'
+import { EMPTY_NAME, composeFullName, namePartsOf, namePayload, nameProblems } from '../../utils/names'
 import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
@@ -22,8 +23,39 @@ import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
 
 const DEFAULT_AGENCY = 'RANNIAG'
-const EMPTY_GUARD = { full_name: '', email: '', agency: DEFAULT_AGENCY }
-const EMPTY_ADMIN = { full_name: '', email: '' }
+const EMPTY_GUARD = { ...EMPTY_NAME, email: '', agency: DEFAULT_AGENCY }
+const EMPTY_ADMIN = { ...EMPTY_NAME, email: '' }
+const NAME_ERROR_FIELDS = ['last_name', 'first_name', 'middle_initial']
+
+/* The name as three boxes — last, first, middle initial — the way accounts
+   store it. Shared by the add-guard, replace-CDSO and edit-user forms. */
+function NameInputs({ form, setForm, errors, upper = true }) {
+  const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }))
+  const tidy = (field) => (e) => upper && setForm(f => ({ ...f, [field]: toUpperName(e.target.value) }))
+  return (
+    <div className="um-name-row">
+      <div className="um-form-group">
+        <label>Last Name <span className="um-required">*</span></label>
+        <input className={`um-form-input ${errors.last_name ? 'error' : ''}`}
+          value={form.last_name} onChange={set('last_name')} onBlur={tidy('last_name')}
+          placeholder="e.g. Dela Cruz" autoComplete="family-name" />
+      </div>
+      <div className="um-form-group">
+        <label>First Name <span className="um-required">*</span></label>
+        <input className={`um-form-input ${errors.first_name ? 'error' : ''}`}
+          value={form.first_name} onChange={set('first_name')} onBlur={tidy('first_name')}
+          placeholder="e.g. Juan" autoComplete="given-name" />
+      </div>
+      <div className="um-form-group um-name-initial">
+        <label>M.I.</label>
+        <input className={`um-form-input ${errors.middle_initial ? 'error' : ''}`}
+          value={form.middle_initial} maxLength={1}
+          onChange={e => setForm(f => ({ ...f, middle_initial: e.target.value.replace(/[^\p{L}]/gu, '').toUpperCase() }))}
+          placeholder="S" aria-label="Middle initial" />
+      </div>
+    </div>
+  )
+}
 
 /* ─── Main Component ───────────────────────────────────────────── */
 const PAGE_TABS = [
@@ -301,7 +333,7 @@ export default function UserManagement() {
   /* ── profile edit ── */
   const startEdit = () => {
     setEditForm({
-      full_name: selectedUser.full_name || '',
+      ...namePartsOf(selectedUser),
       email:     selectedUser.email || '',
       agency:    selectedUser.agency || DEFAULT_AGENCY,
     })
@@ -313,8 +345,7 @@ export default function UserManagement() {
   }
 
   const handleSaveEdit = async () => {
-    const errors = {}
-    if (!editForm.full_name.trim()) errors.full_name = 'Full name is required.'
+    const errors = nameProblems(editForm)
     if (!editForm.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(editForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (selectedUser.role === 'security' && !editForm.agency.trim()) errors.agency = 'Agency is required.'
     setFormErrors(errors)
@@ -322,19 +353,19 @@ export default function UserManagement() {
     setSubmitting(true)
     try {
       const payload = {
-        full_name: editForm.full_name.trim(),
+        ...namePayload(editForm),
         email:     editForm.email.trim(),
       }
       if (selectedUser.role === 'security') payload.agency = editForm.agency.trim()
       await usersApi.updateUser(selectedUser.id, payload)
-      setSelectedUser({ ...selectedUser, ...payload })
+      setSelectedUser({ ...selectedUser, ...payload, full_name: composeFullName(payload) })
       setEditMode(false)
       fetchUsers()
       toast.success('User details updated.')
     } catch (err) {
       const data = err.response?.data
       const fieldErrors = {}
-      for (const f of ['full_name', 'email', 'agency']) {
+      for (const f of [...NAME_ERROR_FIELDS, 'email', 'agency']) {
         if (data?.[f]) fieldErrors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
       }
       if (Object.keys(fieldErrors).length > 0) {
@@ -346,8 +377,7 @@ export default function UserManagement() {
 
   /* ── guard validation & submit ── */
   const validateGuard = async () => {
-    const errors = {}
-    if (!guardForm.full_name.trim()) errors.full_name = 'Full name is required.'
+    const errors = nameProblems(guardForm)
     if (!guardForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardForm.email.trim())) errors.email = 'Enter a valid email address.'
     if (!guardForm.agency.trim()) errors.agency = 'Agency is required.'
@@ -359,7 +389,7 @@ export default function UserManagement() {
     setSubmitting(true)
     try {
       const guard = await usersApi.createGuard({
-        full_name: guardForm.full_name.trim(),
+        ...namePayload(guardForm),
         email:     guardForm.email.trim(),
         agency:    guardForm.agency.trim(),
       })
@@ -369,7 +399,7 @@ export default function UserManagement() {
     } catch (err) {
       const data = err.response?.data
       const fieldErrors = {}
-      for (const field of ['full_name', 'email', 'agency']) {
+      for (const field of [...NAME_ERROR_FIELDS, 'email', 'agency']) {
         if (data?.[field]) fieldErrors[field] = Array.isArray(data[field]) ? data[field][0] : data[field]
       }
       if (Object.keys(fieldErrors).length > 0) {
@@ -389,8 +419,7 @@ export default function UserManagement() {
 
   /* ── admin validation ── */
   const validateAdmin = async () => {
-    const errors = {}
-    if (!adminForm.full_name.trim()) errors.full_name = 'Full name is required.'
+    const errors = nameProblems(adminForm)
     if (!adminForm.email.trim()) errors.email = 'Email is required.'
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminForm.email)) errors.email = 'Invalid email format.'
     setFormErrors(errors)
@@ -401,7 +430,7 @@ export default function UserManagement() {
     setSubmitting(true)
     try {
       await usersApi.replaceAdmin({
-        full_name: adminForm.full_name.trim(), email: adminForm.email.trim(),
+        ...namePayload(adminForm), email: adminForm.email.trim(),
       })
       showResult('CDSO replaced. Login credentials have been emailed. Logging out…')
       setTimeout(() => { logout(); window.location.href = '/login' }, 1500)
@@ -409,7 +438,9 @@ export default function UserManagement() {
       const data = err.response?.data
       if (data) {
         const errors = {}
-        if (data.full_name) errors.full_name = Array.isArray(data.full_name) ? data.full_name[0] : data.full_name
+        for (const f of NAME_ERROR_FIELDS) {
+          if (data[f]) errors[f] = Array.isArray(data[f]) ? data[f][0] : data[f]
+        }
         if (data.email) errors.email = Array.isArray(data.email) ? data.email[0] : data.email
         if (data.password) errors.password = Array.isArray(data.password) ? data.password.join(' ') : data.password
         setFormErrors(errors); setModal('add')
@@ -738,14 +769,7 @@ export default function UserManagement() {
                     A temporary password will be auto-generated and emailed to the guard.
                     They must change it on first login. Their QR badge (alternative login) unlocks after that first login and password change.
                   </div>
-                  <div className="um-form-group">
-                    <label>Full Name <span className="um-required">*</span></label>
-                    <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
-                      value={guardForm.full_name}
-                      onChange={e => setGuardForm({ ...guardForm, full_name: e.target.value })}
-                      onBlur={e => setGuardForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
-                      placeholder="e.g. Juan Dela Cruz" />
-                  </div>
+                  <NameInputs form={guardForm} setForm={setGuardForm} errors={formErrors} />
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
                     <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
@@ -794,14 +818,7 @@ export default function UserManagement() {
                     A temporary password will be auto-generated and emailed to the new CDSO.
                     They must change it on first login.
                   </div>
-                  <div className="um-form-group">
-                    <label>Full Name <span className="um-required">*</span></label>
-                    <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
-                      value={adminForm.full_name}
-                      onChange={e => setAdminForm({ ...adminForm, full_name: e.target.value })}
-                      onBlur={e => setAdminForm(f => ({ ...f, full_name: toUpperName(e.target.value) }))}
-                      placeholder="Enter full name" />
-                  </div>
+                  <NameInputs form={adminForm} setForm={setAdminForm} errors={formErrors} />
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
                     <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}
@@ -865,12 +882,7 @@ export default function UserManagement() {
               </div>
               {editMode && editForm ? (
                 <>
-                  <div className="um-form-group">
-                    <label>Full Name <span className="um-required">*</span></label>
-                    <input className={`um-form-input ${formErrors.full_name ? 'error' : ''}`}
-                      value={editForm.full_name}
-                      onChange={e => setEditForm({ ...editForm, full_name: e.target.value })} />
-                  </div>
+                  <NameInputs form={editForm} setForm={setEditForm} errors={formErrors} upper={false} />
                   <div className="um-form-group">
                     <label>Email <span className="um-required">*</span></label>
                     <input className={`um-form-input ${formErrors.email ? 'error' : ''}`}

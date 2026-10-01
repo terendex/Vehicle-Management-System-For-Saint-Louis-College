@@ -736,6 +736,20 @@
   margin-bottom: 18px;
 }
 
+/* Last name, first name, middle initial on one row; the initial box is a
+   single letter, so it only needs room for one. Stacks on a phone. */
+.um-name-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 64px;
+  gap: 10px;
+}
+
+.um-name-initial .um-form-input { text-align: center; }
+
+@media (max-width: 480px) {
+  .um-name-row { grid-template-columns: 1fr; gap: 0; }
+}
+
 .um-form-group label {
   display: block;
   font-size: 13px;

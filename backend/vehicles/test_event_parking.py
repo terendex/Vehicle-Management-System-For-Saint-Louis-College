@@ -150,7 +150,7 @@ class EventApiTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='ev-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='ev-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
 
     def setUp(self):
         self.client.force_authenticate(self.admin)
@@ -232,7 +232,7 @@ class EventAndLedgerTogetherTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.guard = User.objects.create_user(
-            email='evcap-guard@slc.edu.ph', full_name='GUARD',
+            email='evcap-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD',
             password='x', role='security')
 
     def setUp(self):
@@ -400,7 +400,7 @@ class CategoryCoversEveryOwnerTypeTests(TestCase):
 
         for owner_type in User.OwnerType.values:
             owner = User.objects.create_user(
-                email=f'cover-{owner_type}@slc.edu.ph', full_name='OWNER',
+                email=f'cover-{owner_type}@slc.edu.ph', last_name='OWNER', first_name='OWNER',
                 password='x', role='vehicle_owner', owner_type=owner_type)
             vehicle = Vehicle.objects.create(
                 plate_number=f'CV{owner_type[:5].upper()}', user=owner,
@@ -417,7 +417,7 @@ class ZoneRowReportsTheReserveTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.guard = User.objects.create_user(
-            email='zone-guard@slc.edu.ph', full_name='GUARD',
+            email='zone-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD',
             password='x', role='security')
 
     def setUp(self):

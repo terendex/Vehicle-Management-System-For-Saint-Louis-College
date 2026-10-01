@@ -25,6 +25,7 @@ from vehicles.email_utils import (department_label, esc, esc_or_dash,
                                   send_rejection_email)
 from vehicles.models import (ReferenceItem, RegistrationPeriod,
                              VehicleRegistration)
+from accounts.names import name_kwargs
 
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
 # Nothing listens on port 1; the connect fails fast instead of reaching Gmail.
@@ -33,7 +34,7 @@ DEAD_SMTP = dict(EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
 
 BASE = dict(
     registrant_type='student',
-    full_name='DELA CRUZ, JUAN',
+    last_name='DELA CRUZ', first_name='JUAN',
     email='juan@slc.edu.ph',
     plate_number='EML 1001',
     vehicle_type='car',
@@ -74,13 +75,13 @@ class EmailEscapingTests(TestCase):
         self.assertEqual(esc_or_dash('x'), 'x')
 
     def test_pending_email_escapes_the_applicant_name(self):
-        send_pending_email(make_reg(full_name=self.HOSTILE))
+        send_pending_email(make_reg(**name_kwargs(self.HOSTILE)))
         body = html_of(mail.outbox[-1])
         self.assertNotIn('<script>', body)
         self.assertIn('&lt;script&gt;', body)
 
     def test_acceptance_email_escapes_the_applicant_name(self):
-        send_acceptance_email(make_reg(full_name=self.HOSTILE), 'TempPass1!', 'SLC-VO-000001')
+        send_acceptance_email(make_reg(**name_kwargs(self.HOSTILE)), 'TempPass1!', 'SLC-VO-000001')
         body = html_of(mail.outbox[-1])
         self.assertNotIn('<script>', body)
         self.assertIn('&lt;script&gt;', body)
@@ -261,7 +262,7 @@ class MailFailureIsReportedTests(TestCase):
             label='Email tests', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='mailadmin@slc.edu.ph', full_name='Mail Admin',
+            email='mailadmin@slc.edu.ph', last_name='Admin', first_name='Mail',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     def _submit(self, **over):
@@ -394,7 +395,7 @@ class MailFailureIsReportedTests(TestCase):
                         'a failure on the thread must still raise its notice')
 
     def test_password_reset_logs_instead_of_failing_silently(self):
-        User.objects.create_user(email='owner@slc.edu.ph', full_name='Owner',
+        User.objects.create_user(email='owner@slc.edu.ph', last_name='Owner', first_name='Owner',
                                  password='pw', role='vehicle_owner')
         with override_settings(**DEAD_SMTP):
             with self.assertLogs('accounts.views', level='ERROR') as logs:

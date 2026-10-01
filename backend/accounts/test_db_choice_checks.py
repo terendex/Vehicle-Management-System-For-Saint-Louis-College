@@ -18,7 +18,7 @@ from vehicles.models import Vehicle, VehicleRegistration
 class DbChoiceChecksTests(TestCase):
     def setUp(self):
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='employee', full_name='Check Owner', email='check-owner@example.com',
+            registrant_type='employee', last_name='Owner', first_name='Check', email='check-owner@example.com',
             plate_number='CHK 1001', vehicle_type='car',
         )
 
@@ -40,7 +40,7 @@ class DbChoiceChecksTests(TestCase):
 
     def test_unknown_role_is_refused(self):
         user = User.objects.create_user(
-            email='check-user@example.com', full_name='Check User', password='Passw0rd!23', role='admin',
+            email='check-user@example.com', last_name='User', first_name='Check', password='Passw0rd!23', role='admin',
         )
         with self.assertRaises(IntegrityError):
             self._raw_update(

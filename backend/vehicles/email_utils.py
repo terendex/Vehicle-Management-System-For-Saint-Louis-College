@@ -635,7 +635,15 @@ def send_acceptance_email(registration, temp_password, user_code=None):
 
 def send_pending_email(registration):
     """Sent immediately after a public registration form is submitted (status=pending)."""
-    submitted_at = registration.created_at.strftime('%B %d, %Y at %I:%M %p') if registration.created_at else '—'
+    from django.utils import timezone
+    from .registration_deadline import format_deadline
+    # localtime(): created_at is stored in UTC, and on Railway (a UTC host) the
+    # raw value read eight hours behind the deadline printed beside it.
+    submitted_at = (timezone.localtime(registration.created_at).strftime('%B %d, %Y at %I:%M %p')
+                    if registration.created_at else '—')
+    deadline = registration.payment_deadline()
+    deadline_val = format_deadline(deadline) if deadline else ''
+    window_days = registration.PAYMENT_WINDOW.days
 
     # Identity rows differ by registrant type, as (label, value) pairs for _kv().
     # DPO: no student/employee ID row — the field is not collected.
@@ -697,12 +705,22 @@ def send_pending_email(registration):
         payment_text  = "No Vehicle Pass fee is due - your department is exempt.\n\n"
     else:
         payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
-        # DPO: the receipt photo is not collected — only the OR number is
-        # filed, and CDSO checks the paper copy at the counter.
+        # The deadline sits at the top of the one block the applicant has to
+        # act on, in the alarm colours, because missing it costs them the
+        # whole application rather than a reminder.
+        deadline_html = (
+            f'<div style="background:{WARN_BG};border:1px solid {WARN_BORDER};border-radius:8px;'
+            f'padding:10px 12px;margin-bottom:12px;color:{WARN_INK};font-size:13.5px;line-height:1.6;">'
+            f'<strong>Deadline: {esc(deadline_val)}</strong><br>'
+            f'You have {window_days} days from applying to pay and file your receipt number. '
+            f'If it is not filed by then, this application <strong>expires automatically</strong> '
+            f'and you will need to submit a new one.</div>'
+        ) if deadline_val else ''
         payment_block = _panel(
             f'<div style="color:{BRAND};font-size:15px;font-weight:700;margin-bottom:6px;">'
             f'Next step &mdash; pay, then file your receipt number</div>'
-            f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
+            + deadline_html
+            + f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
             f'Settle the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the '
             f'<strong>Accounting Office</strong>, then file the Official Receipt number '
             f'using the button below. Keep the receipt itself &mdash; the CDSO checks the '
@@ -713,12 +731,20 @@ def send_pending_email(registration):
             + f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:12px;'
               f'word-break:break-all;">Or paste this link into your browser: {payment_link}</div>',
             bg=TINT_BG, border=BORDER_FIRM)
+        by_html = f' by <strong>{esc(deadline_val)}</strong>' if deadline_val else ''
         payment_steps = (
             f"<li>Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the Accounting "
-            f"Office, then <strong>file your Official Receipt number</strong> using the link above.</li>"
+            f"Office, then <strong>file your Official Receipt number</strong> using the link "
+            f"above{by_html}. Otherwise the application expires.</li>"
         )
+        deadline_text = (
+            f"DEADLINE: {deadline_val}\n"
+            f"You have {window_days} days from applying. If the receipt number is not filed by\n"
+            f"then, this application expires automatically and you must apply again.\n\n"
+        ) if deadline_val else ''
         payment_text = (
             f"NEXT STEP - PAY AND FILE YOUR RECEIPT NUMBER\n"
+            f"{deadline_text}"
             f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then file\n"
             f"the Official Receipt number here:\n{payment_link}\n\n"
             f"Keep the receipt itself - the CDSO checks the paper copy at the counter.\n"
@@ -729,6 +755,7 @@ def send_pending_email(registration):
         accent=WARN_INK,
         preheader=(f'{ref_number} received \u2014 '
                    + ('nothing to pay; watch for the outcome.' if fee == 0
+                      else f'pay the fee and file your OR number by {deadline_val}.' if deadline_val
                       else 'next, pay the fee and file your OR number.')),
         heading='Registration Received',
         intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your vehicle '
@@ -961,6 +988,71 @@ def send_rejection_email(registration, reason):
     )
 
 
+def send_registration_expired_email(registration):
+    """Tells an applicant their application expired unpaid, and what to do now.
+
+    Sent by vehicles.registration_deadline.expire_overdue. The plate, email and
+    schedule slot are free again by the time this goes out, so the copy can
+    honestly say "apply again" — the form will not refuse them as a duplicate.
+    """
+    from .registration_deadline import format_deadline
+
+    full_name_val = esc(registration.full_name)
+    ref_number    = f"REG-{str(registration.pk).zfill(6)}"
+    plate_val     = esc_or_dash(registration.plate_number or registration.conduction_number)
+    deadline      = registration.payment_deadline()
+    deadline_val  = format_deadline(deadline) if deadline else ''
+    days          = registration.PAYMENT_WINDOW.days
+    base_url      = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    register_link = f"{base_url}/register"
+
+    missed = f' The deadline was <strong>{esc(deadline_val)}</strong>.' if deadline_val else ''
+    html_message = _shell(
+        accent=BAD_INK,
+        preheader=f'{ref_number} expired — the receipt was not filed within {days} days.',
+        heading='Vehicle Registration Expired',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your application '
+               f'<strong style="color:{INK};">{ref_number}</strong> has expired because the '
+               f'Vehicle Pass fee was not paid and the Official Receipt number was not filed '
+               f'within {days} days of applying.{missed}'),
+        rows_html=(
+            _section('What you can do', (
+                f'<div style="color:{MUTED};font-size:14px;line-height:1.7;">'
+                f'Submit a new application while registration is open, then pay at the '
+                f'<strong style="color:{INK};">Accounting Office</strong> and file your receipt '
+                f'number within {days} days. Your plate and schedule slot are no longer held, '
+                f'so the form will accept them again.</div>'
+                + _button(register_link, 'Apply Again')))
+            + _panel(
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                f'<strong>Already paid?</strong> Bring your Official Receipt to the '
+                f'<strong>CDSO Office</strong> and they will sort it out with you.</div>',
+                bg=PANEL_BG, border=BORDER)
+            + _section('Your application', _kv([
+                ('Reference No.',      ref_number),
+                ('Plate / Conduction', plate_val),
+            ]))
+        ),
+    )
+
+    send_mail(
+        subject=f"SLC Vehicle Registration Expired — {ref_number}",
+        message=(f"Dear {registration.full_name},\n\n"
+                 f"Your vehicle registration {ref_number} has expired because the Vehicle Pass "
+                 f"fee was not paid and the Official Receipt number was not filed within "
+                 f"{days} days of applying."
+                 + (f" The deadline was {deadline_val}." if deadline_val else '')
+                 + f"\n\nTo get a vehicle pass, submit a new application while registration is "
+                   f"open:\n{register_link}\n\n"
+                   f"Already paid? Bring your Official Receipt to the CDSO Office.\n\n"
+                   f"Saint Louis College Smart Parking and Vehicle Verification System"),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[registration.email],
+        html_message=html_message,
+        fail_silently=False,
+    )
+
+
 def _change_rows(summary):
     """A change set as a from/to block, for both mails below.
 
@@ -1014,17 +1106,27 @@ def send_registration_updated_email(registration, summary):
     unpaid = registration.payment_status == VehicleRegistration.PaymentStatus.UNPAID
     fee = registration.pass_fee()
     if unpaid and fee:
+        from .registration_deadline import format_deadline
         payment_link = f"{base_url}/registration/payment?token={registration.payment_token}"
+        # Editing does not move the deadline — it runs from the original
+        # submission — and this mail is now the newest one in their inbox, so it
+        # has to repeat it.
+        deadline = registration.payment_deadline()
+        deadline_val = format_deadline(deadline) if deadline else ''
+        due_html = (f' File it by <strong>{esc(deadline_val)}</strong>, or the application '
+                    f'expires automatically.') if deadline_val else ''
         next_step = _panel(
             f'<div style="color:{BRAND};font-size:15px;font-weight:700;margin-bottom:6px;">'
             f'Still to do &mdash; file your receipt number</div>'
             f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
             f'Your application is not queued for CDSO review until the Official Receipt '
-            f'number is on file.</div>'
+            f'number is on file.{due_html}</div>'
             + _button(payment_link, 'File Official Receipt Number'),
             bg=TINT_BG, border=BORDER_FIRM)
-        next_text = ("STILL TO DO\nFile your Official Receipt number here:\n%s\n\n"
-                     % payment_link)
+        next_text = ("STILL TO DO\nFile your Official Receipt number here:\n%s\n%s\n"
+                     % (payment_link,
+                        f"Deadline: {deadline_val} - the application expires if it is not filed by then.\n"
+                        if deadline_val else ''))
     else:
         next_step = ''
         next_text = ''

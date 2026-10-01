@@ -16,7 +16,7 @@ User = get_user_model()
 class LensIndexTests(APITestCase):
     def setUp(self):
         self.admin = User.objects.create_user(
-            email='lens-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='lens-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         self.client.force_authenticate(self.admin)
         self.cam = Camera.objects.create(
             cam_number=901, name='Cam L', ip='10.0.0.9', device_id='d9',
@@ -85,7 +85,7 @@ class ZoneLensTests(APITestCase):
 
     def setUp(self):
         self.admin = User.objects.create_user(
-            email='zone-lens@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='zone-lens@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         self.client.force_authenticate(self.admin)
         self.cam = Camera.objects.create(
             cam_number=902, name='Cam Z', ip='10.0.0.8', device_id='d8',

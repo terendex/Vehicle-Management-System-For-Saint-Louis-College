@@ -53,7 +53,9 @@ export const registrationApi = {
   // number. The OR number on its own is a claim; the photograph is what CDSO
   // checks it against on the review screen. The file is never emailed - see
   // the note on RegistrationPaymentView.
-  submitPaymentReceipt: async (token, orNumber, receiptFile) => {
+  // onProgress(percent) reports the upload as it goes, so on a slow connection
+  // the page can show it moving instead of looking frozen.
+  submitPaymentReceipt: async (token, orNumber, receiptFile, onProgress) => {
     const form = new FormData()
     form.append('token', token)
     form.append('or_number', orNumber)
@@ -67,6 +69,9 @@ export const registrationApi = {
     // for FormData in the browser, so the browser still sets the boundary.
     const { data } = await api.post('/vehicles/register/payment/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: onProgress
+        ? (e) => { if (e.total) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100))) }
+        : undefined,
     })
     return data
   },

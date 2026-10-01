@@ -21,6 +21,7 @@ from rest_framework.test import APITestCase
 from vehicles.models import (
     VehicleRegistration, RegistrationPeriod, SystemSettings, Vehicle,
 )
+from accounts.names import name_kwargs
 
 User = get_user_model()
 
@@ -31,7 +32,7 @@ def seed_registrations(n, offset=0):
     """Bulk-create accepted registrations that all sit in the lookup indexes."""
     VehicleRegistration.objects.bulk_create([
         VehicleRegistration(
-            full_name=f'SEED, USER {i}',
+            **name_kwargs(f'SEED, USER {i}'),
             email=f'perf{offset + i}@slc.edu.ph',
             plate_number=f'PRF{offset + i:05d}',
             student_id=f'{20000000 + offset + i}',
@@ -101,7 +102,7 @@ class RegistrationComplexityTests(APITestCase):
             counter['n'] += 1
             i = counter['n']
             self.client.post('/api/vehicles/register/open/', {
-                'full_name': 'DELA CRUZ, JUAN',
+                'last_name': 'DELA CRUZ', 'first_name': 'JUAN',
                 'email': f'submit{i}@slc.edu.ph',
                 'contact_number': '+639171234567',
                 'plate_number': f'SUB{i:05d}',
@@ -260,7 +261,7 @@ class ConflictHelperComplexityTests(TestCase):
         before matching, exactly as save() stores it."""
         from vehicles.views import _license_db_conflict
         VehicleRegistration.objects.create(
-            registrant_type='student', full_name='LICENCE, HOLDER',
+            registrant_type='student', last_name='LICENCE', first_name='HOLDER',
             email='lic@slc.edu.ph', plate_number='LIC0001', vehicle_type='car',
             drivers_license='N01-20-777777', status=VehicleRegistration.Status.PENDING)
         self.assertIsNotNone(_license_db_conflict('n01-20-777777'))
@@ -279,12 +280,12 @@ class ConflictHelperComplexityTests(TestCase):
     def test_ban_check_still_finds_a_banned_applicant(self):
         from vehicles.views import _registration_ban
         banned = User.objects.create_user(
-            email='banned@slc.edu.ph', full_name='BANNED, ONE',
+            email='banned@slc.edu.ph', last_name='BANNED', first_name='ONE',
             password='pw', role='vehicle_owner')
         banned.registration_banned = True
         banned.save(update_fields=['registration_banned'])
         VehicleRegistration.objects.create(
-            registrant_type='student', full_name='BANNED, ONE',
+            registrant_type='student', last_name='BANNED', first_name='ONE',
             email='banned@slc.edu.ph', plate_number='BAN0001', vehicle_type='car',
             student_id='99887766', user=banned,
             status=VehicleRegistration.Status.EXPIRED)
@@ -320,7 +321,7 @@ class PaymentComplexityTests(APITestCase):
     def _pending(self, tag):
         """A pending row with a token, created through save() so it gets one."""
         return VehicleRegistration.objects.create(
-            registrant_type='student', full_name='PAYER, PERF',
+            registrant_type='student', last_name='PAYER', first_name='PERF',
             email=f'payperf{tag}@slc.edu.ph', plate_number=f'PYP{tag:05d}',
             vehicle_type='car', student_id=f'{40000000 + tag}',
             status=VehicleRegistration.Status.PENDING,
@@ -407,7 +408,7 @@ class CdsoQueueComplexityTests(APITestCase):
     def setUp(self):
         SystemSettings.get()
         self.admin = User.objects.create_user(
-            email='queueperf@slc.edu.ph', full_name='Queue Perf',
+            email='queueperf@slc.edu.ph', last_name='Perf', first_name='Queue',
             password='pw', role='admin', is_staff=True, is_superuser=True)
         self.client.force_authenticate(user=self.admin)
 

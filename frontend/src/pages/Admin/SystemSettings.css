@@ -305,6 +305,16 @@
   font-weight: 500;
 }
 
+/* A clock needs room for "05:00 PM" plus the browser's picker icon. */
+.ss-input--time { width: 132px; }
+
+/* Folder paths run long; monospace makes a typo in one easier to see. */
+.ss-input--path {
+  width: 300px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
 /* ── Signature preview ──────────────────────────────────────────
    A rehearsal of the block the PDF will carry. The whole point of the
    Report Signatories tab is that the wording is configurable, and a field
@@ -392,6 +402,26 @@
 .ss-note svg {
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+/* Scheduled-backup status. Sits mid-list rather than last, so it needs room
+   below as well. --warn keeps the default red; --ok is the calm version. */
+.ss-note--ok,
+.ss-note--warn { margin-bottom: 0.9rem; }
+
+.ss-note--ok {
+  color: #1F4A6B;
+  background: #F1F7FC;
+  border-color: #CFE0EE;
+}
+
+.ss-note code,
+.ss-row-hint code {
+  font-size: 0.95em;
+  background: rgba(3, 57, 108, 0.06);
+  padding: 0 4px;
+  border-radius: 4px;
+  word-break: break-all;
 }
 
 /* ── Save bar (sticks to the bottom of the viewport) ────────────── */
@@ -638,6 +668,7 @@
    after a bad restore, so it should not read as just another file. */
 .ss-backup-tag--auto   { background: #E4F1E6; color: #245C31; }
 .ss-backup-tag--safety { background: #FDF0BE; color: #8A6B00; }
+.ss-backup-tag--scheduled { background: #E6EEFB; color: #23468A; }
 
 .ss-backup-item-actions {
   display: flex;

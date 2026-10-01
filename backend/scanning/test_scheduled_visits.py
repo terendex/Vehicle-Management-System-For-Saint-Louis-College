@@ -11,10 +11,11 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from scanning.models import AccessLog, VisitorPass
 from vehicles.models import RuleConstraint, ScheduledVisit, Supplier, SupplierPlate, Vehicle
+from accounts.names import name_kwargs
 
 
 def _user(email, role, **extra):
-    return User.objects.create_user(email=email, full_name=email.split('@')[0].upper(),
+    return User.objects.create_user(email=email, **name_kwargs(email.split('@')[0].upper()),
                                     password='SecurePassword123!', role=role, **extra)
 
 

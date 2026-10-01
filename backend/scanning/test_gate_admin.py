@@ -17,7 +17,7 @@ class GateAdminTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         admin = User.objects.create_user(
-            email='gates@test.local', full_name='GATE ADMIN',
+            email='gates@test.local', last_name='ADMIN', first_name='GATE',
             password='AdminPw!2026', role='admin')
         self.client.force_authenticate(admin)
         # Start from a known table rather than whatever the seed left.

@@ -1,0 +1,38 @@
+/* The 3-day receipt deadline banner (PaymentDeadline.jsx). Warning colours
+   throughout, danger on the last day: missing it costs the whole application. */
+.pay-deadline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  background: var(--warning-bg, #FEF9E4);
+  border: 1px solid var(--warning-border, #F7E08A);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  margin-bottom: 1rem;
+  color: var(--warning-ink, #7A5C00);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  text-align: left;
+}
+
+.pay-deadline svg { flex-shrink: 0; margin-top: 2px; }
+
+.pay-deadline-body { min-width: 0; }
+
+.pay-deadline-when,
+.pay-deadline-why { margin: 0; }
+
+.pay-deadline-when { font-size: 0.88rem; }
+.pay-deadline-when strong { overflow-wrap: anywhere; }
+
+.pay-deadline-left { font-weight: 700; white-space: nowrap; }
+
+.pay-deadline-why { margin-top: 0.3rem; }
+
+.pay-deadline--urgent {
+  background: var(--danger-bg, #FCEDED);
+  border-color: var(--danger-border, #F3C0C0);
+  color: var(--danger-ink, #841818);
+}
+
+.pay-deadline--compact { padding: 0.55rem 0.75rem; margin-bottom: 0.75rem; }

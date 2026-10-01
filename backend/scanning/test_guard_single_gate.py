@@ -31,13 +31,13 @@ class GuardShiftTestCase(TestCase):
         self.gate_a, self.gate_b = self.gates[0], self.gates[1]
 
         self.guard = User.objects.create_user(
-            email='oneplace@slc.edu.ph', full_name='ONE PLACE',
+            email='oneplace@slc.edu.ph', last_name='PLACE', first_name='ONE',
             password='GuardPw!2026', role='security')
         self.guard.must_change_password = False
         self.guard.save(update_fields=['must_change_password'])
 
         self.other = User.objects.create_user(
-            email='relieved@slc.edu.ph', full_name='RELIEVED GUARD',
+            email='relieved@slc.edu.ph', last_name='GUARD', first_name='RELIEVED',
             password='GuardPw!2026', role='security')
         self.other.must_change_password = False
         self.other.save(update_fields=['must_change_password'])
@@ -189,7 +189,7 @@ class CredentialLoginTests(GuardShiftTestCase):
         """With nothing persisted to fall back to there is no gate to attribute
         scans to, so the login is refused rather than guessed at."""
         fresh = User.objects.create_user(
-            email='nogate@slc.edu.ph', full_name='NO GATE',
+            email='nogate@slc.edu.ph', last_name='GATE', first_name='NO',
             password='GuardPw!2026', role='security')
         fresh.must_change_password = False
         fresh.save(update_fields=['must_change_password'])

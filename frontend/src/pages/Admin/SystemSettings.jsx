@@ -18,6 +18,8 @@ const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass
   account_expiry_months: 12, account_expiry_days: 0,
   parked_after_seconds: 8, double_park_after_seconds: 12,
   auto_backup_frequency: 'off', auto_backup_keep: 10,
+  scheduled_backup_frequency: 'off', scheduled_backup_time: '17:00', scheduled_backup_weekday: 4,
+  scheduled_backup_day: 1, scheduled_backup_folder: '', scheduled_backup_keep: 12,
   report_preparer_name: '', report_preparer_position: '',
   report_approver_name: '', report_approver_position: '',
   report_prepared_by_label: 'Prepared by', report_approved_by_label: 'Approved by' }
@@ -49,6 +51,12 @@ function normalizeSettings(data) {
     double_park_after_seconds: data.double_park_after_seconds ?? 12,
     auto_backup_frequency: data.auto_backup_frequency ?? 'off',
     auto_backup_keep:      data.auto_backup_keep      ?? 10,
+    scheduled_backup_frequency: data.scheduled_backup_frequency ?? 'off',
+    scheduled_backup_time:      data.scheduled_backup_time      ?? '17:00',
+    scheduled_backup_weekday:   data.scheduled_backup_weekday   ?? 4,
+    scheduled_backup_day:       data.scheduled_backup_day       ?? 1,
+    scheduled_backup_folder:    data.scheduled_backup_folder    ?? '',
+    scheduled_backup_keep:      data.scheduled_backup_keep      ?? 12,
     // ?? '' rather than ?? a caption: blank is a real, chosen state on all
     // four of these - a blank approver prints a line to sign on, and a blank
     // preparer means "whoever generated the report". Both must survive the
@@ -92,9 +100,56 @@ function backupSpanText(freq, keep) {
   return `That is about ${keep} ${unit}${keep !== 1 ? 's' : ''} of history.`
 }
 
+// The calendar-pinned schedule. No hourly here — that is what Automatic
+// backups are for; this one is "at a time you pick".
+const SCHEDULED_FREQUENCIES = [
+  ['off',     'Off'],
+  ['daily',   'Daily'],
+  ['weekly',  'Weekly'],
+  ['monthly', 'Monthly'],
+]
+
+// Python's numbering, which is what the server stores: 0 = Monday.
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+const ordinal = (n) => {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
+}
+
+/** "17:00" → "5:00 PM", in the viewer's own clock style. */
+const formatClock = (hhmm) => {
+  const [h, m] = String(hhmm || '').split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return hhmm
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+/** e.g. "every Friday at 5:00 PM" */
+function scheduleText(f) {
+  const at = `at ${formatClock(f.scheduled_backup_time)}`
+  if (f.scheduled_backup_frequency === 'daily')  return `every day ${at}`
+  if (f.scheduled_backup_frequency === 'weekly') return `every ${WEEKDAYS[f.scheduled_backup_weekday]} ${at}`
+  if (f.scheduled_backup_frequency === 'monthly') {
+    const tail = f.scheduled_backup_day > 28 ? ' (or the last day of a shorter month)' : ''
+    return `on the ${ordinal(f.scheduled_backup_day)} of every month ${at}${tail}`
+  }
+  return ''
+}
+
+const scheduledInvalid = (f) => f.scheduled_backup_frequency !== 'off' && (
+  !/^\d{2}:\d{2}$/.test(f.scheduled_backup_time)
+  || f.scheduled_backup_day < 1 || f.scheduled_backup_day > 31
+  || f.scheduled_backup_keep < 1 || f.scheduled_backup_keep > 90
+)
+
+// The parts of the schedule that, once saved, make the server look again
+// straight away — so the page should too.
+const SCHEDULE_FIELDS = ['scheduled_backup_frequency', 'scheduled_backup_time', 'scheduled_backup_weekday',
+  'scheduled_backup_day', 'scheduled_backup_folder']
+
 // What wrote the file. Pre-restore snapshots are the automatic copy taken right
 // before someone restored, which is usually the file you want after a mistake.
-const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', other: 'File' }
+const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', scheduled: 'Scheduled', other: 'File' }
 
 // How often the saved-backup list re-checks the server while the tab is open.
 // Deliberately slow: the fastest schedule writes one file an hour, so a tighter
@@ -143,6 +198,8 @@ const FIELD_TAB = {
   scan_dedup_seconds: 'gates',
   parked_after_seconds: 'parking', double_park_after_seconds: 'parking',
   retention_years: 'data', auto_backup_frequency: 'data', auto_backup_keep: 'data',
+  scheduled_backup_frequency: 'data', scheduled_backup_time: 'data', scheduled_backup_weekday: 'data',
+  scheduled_backup_day: 'data', scheduled_backup_folder: 'data', scheduled_backup_keep: 'data',
   report_preparer_name: 'reports', report_preparer_position: 'reports',
   report_approver_name: 'reports', report_approver_position: 'reports',
   report_prepared_by_label: 'reports', report_approved_by_label: 'reports',
@@ -188,6 +245,9 @@ export default function SystemSettings() {
   const [backupsCheckedAt, setBackupsCheckedAt] = useState(null)
   const [backupBusy, setBackupBusy]           = useState(null) // filename being acted on
   const [confirmDeleteBackup, setConfirmDeleteBackup] = useState(null)
+  // Where the scheduled backup stands, as the server sees it right now: next
+  // run, last file, and whether the folder is still there to write to.
+  const [scheduledStatus, setScheduledStatus] = useState(null)
 
   // Tick an elapsed-seconds counter while a backup/restore is in progress so the
   // long-running restore visibly shows progression.
@@ -232,6 +292,7 @@ export default function SystemSettings() {
     usersApi.listBackups()
       .then((data) => {
         setBackups(data.backups || [])
+        setScheduledStatus(data.scheduled || null)
         setBackupsCheckedAt(new Date())
       })
       .catch(() => { if (!quiet) setBackups([]) })
@@ -523,13 +584,16 @@ export default function SystemSettings() {
   // and whatever number it holds is never used.
   const keepInvalid   = form.auto_backup_frequency !== 'off'
     && (form.auto_backup_keep < 1 || form.auto_backup_keep > 90)
+  const scheduleInvalid = scheduledInvalid(form)
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
     // No field on this form accepts a negative. Clearing a box gives '' → 0,
     // which for the expiry pair is caught by expiryInvalid rather than sent.
     const num = (v) => Math.max(0, Number(v) || 0)
-    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : type === 'number' ? num(value) : value }))
+    // The weekday is a <select>, so it arrives as text; the server stores a number.
+    const numeric = type === 'number' || name === 'scheduled_backup_weekday'
+    setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : numeric ? num(value) : value }))
   }
 
   const handleSave = async () => {
@@ -543,6 +607,13 @@ export default function SystemSettings() {
     try {
       const { data } = await updateSystemSettings(form)
       const normalized = normalizeSettings(data)
+      // A saved schedule change makes the server run a pass at once, which
+      // may write the first scheduled backup within seconds. Look now for the
+      // new status, and again shortly for the file itself.
+      if (SCHEDULE_FIELDS.some((k) => normalized[k] !== saved[k])) {
+        fetchBackups({ quiet: true })
+        setTimeout(() => fetchBackups({ quiet: true }), 15000)
+      }
       setForm(normalized)
       setSaved(normalized)
       setSaveSummary({
@@ -1381,6 +1452,158 @@ export default function SystemSettings() {
                     </div>
                   )}
 
+                  {/* ── Scheduled backup ── calendar-pinned, to a folder of the admin's choosing */}
+                  <div className="ss-row">
+                    <div className="ss-row-text">
+                      <label className="ss-row-label" htmlFor="scheduled_backup_frequency">Scheduled backup</label>
+                      <span className="ss-row-hint">
+                        {form.scheduled_backup_frequency === 'off'
+                          ? 'A second schedule, separate from automatic backups: a backup at a set time — daily, weekly or monthly — saved to a folder you choose, such as another drive or a USB stick.'
+                          : <>The server saves a backup <strong>{scheduleText(form)}</strong> (campus time). If the computer
+                             is off at that moment, it takes the missed one as soon as it is back on.</>}
+                      </span>
+                    </div>
+                    <div className="ss-row-control">
+                      <select
+                        id="scheduled_backup_frequency"
+                        name="scheduled_backup_frequency"
+                        className="ss-select"
+                        value={form.scheduled_backup_frequency}
+                        onChange={handleChange}
+                      >
+                        {SCHEDULED_FREQUENCIES.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {form.scheduled_backup_frequency !== 'off' && (
+                    <>
+                      <div className="ss-row">
+                        <div className="ss-row-text">
+                          <span className="ss-row-label">When</span>
+                          <span className="ss-row-hint">
+                            {form.scheduled_backup_frequency === 'monthly'
+                              ? 'Day of the month and time. Days 29–31 fall on the last day of a shorter month instead of skipping it.'
+                              : form.scheduled_backup_frequency === 'weekly'
+                                ? 'Day of the week and time.'
+                                : 'Time of day.'}
+                          </span>
+                        </div>
+                        <div className="ss-row-control">
+                          {form.scheduled_backup_frequency === 'weekly' && (
+                            <select
+                              name="scheduled_backup_weekday"
+                              aria-label="Day of the week"
+                              className="ss-select"
+                              value={form.scheduled_backup_weekday}
+                              onChange={handleChange}
+                            >
+                              {WEEKDAYS.map((label, i) => <option key={label} value={i}>{label}</option>)}
+                            </select>
+                          )}
+                          {form.scheduled_backup_frequency === 'monthly' && (
+                            <>
+                              <span className="ss-unit">Day</span>
+                              <input
+                                name="scheduled_backup_day"
+                                aria-label="Day of the month"
+                                type="number"
+                                min={1}
+                                max={31}
+                                value={form.scheduled_backup_day}
+                                onChange={handleChange}
+                                className="ss-input"
+                              />
+                            </>
+                          )}
+                          <span className="ss-unit">at</span>
+                          <input
+                            name="scheduled_backup_time"
+                            aria-label="Time of day"
+                            type="time"
+                            required
+                            value={form.scheduled_backup_time}
+                            onChange={handleChange}
+                            className="ss-input ss-input--time"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="ss-row">
+                        <div className="ss-row-text">
+                          <label className="ss-row-label" htmlFor="scheduled_backup_folder">Save to folder</label>
+                          <span className="ss-row-hint">
+                            A full folder path <strong>on the server computer</strong>, e.g. <code>D:\SLC Backups</code> or
+                            a USB drive like <code>E:\Backups</code>. It is created if missing, and checked when you save.
+                            Leave blank to use the app&rsquo;s own backups folder.
+                          </span>
+                        </div>
+                        <div className="ss-row-control">
+                          <input
+                            id="scheduled_backup_folder"
+                            name="scheduled_backup_folder"
+                            type="text"
+                            maxLength={500}
+                            placeholder="App backups folder"
+                            spellCheck={false}
+                            value={form.scheduled_backup_folder}
+                            onChange={handleChange}
+                            className="ss-input ss-input--text ss-input--path"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="ss-row">
+                        <div className="ss-row-text">
+                          <label className="ss-row-label" htmlFor="scheduled_backup_keep">Scheduled backups to keep</label>
+                          <span className="ss-row-hint">
+                            The oldest scheduled backup in that folder is deleted once there are more than this.
+                            Nothing else in the folder is ever touched. Allowed range: 1 &ndash; 90.
+                          </span>
+                        </div>
+                        <div className="ss-row-control">
+                          <input
+                            id="scheduled_backup_keep"
+                            name="scheduled_backup_keep"
+                            type="number"
+                            min={1}
+                            max={90}
+                            value={form.scheduled_backup_keep}
+                            onChange={handleChange}
+                            className="ss-input"
+                          />
+                          <span className="ss-unit">backups</span>
+                        </div>
+                      </div>
+
+                      {/* Status as the server sees it — only for the SAVED schedule,
+                          since an unsaved edit has not been checked yet. */}
+                      {scheduledStatus && scheduledStatus.frequency !== 'off'
+                        && SCHEDULE_FIELDS.every((k) => form[k] === saved[k]) && (
+                        <div className={`ss-note ${scheduledStatus.folder_ok ? 'ss-note--ok' : 'ss-note--warn'}`}>
+                          {scheduledStatus.folder_ok ? <CalendarClock size={13} /> : <AlertTriangle size={13} />}
+                          <span>
+                            {scheduledStatus.folder_ok ? (
+                              <>
+                                {scheduledStatus.overdue
+                                  ? <>Next backup: <strong>due now</strong> — it is taken on the server&rsquo;s next check.</>
+                                  : <>Next backup: <strong>{formatStamp(scheduledStatus.next_due)}</strong>.</>}
+                                {' '}Last: {scheduledStatus.last
+                                  ? <>{formatStamp(scheduledStatus.last.created_at)} ({formatBytes(scheduledStatus.last.size)})</>
+                                  : 'none yet'}.
+                                {' '}Folder: <code>{scheduledStatus.folder}</code>
+                              </>
+                            ) : (
+                              <>Scheduled backups cannot run: {scheduledStatus.folder_error}</>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <div className="ss-row ss-row--stacked">
                     <div className="ss-list-head ss-list-head--split">
                       <span>Backups on the server ({backupsLoading ? '…' : backups.length})</span>
@@ -1485,6 +1708,7 @@ export default function SystemSettings() {
                 if (expiryInvalid) problems.push('Account expiration needs at least 1 month or 1 day.')
                 if (dwellInvalid)  problems.push('The double-parking delay cannot be shorter than the parked delay.')
                 if (keepInvalid)   problems.push('Automatic backups to keep must be between 1 and 90.')
+                if (scheduleInvalid) problems.push('Scheduled backup needs a time, a day of the month from 1 to 31, and a keep count from 1 to 90.')
                 if (problems.length) {
                   // Open the tab holding the first bad field, so dismissing the
                   // message leaves the admin looking at the control to fix.
@@ -1572,6 +1796,26 @@ export default function SystemSettings() {
                   {' '}{backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}
                   {form.auto_backup_keep < saved.auto_backup_keep && (
                     <> Older automatic backups beyond that are deleted as soon as you save.</>
+                  )}
+                </li>
+              )}
+              {SCHEDULE_FIELDS.some((k) => form[k] !== saved[k]) && (
+                <li>
+                  {form.scheduled_backup_frequency === 'off'
+                    ? <>Scheduled backups <strong>stop</strong>. Backups already in the folder are kept.</>
+                    : <>A backup is saved <strong>{scheduleText(form)}</strong> to{' '}
+                       <strong>{form.scheduled_backup_folder.trim() || 'the app’s backups folder'}</strong>, keeping
+                       the newest {form.scheduled_backup_keep}. If that time has already passed, the first one is taken
+                       right away.</>}
+                </li>
+              )}
+              {form.scheduled_backup_frequency !== 'off'
+                && SCHEDULE_FIELDS.every((k) => form[k] === saved[k])
+                && form.scheduled_backup_keep !== saved.scheduled_backup_keep && (
+                <li>
+                  <strong>{form.scheduled_backup_keep}</strong> scheduled backup{form.scheduled_backup_keep !== 1 ? 's are' : ' is'} kept.
+                  {form.scheduled_backup_keep < saved.scheduled_backup_keep && (
+                    <> Older ones beyond that are deleted as soon as you save.</>
                   )}
                 </li>
               )}

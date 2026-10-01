@@ -28,7 +28,7 @@ from vehicles.models import RegistrationPeriod, VehicleRegistration
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
 
 BASE = dict(
-    registrant_type='student', full_name='SUBMIT, TESTER',
+    registrant_type='student', last_name='SUBMIT', first_name='TESTER',
     email='submit@slc.edu.ph', plate_number='SUB 0001', vehicle_type='car',
     contact_number='+639171234567', address='San Fernando, La Union',
     drivers_license='N01-20-800001', student_id='20270001',
@@ -48,7 +48,7 @@ class RegistrationInputTestCase(TestCase):
             label='Input tests', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='inputadmin@slc.edu.ph', full_name='Input Admin',
+            email='inputadmin@slc.edu.ph', last_name='Admin', first_name='Input',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     def payload(self, **over):
@@ -131,7 +131,7 @@ class ReviewFieldsAreNotApplicantWritableTests(RegistrationInputTestCase):
         """The lock-down must not cost the applicant their own details."""
         reg = self.submit_ok(vehicle_color='Blue', program_year='BSIT 4')
         self.assertEqual(reg.vehicle_color, 'Blue')
-        self.assertEqual(reg.program_year, 'BSIT 4')
+        self.assertEqual(reg.program_year, 'BSIT - 4')   # canonicalised against the official program list
         self.assertEqual(reg.status, VehicleRegistration.Status.PENDING)
 
     def test_withheld_fields_are_dropped_even_when_a_payload_sends_them(self):
@@ -342,12 +342,12 @@ class BanIsRecheckedAtApprovalTests(RegistrationInputTestCase):
 
     def _ban(self, email):
         banned = User.objects.create_user(
-            email='banned-owner@slc.edu.ph', full_name='BANNED, OWNER',
+            email='banned-owner@slc.edu.ph', last_name='BANNED', first_name='OWNER',
             password='pw', role='vehicle_owner')
         banned.registration_banned = True
         banned.save(update_fields=['registration_banned'])
         VehicleRegistration.objects.create(
-            registrant_type='student', full_name='BANNED, OWNER', email=email,
+            registrant_type='student', last_name='BANNED', first_name='OWNER', email=email,
             plate_number='BANNED01', vehicle_type='car', user=banned,
             status=VehicleRegistration.Status.EXPIRED)
 

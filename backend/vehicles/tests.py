@@ -15,12 +15,13 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from vehicles.models import VehicleRegistration, RegistrationPeriod
+from accounts.names import name_kwargs
 
 
 def make_reg(**overrides):
     data = dict(
         registrant_type='student',
-        full_name='Test User',
+        last_name='User', first_name='Test',
         email='user@example.com',
         plate_number='ABC 1234',
         vehicle_type='car',
@@ -138,7 +139,7 @@ class PublicRegistrationConflictTests(TestCase):
 
     def _post(self, **overrides):
         payload = dict(
-            registrant_type='employee', full_name='New User', email='new@x.com',
+            registrant_type='employee', last_name='User', first_name='New', email='new@x.com',
             plate_number='XYZ 5678', vehicle_type='car',
             drivers_license='N02-21-654321', employee_id='E-9',
             contact_number='+639171234567', address='Somewhere',
@@ -174,12 +175,12 @@ class AccountExpiryArchiveTests(TestCase):
     def _make_owner_with_reg(self):
         from accounts.models import User
         owner = User.objects.create_user(
-            email='owner@example.com', full_name='Owner One',
+            email='owner@example.com', last_name='One', first_name='Owner',
             password='Passw0rd!23', role='vehicle_owner',
             owner_type='student',
         )
         reg = make_reg(
-            registrant_type='student', full_name='Owner One',
+            registrant_type='student', last_name='One', first_name='Owner',
             email='owner@example.com', plate_number='OWN 111',
             student_id='20250001', user=owner,
             status=VehicleRegistration.Status.ACCEPTED,
@@ -197,7 +198,7 @@ class AccountExpiryArchiveTests(TestCase):
     def test_admin_account_never_expires(self):
         from accounts.models import User
         admin = User.objects.create_user(
-            email='admin2@example.com', full_name='Admin', password='x', role='admin')
+            email='admin2@example.com', last_name='Admin', first_name='Admin', password='x', role='admin')
         self.assertIsNone(admin.expires_at)
 
     def test_archive_and_reregistration(self):
@@ -234,7 +235,7 @@ class AccountExpiryArchiveTests(TestCase):
         # And a brand-new account can be created with the reused email (the DB
         # partial-unique excludes the archived row).
         new_owner = User.objects.create_user(
-            email='owner@example.com', full_name='Owner One Again',
+            email='owner@example.com', last_name='Again', first_name='Owner', middle_initial='O',
             password='Passw0rd!23', role='vehicle_owner', owner_type='student')
         self.assertFalse(new_owner.is_archived)
         # Auth resolves to the live account, not the archived one
@@ -329,7 +330,7 @@ class AccountExpiryArchiveTests(TestCase):
             end_date=today + timedelta(days=30), is_active=True)
 
         resp = APIClient().post('/api/vehicles/register/open/', {
-            'registrant_type': 'student', 'full_name': 'Owner One',
+            'registrant_type': 'student', 'last_name': 'One', 'first_name': 'Owner',
             'email': 'owner@example.com', 'plate_number': 'OWN 111',
             'vehicle_type': 'car', 'student_id': '20250001',
             'contact_number': '+639171234567', 'address': 'Somewhere',
@@ -350,7 +351,7 @@ class ConductionPlateTests(TestCase):
             end_date=today + timedelta(days=30), is_active=True)
 
     def _post(self, **overrides):
-        payload = dict(registrant_type='student', full_name='New Car', email='newcar@x.com',
+        payload = dict(registrant_type='student', last_name='Car', first_name='New', email='newcar@x.com',
                        vehicle_type='car', student_id='30000001', campus_days=['Monday'],
                        contact_number='+639171234567', address='X')
         payload.update(overrides)
@@ -390,11 +391,11 @@ class PlateSwapTests(TestCase):
     def _make_conduction_owner(self, email='swap@x.com', conduction='CS111'):
         from accounts.models import User
         from vehicles.models import Vehicle
-        owner = User.objects.create_user(email=email, full_name='Swap', password='x',
+        owner = User.objects.create_user(email=email, last_name='Swap', first_name='Swap', password='x',
                                          role='vehicle_owner', owner_type='student')
         veh = Vehicle.objects.create(conduction_number=conduction, vehicle_type='car',
                                      is_authorized=True, user=owner)
-        reg = make_reg(registrant_type='student', full_name='Swap', email=email,
+        reg = make_reg(registrant_type='student', last_name='Swap', first_name='Swap', email=email,
                        plate_number='', conduction_number=conduction, vehicle=veh, user=owner,
                        status=VehicleRegistration.Status.ACCEPTED)
         return owner, veh, reg
@@ -416,7 +417,7 @@ class PlateSwapTests(TestCase):
     def test_swap_rejects_duplicate_plate(self):
         from vehicles.models import Vehicle
         from accounts.models import User
-        other = User.objects.create_user(email='other@x.com', full_name='Other', password='x',
+        other = User.objects.create_user(email='other@x.com', last_name='Other', first_name='Other', password='x',
                                          role='vehicle_owner', owner_type='student')
         Vehicle.objects.create(plate_number='XYZ5678', vehicle_type='car', is_authorized=True, user=other)
         owner, veh, reg = self._make_conduction_owner()
@@ -434,9 +435,9 @@ class DoubleParkAttributionTests(TestCase):
     def setUp(self):
         from accounts.models import User
         from vehicles.models import Vehicle
-        self.guard = User.objects.create_user(email='dpg@slc.edu.ph', full_name='Guard',
+        self.guard = User.objects.create_user(email='dpg@slc.edu.ph', last_name='Guard', first_name='Guard',
                                               password='x', role='security')
-        self.admin = User.objects.create_user(email='dpa@slc.edu.ph', full_name='Admin',
+        self.admin = User.objects.create_user(email='dpa@slc.edu.ph', last_name='Admin', first_name='Admin',
                                               password='x', role='admin')
         self.vehicle = Vehicle.objects.create(plate_number='DPK1234', vehicle_type='car', is_authorized=True)
 
@@ -485,11 +486,11 @@ class ReportDoubleParkingTests(TestCase):
     def setUp(self):
         from accounts.models import User
         from vehicles.models import ParkingZone, Vehicle
-        self.guard = User.objects.create_user(email='rdg@slc.edu.ph', full_name='GUARD ONE',
+        self.guard = User.objects.create_user(email='rdg@slc.edu.ph', last_name='ONE', first_name='GUARD',
                                               password='x', role='security', gate_assignment='gate1')
-        self.admin = User.objects.create_user(email='rda@slc.edu.ph', full_name='Admin',
+        self.admin = User.objects.create_user(email='rda@slc.edu.ph', last_name='Admin', first_name='Admin',
                                               password='x', role='admin')
-        self.owner = User.objects.create_user(email='rdo@slc.edu.ph', full_name='OWNER',
+        self.owner = User.objects.create_user(email='rdo@slc.edu.ph', last_name='OWNER', first_name='OWNER',
                                               password='x', role='vehicle_owner', owner_type='student')
         self.vehicle = Vehicle.objects.create(plate_number='RDP1234', vehicle_type='car',
                                               is_authorized=True, user=self.owner)
@@ -554,7 +555,7 @@ class DailySchedulerTests(TestCase):
     def _expired_owner(self, email='sched-owner@example.com'):
         from accounts.models import User
         owner = User.objects.create_user(
-            email=email, full_name='Sched Owner', password='Passw0rd!23',
+            email=email, last_name='Owner', first_name='Sched', password='Passw0rd!23',
             role='vehicle_owner', owner_type='student',
         )
         owner.expires_at = timezone.localdate() - timedelta(days=1)
@@ -720,7 +721,7 @@ class RetentionPurgeTests(TestCase):
     def _archived_owner(self, email, archived_days_ago):
         from accounts.models import User
         owner = User.objects.create_user(
-            email=email, full_name='Old Owner', password='Passw0rd!23',
+            email=email, last_name='Owner', first_name='Old', password='Passw0rd!23',
             role='vehicle_owner', owner_type='student',
         )
         owner.is_archived = True
@@ -755,7 +756,7 @@ class RetentionPurgeTests(TestCase):
         from vehicles.tasks import purge_old_records
 
         live = User.objects.create_user(
-            email='live@example.com', full_name='Live Owner', password='Passw0rd!23',
+            email='live@example.com', last_name='Owner', first_name='Live', password='Passw0rd!23',
             role='vehicle_owner', owner_type='student',
         )
         User.objects.filter(pk=live.pk).update(
@@ -780,7 +781,7 @@ class RetentionPurgeTests(TestCase):
         from vehicles.tasks import purge_old_records
 
         admin = User.objects.create_user(
-            email='oldadmin@example.com', full_name='Old Admin',
+            email='oldadmin@example.com', last_name='Admin', first_name='Old',
             password='Passw0rd!23', role='admin')
         User.objects.filter(pk=admin.pk).update(
             is_archived=True, archived_at=timezone.now() - timedelta(days=9 * 365))
@@ -794,7 +795,7 @@ class RetentionPurgeTests(TestCase):
 
         old = self._archived_owner('withcar@example.com', archived_days_ago=6 * 365)
         veh = Vehicle.objects.create(plate_number='OLD111', vehicle_type='car', user=old)
-        reg = make_reg(registrant_type='student', full_name='Old Owner',
+        reg = make_reg(registrant_type='student', last_name='Owner', first_name='Old',
                        email='withcar@example.com', plate_number='OLD 111',
                        student_id='20200001', user=old,
                        status=VehicleRegistration.Status.EXPIRED)
@@ -847,7 +848,7 @@ class DailyJobQueryCountTests(TestCase):
         from accounts.models import User
         for i in range(n):
             owner = User.objects.create_user(
-                email=f'{prefix}{i}@example.com', full_name=f'Owner {i}',
+                email=f'{prefix}{i}@example.com', **name_kwargs(f'Owner {i}'),
                 password='Passw0rd!23', role='vehicle_owner', owner_type='student',
             )
             User.objects.filter(pk=owner.pk).update(
@@ -858,7 +859,7 @@ class DailyJobQueryCountTests(TestCase):
         from vehicles.models import Vehicle
         for i in range(n):
             owner = User.objects.create_user(
-                email=f'{prefix}{i}@example.com', full_name=f'Old {i}',
+                email=f'{prefix}{i}@example.com', **name_kwargs(f'Old {i}'),
                 password='Passw0rd!23', role='vehicle_owner', owner_type='student',
             )
             Vehicle.objects.create(plate_number=f'{prefix.upper()}{i:03d}',
@@ -922,7 +923,7 @@ class ExpiryCannotBeDisabledTests(TestCase):
         from accounts.models import User
         from rest_framework.test import APIClient
         self.admin = User.objects.create_user(
-            email='cdso@example.com', full_name='CDSO', password='Passw0rd!23',
+            email='cdso@example.com', last_name='CDSO', first_name='CDSO', password='Passw0rd!23',
             role='admin')
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
@@ -956,7 +957,7 @@ class ExpiryCannotBeDisabledTests(TestCase):
     def test_owner_without_an_expiry_is_backfilled_on_save(self):
         from accounts.models import User
         owner = User.objects.create_user(
-            email='noexpiry@example.com', full_name='No Expiry',
+            email='noexpiry@example.com', last_name='Expiry', first_name='No',
             password='Passw0rd!23', role='vehicle_owner', owner_type='student')
         User.objects.filter(pk=owner.pk).update(expires_at=None)
 
@@ -968,7 +969,7 @@ class ExpiryCannotBeDisabledTests(TestCase):
     def test_existing_expiry_is_not_moved_by_a_period_change(self):
         from accounts.models import User
         owner = User.objects.create_user(
-            email='fixed@example.com', full_name='Fixed', password='Passw0rd!23',
+            email='fixed@example.com', last_name='Fixed', first_name='Fixed', password='Passw0rd!23',
             role='vehicle_owner', owner_type='student')
         original = owner.expires_at
         self.assertIsNotNone(original)
@@ -987,9 +988,9 @@ class SupplierOwnerPlateTests(TestCase):
     def setUp(self):
         from accounts.models import User
         from vehicles.models import Supplier, Vehicle
-        self.admin = User.objects.create_user(email='spo@slc.edu.ph', full_name='ADMIN',
+        self.admin = User.objects.create_user(email='spo@slc.edu.ph', last_name='ADMIN', first_name='ADMIN',
                                               password='x', role='admin')
-        owner = User.objects.create_user(email='spo-owner@slc.edu.ph', full_name='OWNER',
+        owner = User.objects.create_user(email='spo-owner@slc.edu.ph', last_name='OWNER', first_name='OWNER',
                                          password='x', role='vehicle_owner', owner_type='student')
         Vehicle.objects.create(plate_number='OWN1234', vehicle_type='car', is_authorized=True, user=owner)
         self.supplier = Supplier.objects.create(company_name='ILOCOS FRESH', category='delivery')
@@ -1014,7 +1015,7 @@ class SupplierOwnerPlateTests(TestCase):
     def test_a_conduction_number_counts(self):
         from accounts.models import User
         from vehicles.models import Vehicle
-        owner = User.objects.create_user(email='spo-c@slc.edu.ph', full_name='NEW CAR',
+        owner = User.objects.create_user(email='spo-c@slc.edu.ph', last_name='CAR', first_name='NEW',
                                          password='x', role='vehicle_owner', owner_type='employee')
         Vehicle.objects.create(conduction_number='CN12345', vehicle_type='car', user=owner)
         self.assertIn('owner_plates', self._add('CN12345').data)
@@ -1040,7 +1041,7 @@ class SupplierCategoryOtherTests(TestCase):
 
     def setUp(self):
         from accounts.models import User
-        self.admin = User.objects.create_user(email='sco@slc.edu.ph', full_name='ADMIN',
+        self.admin = User.objects.create_user(email='sco@slc.edu.ph', last_name='ADMIN', first_name='ADMIN',
                                               password='x', role='admin')
         self.client = APIClient()
         self.client.force_authenticate(self.admin)

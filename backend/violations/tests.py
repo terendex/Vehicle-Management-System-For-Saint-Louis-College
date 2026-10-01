@@ -10,7 +10,7 @@ from violations.models import Violation, FINE_STANDARD, FINE_REPEAT, REPEAT_THRE
 def _make_vehicle(plate, email=None):
     user = User.objects.create_user(
         email=email or f'{plate.lower()}@slc.edu.ph',
-        full_name='Test Owner',
+        last_name='Owner', first_name='Test',
         password='SecurePassword123!',
         role='vehicle_owner',
         owner_type=User.OwnerType.STUDENT,
@@ -112,7 +112,7 @@ class MyViolationsViewTests(TestCase):
 
     def setUp(self):
         self.owner = User.objects.create_user(
-            email='multi@slc.edu.ph', full_name='Multi Vehicle Owner',
+            email='multi@slc.edu.ph', last_name='Owner', first_name='Multi', middle_initial='V',
             password='SecurePassword123!', role='vehicle_owner',
             owner_type=User.OwnerType.STUDENT,
         )
@@ -172,9 +172,9 @@ class ViolationIssuePermissionTests(TestCase):
     """Issuing violations is guard-only; admin (CDSO) manages but does not issue."""
 
     def setUp(self):
-        self.guard = User.objects.create_user(email='vguard@slc.edu.ph', full_name='Guard',
+        self.guard = User.objects.create_user(email='vguard@slc.edu.ph', last_name='Guard', first_name='Guard',
                                                password='x', role='security')
-        self.admin = User.objects.create_user(email='vadmin@slc.edu.ph', full_name='Admin',
+        self.admin = User.objects.create_user(email='vadmin@slc.edu.ph', last_name='Admin', first_name='Admin',
                                                password='x', role='admin')
         _make_vehicle('ISS1234')
 

@@ -1127,6 +1127,9 @@ from .registration_edits import (READ_ONLY_REASONS, apply_changes, clean_changes
                                  current_values, describe, editable_for)
 from .serializers import VehicleRegistrationSerializer
 from .control_numbers import allocate_control_number, is_ebike, peek_next_control_number
+from .registration_deadline import deadline_payload, expire_overdue, format_deadline
+from accounts.names import NAME_FIELDS, name_parts_from, name_parts_of, name_search_q
+from .college_programs import INVALID_MESSAGE as COLLEGE_PROGRAM_INVALID, normalize_program_year
 from .campus_days import (ALL_DAYS, MAX_CAMPUS_DAYS, SCHEDULE_DAY_LABELS,
                           SCHEDULE_GROUP_DAYS, clean_campus_days,
                           resolve_student_schedule, schedule_group)
@@ -2000,7 +2003,7 @@ class AcceptRegistrationView(APIView):
             campus_days = registration.campus_days or []
             user = User.objects.create_user(
                 email=registration.email,            # the email on the form becomes the portal login
-                full_name=registration.full_name,
+                **name_parts_of(registration),       # the name exactly as the applicant gave it
                 password=temp_password,
                 role='vehicle_owner',
                 must_change_password=True,           # forces a change at first sign-in
@@ -2315,7 +2318,7 @@ class CdsoDirectRegisterView(APIView):
 
             user = User.objects.create_user(
                 email=registration.email,
-                full_name=registration.full_name,
+                **name_parts_of(registration),
                 password=temp_password,
                 role='vehicle_owner',
                 must_change_password=True,
@@ -2473,7 +2476,8 @@ class ScheduleSlotsView(APIView):
         # otherwise a day could be handed out twice over while a queue of
         # submissions sat waiting for review.
         active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-        base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')   # only students hold named days; employees and fetchers are 'ANY'
+        base = (VehicleRegistration.objects.filter(status__in=active, registrant_type='student')   # only students hold named days; employees and fetchers are 'ANY'
+                .exclude(VehicleRegistration.overdue_q()))   # an application past its payment deadline holds nothing; the submit sweeps it
         limit = SCHEDULE_SLOT_LIMIT
 
         # One query with a FILTER per day, not one .count() per day.
@@ -2545,7 +2549,11 @@ class RegistrationAvailabilityView(APIView):
         # Only a LIVE application blocks a new one. A rejected or expired row is
         # history and must not keep a plate or an email hostage for good.
         statuses = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-        qs = VehicleRegistration.objects.filter(status__in=statuses)
+        # Nor does one whose 3-day payment deadline has run out: the submit
+        # sweeps it to EXPIRED before checking, so it must not be reported as
+        # taken here either.
+        qs = (VehicleRegistration.objects.filter(status__in=statuses)
+              .exclude(VehicleRegistration.overdue_q()))
 
         # Each helper returns a ready-to-show sentence, or None when the value is
         # free — so the hint under the field can name the conflict instead of
@@ -2652,6 +2660,13 @@ class PublicOpenRegistrationView(APIView):
             # rather than a field-level error the applicant could try to correct.
             return Response({"error": ban, "registration_banned": True}, status=status.HTTP_403_FORBIDDEN)
 
+        # An application that ran out its 3 days still reads as PENDING until
+        # a sweep reaches it, and the hourly one may be most of an hour away.
+        # Sweeping here first means an abandoned application never blocks a
+        # fresh one — including the same applicant trying again. One indexed
+        # query when nothing is overdue.
+        expire_overdue()
+
         # 1:1 guard — plate/conduction, email and student/employee ID must not
         # already have an active registration
         # 5. The same checks RegistrationAvailabilityView answered as they
@@ -2678,12 +2693,18 @@ class PublicOpenRegistrationView(APIView):
         data['conduction_number'] = conduction_in
         department_type = _normalize_department(data)   # label -> stored value; also what the fee exemption is decided on
 
+        # The name is stored as last / first / middle initial. Resolved here so
+        # that the form's "middle_name" box keeps only its initial, and a
+        # browser still on the previous bundle (which posted one full_name
+        # string) is split rather than refused.
+        data['last_name'], data['first_name'], data['middle_initial'] = name_parts_from(data)
+
         # Strip fields that are not model columns (e.g. form-only UI fields)
-        # These are real form fields, just not columns: the name parts are
-        # joined into full_name and the address parts into one line by the
-        # serializer, and privacy_consent is a tick box the form enforces.
-        # Passing them to the serializer would be an unknown-field error.
-        for extra in ('last_name', 'first_name', 'middle_name',
+        # These are real form fields, just not columns: the address parts are
+        # joined into one line by the serializer, and privacy_consent is a tick
+        # box the form enforces. Passing them to the serializer would be an
+        # unknown-field error.
+        for extra in ('middle_name', 'full_name',
                       'house_street', 'barangay', 'city_municipality', 'province',
                       'student_strand', 'student_grade',
                       'student_program', 'student_year',
@@ -2767,6 +2788,17 @@ class PublicOpenRegistrationView(APIView):
             # employee with a fetcher classification the gate would act on.
             data.pop('fetcher_type', None)
             data.pop('fetcher_students', None)
+
+        # College students pick their program and year from the official list
+        # (vehicles/college_programs.py). Checked here as well as by the form's
+        # dropdown: a direct POST, or a browser still holding the old free-text
+        # form, would otherwise file whatever was typed.
+        if registrant_type == 'student' and data.get('student_level') == 'college':
+            program_year = normalize_program_year(data.get('program_year'))
+            if program_year is None:
+                return Response({"error": COLLEGE_PROGRAM_INVALID},
+                                status=status.HTTP_400_BAD_REQUEST)
+            data['program_year'] = program_year
 
         # 9. Campus days. Employees and fetchers come in whenever they are
         # needed, so they hold no particular day and take up no slot: 'ANY' with
@@ -2881,7 +2913,10 @@ class PublicOpenRegistrationView(APIView):
                  # The number actually issued, which may not be the one the
                  # preview endpoint showed — this is the authoritative answer.
                  "control_number": registration.plate_number if ebike else None,
-                 "email_status": 'queued'},          # queued, not sent: the mail is still in flight when this returns
+                 "email_status": 'queued',           # queued, not sent: the mail is still in flight when this returns
+                 # The receipt deadline, so the confirmation screen can state the
+                 # exact date rather than "3 days" for them to work out.
+                 **deadline_payload(registration)},
                 status=status.HTTP_201_CREATED,
             )
         # The serializer's own field errors, keyed by field name so the form can
@@ -2944,13 +2979,51 @@ def _payment_registration(token):
         # Both conditions in the one query, so a token for an already-reviewed
         # application is indistinguishable from a token that never existed —
         # the caller cannot tell the two apart from the outside.
-        return VehicleRegistration.objects.get(
+        registration = VehicleRegistration.objects.get(
             payment_token=token,
             status=VehicleRegistration.Status.PENDING,
         )
     except (VehicleRegistration.DoesNotExist, ValueError, ValidationError):
         # ValueError/ValidationError: a malformed token is a bad link, not a 500.
         return None
+    # Past the 3-day deadline: expire it now rather than wait up to an hour
+    # for the scheduler, so the applicant is told the truth on this very page.
+    if registration.payment_overdue():
+        expire_overdue(pk=registration.pk)
+        return None
+    return registration
+
+
+# Why a payment/edit link stopped working, as the response to send.
+def _payment_link_dead(token, generic_message):
+    """410 with the deadline when the application expired unpaid; else 404.
+
+    The generic 404 deliberately hides which of "wrong token" and "already
+    reviewed" it was. Expiry is different: the token is an unguessable UUID, so
+    whoever holds one is the applicant, and "your 3 days ran out, apply again"
+    is the one answer they can act on.
+    """
+    registration = None
+    if token:
+        try:
+            registration = VehicleRegistration.objects.filter(payment_token=token).first()
+        except (ValueError, ValidationError):
+            registration = None
+    expired_unpaid = registration is not None and (
+        registration.payment_overdue()               # overdue, but a receipt upload held the row as the sweep passed
+        or (registration.status == VehicleRegistration.Status.EXPIRED
+            and registration.rejection_reason == VehicleRegistration.EXPIRED_UNPAID_REASON))
+    if not expired_unpaid:
+        return Response({"error": generic_message}, status=status.HTTP_404_NOT_FOUND)
+    deadline = registration.payment_deadline()
+    when = f" (the deadline was {format_deadline(deadline)})" if deadline else ""
+    return Response({
+        "error": (f"This application has expired because the Official Receipt was not filed "
+                  f"within {VehicleRegistration.PAYMENT_WINDOW.days} days of applying{when}. "
+                  f"Please submit a new application. If you already paid, bring your "
+                  f"Official Receipt to the CDSO Office."),
+        "expired": True,
+    }, status=status.HTTP_410_GONE)
 
 
 # How big a receipt photo may be. Phone cameras routinely produce 5-8 MB, so
@@ -3001,6 +3074,9 @@ class RegistrationPaymentView(APIView):
     # bundle's upload is parsed and discarded rather than 415'd.
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
+    DEAD_LINK_MESSAGE = ("This payment link is no longer valid. It may have expired, "
+                         "or your application may already have been reviewed.")
+
     def get(self, request):
         """Everything the upload page needs to render, and nothing more.
 
@@ -3008,17 +3084,17 @@ class RegistrationPaymentView(APIView):
         anyone holding the link, so it returns what the applicant already knows
         about their own application, not the record CDSO sees.
         """
-        registration = _payment_registration(request.query_params.get('token'))
+        token = request.query_params.get('token')
+        registration = _payment_registration(token)
         if registration is None:
             # One message for every failure — wrong token, already reviewed,
             # nonexistent. Saying which would let somebody holding a guessed
-            # token learn whether it named a real application.
-            return Response(
-                {"error": "This payment link is no longer valid. It may have expired, "
-                          "or your application may already have been reviewed."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            # token learn whether it named a real application. The exception
+            # is an application that ran out its 3 days; see _payment_link_dead.
+            return _payment_link_dead(token, self.DEAD_LINK_MESSAGE)
         return Response({
+            # The 3-day deadline, formatted and counted down on the server.
+            **deadline_payload(registration),
             "full_name":       registration.full_name,       # so the applicant can see they opened the right link
             # Whichever identifies this vehicle: a brand-new car has only the
             # conduction number, and an e-bike's control number lives in
@@ -3034,13 +3110,10 @@ class RegistrationPaymentView(APIView):
     def post(self, request):
         # Resolved again from scratch. The GET that rendered the page proves
         # nothing about this request — each one stands on its own token.
-        registration = _payment_registration(request.data.get('token'))
+        token = request.data.get('token')
+        registration = _payment_registration(token)
         if registration is None:
-            return Response(
-                {"error": "This payment link is no longer valid. It may have expired, "
-                          "or your application may already have been reviewed."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _payment_link_dead(token, self.DEAD_LINK_MESSAGE)
 
         # Exempt applicants have nothing to pay and so nothing to prove. Told
         # plainly rather than letting them hunt for a receipt that never existed.
@@ -3095,20 +3168,33 @@ class RegistrationPaymentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Four fields together record the payment; written in one save so a
-        # row can never be left half-paid.
-        registration.or_number        = or_number
-        # Snapshot of what was owed at the moment of payment — see the field.
-        registration.amount_paid      = registration.pass_fee()
-        registration.paid_at          = timezone.now()   # when it was filed, which is not necessarily when they paid the cashier
-        registration.payment_status   = VehicleRegistration.PaymentStatus.PAID   # what moves it into the CDSO review queue
-        written = ['or_number', 'amount_paid', 'paid_at', 'payment_status']
-        if receipt_image is not None:
-            registration.or_receipt_image = receipt_image
-            written.append('or_receipt_image')
-        # update_fields, so this cannot overwrite anything a reviewer changed on
-        # the row while the applicant had the page open.
-        registration.save(update_fields=written)
+        # Locked, then asked once more. The checks above ran on a row read
+        # before a slow upload may have finished arriving, and the deadline
+        # sweep could have expired it since; holding the lock means the sweep
+        # (which skips locked rows) and this write cannot both happen. The
+        # grace hour on the deadline is what lets an upload that was started in
+        # time, on a slow connection, still land here.
+        with transaction.atomic():
+            registration = (VehicleRegistration.objects.select_for_update()
+                            .filter(pk=registration.pk,
+                                    status=VehicleRegistration.Status.PENDING).first())
+            if registration is None or registration.payment_overdue():
+                return _payment_link_dead(token, self.DEAD_LINK_MESSAGE)   # nothing written yet; the next sweep expires it
+
+            # Four fields together record the payment; written in one save so a
+            # row can never be left half-paid.
+            registration.or_number        = or_number
+            # Snapshot of what was owed at the moment of payment — see the field.
+            registration.amount_paid      = registration.pass_fee()
+            registration.paid_at          = timezone.now()   # when it was filed, which is not necessarily when they paid the cashier
+            registration.payment_status   = VehicleRegistration.PaymentStatus.PAID   # what moves it into the CDSO review queue
+            written = ['or_number', 'amount_paid', 'paid_at', 'payment_status']
+            if receipt_image is not None:
+                registration.or_receipt_image = receipt_image
+                written.append('or_receipt_image')
+            # update_fields, so this cannot overwrite anything a reviewer changed on
+            # the row while the applicant had the page open.
+            registration.save(update_fields=written)
 
         # The receipt number is what completes the registration form, so this is
         # the mail that carries it: the PDF the CDSO files. Backgrounded like the
@@ -3169,7 +3255,7 @@ def _mirror_registration_change(registration, changed_fields):
     up with a corrected dashboard and a gate that still refuses them:
 
       * `Vehicle` — what the plate reader and the guard's lookup resolve.
-      * `User.full_name` — what the portal and every notice address them as.
+      * the User's name parts — what the portal and every notice address them as.
       * nothing for the QR: it is `VEHICLE:{plate}|ID:{id}`, rebuilt live from
         the registration wherever it is displayed. The copy attached to the
         original approval email is the one exception, and the decision email
@@ -3187,10 +3273,12 @@ def _mirror_registration_change(registration, changed_fields):
 
     # The account, if the approval created one. user_id rather than .user: this
     # asks whether there IS an account without fetching it to find out.
-    if 'full_name' in touched and registration.user_id:
+    name_fields = touched & set(NAME_FIELDS)
+    if name_fields and registration.user_id:
         user = registration.user
-        user.full_name = registration.full_name
-        user.save(update_fields=['full_name'])   # the name only; nothing else on the account is this function's business
+        for field in name_fields:
+            setattr(user, field, getattr(registration, field))
+        user.save(update_fields=sorted(name_fields))   # the name only; nothing else on the account is this function's business
 
     # The four fields that describe the car. Anything else on the whitelist —
     # a licence number, a program — lives only on the registration row, so
@@ -3253,11 +3341,14 @@ class RegistrationSelfEditView(APIView):
     def get(self, request):
         # Everything the edit form needs to draw itself: which boxes it may
         # offer, what goes in them, and what it must show without offering.
-        registration = _payment_registration(request.query_params.get('token'))   # the same PENDING-only lookup the receipt step uses
+        token = request.query_params.get('token')
+        registration = _payment_registration(token)   # the same PENDING-only lookup the receipt step uses
         if registration is None:
-            return Response({"error": self.EXPIRED_MESSAGE},
-                            status=status.HTTP_404_NOT_FOUND)
+            return _payment_link_dead(token, self.EXPIRED_MESSAGE)
         return Response({
+            # Shown above the form while the receipt is still owed: editing
+            # does not restart the 3 days, which run from the original submission.
+            **deadline_payload(registration),
             "registrant_type": registration.registrant_type,   # the form asks different questions of a student, an employee and a fetcher
             "student_level":   registration.student_level,
             "reference":       "REG-%s" % str(registration.pk).zfill(6),   # a handle they can quote at the CDSO desk; the token itself is never shown
@@ -3278,10 +3369,10 @@ class RegistrationSelfEditView(APIView):
     def post(self, request):
         # Resolved from the token again. The GET that drew the form proves
         # nothing about this request, and the row may have been reviewed since.
-        registration = _payment_registration(request.data.get('token'))
+        token = request.data.get('token')
+        registration = _payment_registration(token)
         if registration is None:
-            return Response({"error": self.EXPIRED_MESSAGE},
-                            status=status.HTTP_404_NOT_FOUND)
+            return _payment_link_dead(token, self.EXPIRED_MESSAGE)
 
         raw = {k: v for k, v in request.data.items() if k != 'token'}   # everything but the token is a candidate change
         # The whitelist, the per-field cleaners and the duplicate checks all
@@ -3298,6 +3389,15 @@ class RegistrationSelfEditView(APIView):
 
         summary = describe(registration, changes)   # the old-to-new rows, built BEFORE the write while the old values still exist
         with transaction.atomic():
+            # The full save() below would write status back to PENDING over a
+            # deadline sweep that expired the row mid-request. Locking it first
+            # makes the sweep skip it; re-reading the status catches one that
+            # got there before us.
+            still_pending = (VehicleRegistration.objects.select_for_update()
+                             .filter(pk=registration.pk, status=VehicleRegistration.Status.PENDING)
+                             .values_list('pk', flat=True).first())
+            if still_pending is None or registration.payment_overdue():
+                return _payment_link_dead(token, self.EXPIRED_MESSAGE)
             apply_changes(registration, changes)    # writes the fields onto the object and deliberately does not save
             registration.save()                     # the one save, inside the transaction that owns it
 
@@ -3366,6 +3466,7 @@ class OwnerChangeRequestView(APIView):
             "editable": [{"field": f.name, "label": f.label}   # the same whitelist the pending path offers, worked out for this registration
                          for f in editable_for(registration)],
             "values":   current_values(registration),
+            "student_level": registration.student_level,   # a college student's Program & Year is picked from the official list
             "locked":   dict(READ_ONLY_REASONS),   # field -> why it cannot be changed, so the form can say so instead of just greying the box out
             "requests": [_serialize_change_request(r) for r in requests],   # the history, which is what lets the page say "waiting on CDSO"
         })
@@ -3714,21 +3815,17 @@ class DepartmentListView(APIView):
 
 
 class ProgramListView(APIView):
-    """College program list — excludes legacy Senior High (Grade 11/12) strand
-    entries, which now have their own Track/Strand + Grade Level pickers on
-    the registration form and don't belong in the college program dropdown."""
+    """College program/year list, from vehicles/college_programs.py.
+
+    The registration form now bundles the list itself; this keeps answering in
+    the old flat ["BSIT - 1", ...] shape for any older bundle still calling it,
+    and now serves the official list rather than the stale tbl_reference_item
+    rows (which stay put — older registrations' program FK points at them)."""
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        names = list(
-            ReferenceItem.objects.filter(category='program', is_active=True)
-            # Excluded by name rather than deleted: the rows are still what
-            # older registrations point at, and removing them would strand them.
-            .exclude(name__icontains='Grade 11')
-            .exclude(name__icontains='Grade 12')
-            .values_list('name', flat=True)
-        )
-        return Response(names)
+        from .college_programs import all_program_years
+        return Response(all_program_years())
 
 
 # ──────────────────────────────────────────────
@@ -3896,6 +3993,12 @@ class SystemSettingsView(APIView):
             "double_park_after_seconds": obj.double_park_after_seconds,
             "auto_backup_frequency": obj.auto_backup_frequency,
             "auto_backup_keep":      obj.auto_backup_keep,
+            "scheduled_backup_frequency": obj.scheduled_backup_frequency,
+            "scheduled_backup_time":      obj.scheduled_backup_time.strftime("%H:%M"),   # what an <input type="time"> holds
+            "scheduled_backup_weekday":   obj.scheduled_backup_weekday,
+            "scheduled_backup_day":       obj.scheduled_backup_day,
+            "scheduled_backup_folder":    obj.scheduled_backup_folder,
+            "scheduled_backup_keep":      obj.scheduled_backup_keep,
             # Report signatories. The preparer pair is normally blank, and
             # blank is what makes the PDF name whoever is signed in and
             # generated it; filled in, it overrides that signature line.
@@ -3921,6 +4024,7 @@ class SystemSettingsView(APIView):
         errors = {}                              # field -> message; collected rather than raised, so the form gets every problem at once
 
         from datetime import date as date_type   # aliased, as every datetime import in this file is (_dt, _date); the plain name is never bound here
+        from datetime import time as time_type
 
         # Every field defaults to what is already stored, which is what makes a
         # PUT carrying only some keys leave the rest alone instead of blanking
@@ -3941,7 +4045,13 @@ class SystemSettingsView(APIView):
         double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
         auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
         auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
-        report_preparer_name      = request.data.get("report_preparer_name",     obj.report_preparer_name)
+        scheduled_backup_frequency = request.data.get("scheduled_backup_frequency", obj.scheduled_backup_frequency)
+        scheduled_backup_time      = request.data.get("scheduled_backup_time",      obj.scheduled_backup_time)
+        scheduled_backup_weekday   = request.data.get("scheduled_backup_weekday",   obj.scheduled_backup_weekday)
+        scheduled_backup_day       = request.data.get("scheduled_backup_day",       obj.scheduled_backup_day)
+        scheduled_backup_folder    = request.data.get("scheduled_backup_folder",    obj.scheduled_backup_folder)
+        scheduled_backup_keep      = request.data.get("scheduled_backup_keep",      obj.scheduled_backup_keep)
+        report_preparer_name     = request.data.get("report_preparer_name",     obj.report_preparer_name)
         report_preparer_position  = request.data.get("report_preparer_position", obj.report_preparer_position)
         report_approver_name      = request.data.get("report_approver_name",     obj.report_approver_name)
         report_approver_position  = request.data.get("report_approver_position", obj.report_approver_position)
@@ -4085,6 +4195,52 @@ class SystemSettingsView(APIView):
         except (TypeError, ValueError):
             errors["auto_backup_keep"] = "Must be an integer."
 
+        # The calendar-pinned schedule. Every part is range-checked even while
+        # it is off or not the part in use (the weekday on a monthly schedule),
+        # for the same reason as the keep count above: it stays on the row and
+        # applies the moment somebody switches to it.
+        scheduled_backup_frequency = str(scheduled_backup_frequency or 'off').lower()
+        if scheduled_backup_frequency not in {'off', 'daily', 'weekly', 'monthly'}:
+            errors["scheduled_backup_frequency"] = "Must be one of: off, daily, weekly, monthly."
+        if not isinstance(scheduled_backup_time, time_type):
+            try:
+                scheduled_backup_time = time_type.fromisoformat(str(scheduled_backup_time).strip())
+            except ValueError:
+                errors["scheduled_backup_time"] = "Must be a time of day, e.g. 17:00."
+        if isinstance(scheduled_backup_time, time_type):
+            # Minutes only: the schedule is shown and compared to the minute.
+            scheduled_backup_time = scheduled_backup_time.replace(second=0, microsecond=0, tzinfo=None)
+        for _field, _value, _low, _high, _msg in (
+            ("scheduled_backup_weekday", scheduled_backup_weekday, 0, 6,  "Must be a weekday, 0 (Monday) to 6 (Sunday)."),
+            ("scheduled_backup_day",     scheduled_backup_day,     1, 31, "Must be a day of the month, 1 to 31."),
+            ("scheduled_backup_keep",    scheduled_backup_keep,    1, 90, "Must be between 1 and 90 backups."),
+        ):
+            try:
+                if not (_low <= int(_value) <= _high):
+                    errors[_field] = _msg
+            except (TypeError, ValueError):
+                errors[_field] = "Must be an integer."
+        if not any(k in errors for k in ("scheduled_backup_weekday", "scheduled_backup_day", "scheduled_backup_keep")):
+            scheduled_backup_weekday = int(scheduled_backup_weekday)
+            scheduled_backup_day     = int(scheduled_backup_day)
+            scheduled_backup_keep    = int(scheduled_backup_keep)
+        scheduled_backup_folder = ('' if scheduled_backup_folder is None else str(scheduled_backup_folder)).strip()
+        if len(scheduled_backup_folder) > 500:
+            errors["scheduled_backup_folder"] = "Must be at most 500 characters."
+        # The folder is checked by actually writing to it — on this server,
+        # which is the machine that will run the job — but only when it is new
+        # or the schedule is being switched on. Re-saving an unrelated setting
+        # from the other deployment (whose disk cannot see a campus drive) must
+        # not be refused over a folder nobody touched.
+        elif scheduled_backup_folder and scheduled_backup_frequency != 'off' and (
+                scheduled_backup_folder != (obj.scheduled_backup_folder or '').strip()
+                or obj.scheduled_backup_frequency == 'off'):
+            from accounts.backup_utils import BackupFolderError, check_scheduled_dir
+            try:
+                check_scheduled_dir(scheduled_backup_folder)
+            except BackupFolderError as exc:
+                errors["scheduled_backup_folder"] = str(exc)
+
         # The signatory strings. They are free text, so the only thing that can
         # be wrong is the length: each column is sized for a name or a caption,
         # and anything longer would be truncated by the database rather than
@@ -4136,7 +4292,14 @@ class SystemSettingsView(APIView):
         obj.auto_backup_frequency = auto_backup_frequency
         obj.auto_backup_keep      = auto_backup_keep
 
-        obj.report_preparer_name     = signatories["report_preparer_name"]
+        obj.scheduled_backup_frequency = scheduled_backup_frequency
+        obj.scheduled_backup_time      = scheduled_backup_time
+        obj.scheduled_backup_weekday   = scheduled_backup_weekday
+        obj.scheduled_backup_day       = scheduled_backup_day
+        obj.scheduled_backup_folder    = scheduled_backup_folder
+        obj.scheduled_backup_keep      = scheduled_backup_keep
+
+        obj.report_preparer_name    = signatories["report_preparer_name"]
         obj.report_preparer_position = signatories["report_preparer_position"]
         obj.report_approver_name     = signatories["report_approver_name"]
         obj.report_approver_position = signatories["report_approver_position"]
@@ -4156,6 +4319,26 @@ class SystemSettingsView(APIView):
         if before["auto_backup_keep"] != auto_backup_keep:   # only when the number actually moved; pruning on every save would be wasted work
             from accounts.backup_utils import prune_backups
             prune_backups(auto_backup_keep)      # deletes everything past the newest `keep` of each rotating kind, straight away
+
+        # Same for the scheduled folder's own keep count. Best effort: the
+        # folder may be a drive this server cannot see right now, and the
+        # settings are already saved.
+        if before["scheduled_backup_keep"] != scheduled_backup_keep:
+            from accounts.backup_utils import BackupFolderError, prune_scheduled, scheduled_dir
+            try:
+                prune_scheduled(scheduled_backup_keep, scheduled_dir(create=False))
+            except BackupFolderError:
+                pass
+
+        # A changed schedule is acted on now, not after the scheduler's current
+        # hour-long sleep: a time set for ten minutes from now has to happen in
+        # ten minutes, and a schedule switched on past today's time takes its
+        # first backup straight away.
+        if any(before[k] != self._serialize(obj)[k] for k in (
+                "scheduled_backup_frequency", "scheduled_backup_time", "scheduled_backup_weekday",
+                "scheduled_backup_day", "scheduled_backup_folder")):
+            from . import scheduler
+            scheduler.wake()
 
         # Give an expiry date to any owner still missing one, using the duration
         # the admin just chose and counting from their join date. Owners that
@@ -5066,7 +5249,7 @@ def _filter_registrations_report(request):
         # Plate or name, the two things somebody looking for one registration
         # actually has to hand.
         qs = qs.filter(Q(plate_number__icontains=search) | Q(conduction_number__icontains=search)
-                       | Q(full_name__icontains=search))
+                       | name_search_q(search))
 
     # `desc` is the filter written out for the report's subtitle, so a printed
     # copy says on its face what it was filtered to — a page of numbers with no

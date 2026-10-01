@@ -782,7 +782,7 @@ class DetectEndpointTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='rtsp-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='rtsp-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
 
     def test_requires_authentication(self):
         r = self.client.post(ENDPOINT, {'ip': '10.0.0.5'}, format='json')

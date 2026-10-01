@@ -6,9 +6,9 @@ admin.site.register(Vehicle)
 
 @admin.register(VehicleRegistration)
 class VehicleRegistrationAdmin(admin.ModelAdmin):
-    list_display   = ('full_name', 'email', 'registrant_type', 'plate_number', 'status', 'source', 'created_at')
+    list_display   = ('full_name', 'email', 'registrant_type', 'plate_number', 'status', 'source', 'created_at')   # full_name: the computed display name
     list_filter    = ('status', 'registrant_type', 'source')
-    search_fields  = ('full_name', 'email', 'plate_number')
+    search_fields  = ('last_name', 'first_name', 'email', 'plate_number')
 
 
 @admin.register(ReferenceItem)

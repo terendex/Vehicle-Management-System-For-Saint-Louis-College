@@ -24,7 +24,7 @@ class CapacityOverrideTests(TestCase):
         ParkingSpace.objects.bulk_create(
             ParkingSpace(zone=self.zone, space_number=f'C{i:02d}') for i in range(1, 11))   # 10 bays drawn
         admin = User.objects.create_user(
-            email='cap-admin@test.local', full_name='CAP ADMIN',
+            email='cap-admin@test.local', last_name='ADMIN', first_name='CAP',
             password='SecurePassword123!', role='admin')
         self.client = APIClient()
         self.client.force_authenticate(user=admin)
@@ -72,7 +72,7 @@ class CapacityOverrideTests(TestCase):
 
     def test_only_admin_can_set_it(self):
         guard = User.objects.create_user(
-            email='cap-guard@test.local', full_name='CAP GUARD',
+            email='cap-guard@test.local', last_name='GUARD', first_name='CAP',
             password='SecurePassword123!', role='security', gate_assignment='gate1')
         client = APIClient()
         client.force_authenticate(user=guard)

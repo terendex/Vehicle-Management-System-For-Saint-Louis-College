@@ -99,7 +99,7 @@ class ManilaClockTests(TestCase):
 
     def test_the_api_takes_today_on_the_manila_date(self):
         admin = User.objects.create_user(
-            email='status-admin@test.local', full_name='STATUS ADMIN',
+            email='status-admin@test.local', last_name='ADMIN', first_name='STATUS',
             password='SecurePassword123!', role='admin')
         client = APIClient()
         client.force_authenticate(user=admin)
@@ -161,7 +161,7 @@ class DailyJobTests(TestCase):
 class EventApiStatusTests(TestCase):
     def setUp(self):
         admin = User.objects.create_user(
-            email='status-api@test.local', full_name='STATUS API',
+            email='status-api@test.local', last_name='API', first_name='STATUS',
             password='SecurePassword123!', role='admin')
         self.client = APIClient()
         self.client.force_authenticate(user=admin)

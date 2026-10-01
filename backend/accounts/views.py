@@ -13,6 +13,7 @@ from django.utils import timezone
 from time_utils import day_range, day_start, day_end, filter_local_date_range
 from .email_utils import notify_password_set
 from .models import User, AuditLog, Notification
+from .names import compose_full_name, name_search_q
 from .twofa_api import HasRecentTwoFactor
 from .serializers import (
     UserSerializer,
@@ -186,8 +187,10 @@ class UserListView(generics.ListAPIView):
         # have — a name, an address, or the code printed on a badge.
         search = self.request.query_params.get('search', '').strip()
         if search:
+            # The name is matched on its parts, in either order ("Juan Dela
+            # Cruz" and "Dela Cruz, Juan" both find him) — see accounts/names.py.
             qs = qs.filter(
-                Q(full_name__icontains=search) |
+                name_search_q(search) |
                 Q(email__icontains=search) |
                 Q(user_code__icontains=search)
             )
@@ -226,7 +229,7 @@ class UserDetailView(generics.RetrieveAPIView):
 # Editing an account. Most of the body below is not the edit — it is working
 # out what CHANGED, so the audit line can say so.
 class UserUpdateView(generics.UpdateAPIView):
-    """Edit user details (full_name, email, role, photo)."""
+    """Edit user details (last/first name, middle initial, email, role, photo)."""
     queryset           = User.objects.all()
     serializer_class   = UserUpdateSerializer
     permission_classes = [IsAdminRole]
@@ -238,7 +241,15 @@ class UserUpdateView(generics.UpdateAPIView):
         # Read BEFORE the save, while the old values are still on the instance.
         old_user = serializer.instance
         changes = []
-        for field in ['full_name', 'email', 'role']:
+        # The name is reported as one before/after pair, the way it is read,
+        # rather than as up to three separate part changes.
+        data = serializer.validated_data
+        new_name = compose_full_name(data.get('last_name', old_user.last_name),
+                                     data.get('first_name', old_user.first_name),
+                                     data.get('middle_initial', old_user.middle_initial))
+        if new_name != old_user.full_name:
+            changes.append(f"name: '{old_user.full_name}' → '{new_name}'")
+        for field in ['email', 'role']:
             old_val = getattr(old_user, field)
             # Defaulting to the old value means a field the request did not
             # mention compares equal and is not reported as a change.
@@ -796,7 +807,7 @@ def _filter_audit_logs(request):
         # always. Recorded, not changed: this pass comments code.
         qs = qs.filter(
             Q(actor__user_code__icontains=search) |
-            Q(actor__full_name__icontains=search) |
+            name_search_q(search, prefix='actor__') |
             Q(actor__email__icontains=search) |
             Q(details__icontains=search)
         )
@@ -989,7 +1000,44 @@ class SystemBackupListView(APIView):
             'backups': list_backups(),
             'auto_backup_frequency': cfg.auto_backup_frequency,
             'auto_backup_keep': cfg.auto_backup_keep,
+            'scheduled': self._scheduled_status(cfg),
         })
+
+    @staticmethod
+    def _scheduled_status(cfg):
+        """Where the scheduled backup stands, checked live on this server.
+
+        The folder is tested here rather than trusted from Save: a USB stick
+        pulled out on Wednesday should show as a problem on the page before
+        Friday's backup silently fails to happen.
+        """
+        from django.utils.dateparse import parse_datetime
+        from .backup_utils import (
+            BackupFolderError, latest_scheduled_backup, scheduled_dir, scheduled_slots,
+        )
+
+        status = {
+            'frequency': cfg.scheduled_backup_frequency,
+            'folder': None, 'folder_ok': True, 'folder_error': None,
+            'next_due': None, 'last': None,
+        }
+        if cfg.scheduled_backup_frequency == 'off':
+            return status
+        try:
+            folder = scheduled_dir(create=False)
+            status['folder'] = folder
+            status['last'] = latest_scheduled_backup(folder)
+        except BackupFolderError as exc:
+            status['folder_ok'] = False
+            status['folder_error'] = str(exc)
+        previous, upcoming = scheduled_slots(cfg)
+        status['next_due'] = upcoming.isoformat() if upcoming else None
+        # The latest slot has no file yet: either the pass is about to take it
+        # or it is failing. The page says "due now" rather than pretending the
+        # next one is a week away.
+        status['overdue'] = bool(status['folder_ok'] and previous and (
+            not status['last'] or parse_datetime(status['last']['created_at']) < previous))
+        return status
 
 
 class SystemBackupFileView(APIView):

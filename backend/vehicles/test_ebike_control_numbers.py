@@ -32,7 +32,7 @@ class EbikeRegistrationTests(TestCase):
             end_date=today + timedelta(days=30), is_active=True)
 
     def _post(self, email, **overrides):
-        payload = dict(registrant_type='employee', full_name='E BIKE', email=email,
+        payload = dict(registrant_type='employee', last_name='BIKE', first_name='E', email=email,
                        vehicle_type='E-Bike', vehicle_color='BLACK', department='Teaching')
         payload.update(overrides)
         return APIClient().post(OPEN_URL, payload, format='json')
@@ -96,12 +96,12 @@ class EbikeRegistrationTests(TestCase):
 class EbikeWalkInTests(TestCase):
     def test_walk_in_gets_a_control_number_and_an_ebike_vehicle(self):
         from accounts.models import User
-        admin = User.objects.create_user(email='cdso-ebike@slc.edu.ph', full_name='CDSO',
+        admin = User.objects.create_user(email='cdso-ebike@slc.edu.ph', last_name='CDSO', first_name='CDSO',
                                          password='x', role='admin')
         client = APIClient()
         client.force_authenticate(admin)
         resp = client.post('/api/vehicles/register/direct/', dict(
-            registrant_type='employee', full_name='WALK IN', email='walkin-ebike@slc-sflu.edu.ph',
+            registrant_type='employee', last_name='IN', first_name='WALK', email='walkin-ebike@slc-sflu.edu.ph',
             vehicle_type='E-Bike', vehicle_color='RED', department='Teaching',
             or_number='1234567', plate_number='SHOULD BE IGNORED',
         ), format='json')
@@ -119,7 +119,7 @@ class EbikeWalkInTests(TestCase):
 
 class EbikeEditLockTests(TestCase):
     def _reg(self, **kwargs):
-        fields = dict(registrant_type='employee', full_name='E BIKE', email='lock@x.com',
+        fields = dict(registrant_type='employee', last_name='BIKE', first_name='E', email='lock@x.com',
                       vehicle_type='E-Bike', vehicle_color='BLACK', plate_number='FM-042',
                       status='pending')
         fields.update(kwargs)

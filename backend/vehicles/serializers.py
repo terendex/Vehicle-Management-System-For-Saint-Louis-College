@@ -8,7 +8,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     """Exposes owner-profile fields from User — used as embedded object in VehicleSerializer."""
     class Meta:
         model  = User
-        fields = ['id', 'full_name', 'email', 'user_code', 'owner_type', 'schedule', 'contact', 'address', 'photo']
+        fields = ['id', 'full_name', 'last_name', 'first_name', 'middle_initial', 'email', 'user_code', 'owner_type', 'schedule', 'contact', 'address', 'photo']
 
 
 class VehicleSerializer(serializers.ModelSerializer):
@@ -24,6 +24,30 @@ class VehicleSerializer(serializers.ModelSerializer):
 
 class VehicleRegistrationSerializer(serializers.ModelSerializer):
     registration_block_count = serializers.SerializerMethodField()
+    # The 3-day receipt deadline (VehicleRegistration.payment_deadline), so the
+    # CDSO queue shows which unpaid applications are about to lapse, and which
+    # expired ones missed it. Computed, so read-only by construction.
+    payment_deadline         = serializers.SerializerMethodField()
+    payment_deadline_display = serializers.SerializerMethodField()
+    # The display name ("DELA CRUZ, JUAN S."), computed from the three name
+    # columns. Declared because '__all__' only lists real columns, and every
+    # screen that shows an applicant reads it.
+    full_name                = serializers.ReadOnlyField()
+    # Wider than the one-letter column: "Santos" or "S." is accepted and
+    # reduced to "S" in validate_middle_initial.
+    middle_initial           = serializers.CharField(max_length=50, required=False,
+                                                     allow_blank=True, default='')
+
+    def to_internal_value(self, data):
+        # A payload with only the old single full_name (a browser still on the
+        # previous bundle, the CDSO walk-in form included) is split, so it
+        # still saves rather than failing "last_name: required".
+        from accounts.serializers import with_name_parts
+        return super().to_internal_value(with_name_parts(data))
+
+    def validate_middle_initial(self, value):
+        from accounts.names import clean_initial
+        return clean_initial(value)
 
     # The applicant's uploads. What is stored is an object key; what a browser
     # needs is a URL it can fetch, and for the reasons in document_urls that is
@@ -122,6 +146,15 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
                 .values('plate_number')
                 .annotate(n=Count('id')))
         return {row['plate_number']: row['n'] for row in rows}
+
+    def get_payment_deadline(self, instance):
+        deadline = instance.payment_deadline()
+        return deadline.isoformat() if deadline else None
+
+    def get_payment_deadline_display(self, instance):
+        from .registration_deadline import format_deadline
+        deadline = instance.payment_deadline()
+        return format_deadline(deadline) if deadline else None
 
     def get_registration_block_count(self, instance):
         """Number of prior violations that flag this plate for additional review."""

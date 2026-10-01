@@ -264,7 +264,7 @@ class ParkingApiTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.guard = User.objects.create_user(
-            email='cap-guard@slc.edu.ph', full_name='GUARD', password='x', role='security')
+            email='cap-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD', password='x', role='security')
 
     def setUp(self):
         self.zone = ParkingZone.objects.create(

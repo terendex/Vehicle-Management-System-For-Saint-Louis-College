@@ -23,10 +23,10 @@ class NoticeVisibilityTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='notice-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='notice-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         # An owner who was already registered when the old notice went out.
         cls.veteran = User.objects.create_user(
-            email='notice-veteran@slc.edu.ph', full_name='VETERAN', password='x',
+            email='notice-veteran@slc.edu.ph', last_name='VETERAN', first_name='VETERAN', password='x',
             role='vehicle_owner')
         User.objects.filter(pk=cls.veteran.pk).update(
             date_joined=timezone.now() - timedelta(days=30))
@@ -39,7 +39,7 @@ class NoticeVisibilityTests(APITestCase):
             created_at=timezone.now() - timedelta(days=7))
 
         cls.newcomer = User.objects.create_user(
-            email='notice-newcomer@slc.edu.ph', full_name='NEWCOMER', password='x',
+            email='notice-newcomer@slc.edu.ph', last_name='NEWCOMER', first_name='NEWCOMER', password='x',
             role='vehicle_owner')
 
         cls.fresh = ParkingNotice.objects.create(

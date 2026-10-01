@@ -20,14 +20,14 @@ from violations.models import Violation
 class DbDeleteRulesTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_user(
-            email='rules-admin@example.com', full_name='Rules Admin', password='Passw0rd!23', role='admin',
+            email='rules-admin@example.com', last_name='Admin', first_name='Rules', password='Passw0rd!23', role='admin',
         )
         self.owner = User.objects.create_user(
-            email='rules-owner@example.com', full_name='Rules Owner', password='Passw0rd!23', role='admin',
+            email='rules-owner@example.com', last_name='Owner', first_name='Rules', password='Passw0rd!23', role='admin',
         )
         self.vehicle = Vehicle.objects.create(plate_number='DBR 1001', vehicle_type='car', user=self.owner)
         self.reg = VehicleRegistration.objects.create(
-            registrant_type='employee', full_name='Rules Owner', email='rules-owner@example.com',
+            registrant_type='employee', last_name='Owner', first_name='Rules', email='rules-owner@example.com',
             plate_number='DBR 1001', vehicle_type='car', user=self.owner, vehicle=self.vehicle,
         )
         self.log = AuditLog.objects.create(

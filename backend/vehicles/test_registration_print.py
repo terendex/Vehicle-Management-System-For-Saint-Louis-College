@@ -28,7 +28,7 @@ def _jpeg(size=(240, 160)):
 
 def _registration(**kwargs):
     fields = dict(
-        registrant_type='student', full_name='DELA CRUZ, JUAN',
+        registrant_type='student', last_name='DELA CRUZ', first_name='JUAN',
         email='print-test@slc.edu.ph', vehicle_type='Motorcycle',
         plate_number='PRT1234', status='accepted', or_number='1234567',
     )
@@ -102,9 +102,9 @@ class RegistrationPdfEndpointTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='print-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='print-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         cls.guard = User.objects.create_user(
-            email='print-guard@slc.edu.ph', full_name='GUARD', password='x', role='security')
+            email='print-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD', password='x', role='security')
 
     def _url(self, reg):
         return f'/api/vehicles/registrations/{reg.id}/pdf/'

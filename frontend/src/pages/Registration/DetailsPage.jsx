@@ -10,6 +10,7 @@ import {
   changedValues, detailFormProblems,
 } from '../../components/RegistrationDetails/detailRules'
 import ChangeDiff from '../../components/RegistrationDetails/ChangeDiff'
+import PaymentDeadline from '../../components/PaymentDeadline/PaymentDeadline'
 import '../../components/RegistrationDetails/detailFields.css'
 import '../Payment/PaymentPage.css'
 import './DetailsPage.css'
@@ -50,6 +51,7 @@ export default function DetailsPage() {
 
   const [loading, setLoading]     = useState(true)
   const [loadError, setLoadError] = useState(null)
+  const [expired, setExpired]     = useState(false)   // the 3-day receipt deadline ran out (server 410)
   const [details, setDetails]     = useState(null)
 
   // `original` is what is on file; `values` is what is in the boxes. Keeping
@@ -75,9 +77,12 @@ export default function DetailsPage() {
       setOriginal(data.values || {})
       setValues(data.values || {})
     } catch (err) {
+      setExpired(Boolean(err.response?.data?.expired))
       setLoadError(err.response?.data?.error
-        || 'This link is no longer valid. It may have expired, or your application may '
-         + 'already have been reviewed.')
+        || (!err.response
+          ? 'Could not reach the server — your connection may be slow or offline. Check it and reload this page.'
+          : 'This link is no longer valid. It may have expired, or your application may '
+            + 'already have been reviewed.'))
     } finally {
       setLoading(false)
     }
@@ -105,7 +110,7 @@ export default function DetailsPage() {
     event.preventDefault()
     if (!hasChanges) return
 
-    const problems = detailFormProblems(values, original, details?.editable || [])
+    const problems = detailFormProblems(values, original, details?.editable || [], details?.student_level)
     if (await notify.validation(problems, { title: 'Check your details' })) return
 
     setSubmitting(true)
@@ -120,7 +125,15 @@ export default function DetailsPage() {
       setErrors({})
     } catch (err) {
       const fieldErrors = err.response?.data?.errors
-      if (fieldErrors) {
+      if (err.response?.data?.expired) {
+        setExpired(true)
+        setLoadError(err.response.data.error)
+      } else if (!err.response) {
+        await notify.error(
+          'Your connection dropped before the server answered, so we cannot tell whether your '
+          + 'changes were saved. Reload this page to see what is on file.',
+          { title: 'Connection problem' })
+      } else if (fieldErrors) {
         setErrors(fieldErrors)
         await notify.error(
           'Some of your details could not be saved — see the notes on each field.',
@@ -162,13 +175,19 @@ export default function DetailsPage() {
             <div className="paypage-icon paypage-icon--warn">
               <AlertTriangle size={44} strokeWidth={1.8} />
             </div>
-            <h2 className="paypage-title">Link Unavailable</h2>
+            <h2 className="paypage-title">{expired ? 'Application Expired' : 'Link Unavailable'}</h2>
             <p className="paypage-muted">{loadError}</p>
-            <p className="paypage-muted paypage-muted--small">
-              If your application has already been reviewed, the <strong>CDSO Office</strong> can
-              still correct your details — and if it was approved, you can ask for a change from
-              your portal dashboard.
-            </p>
+            {expired ? (
+              <button className="paypage-btn-submit" onClick={() => navigate('/register')}>
+                Submit a New Application
+              </button>
+            ) : (
+              <p className="paypage-muted paypage-muted--small">
+                If your application has already been reviewed, the <strong>CDSO Office</strong> can
+                still correct your details — and if it was approved, you can ask for a change from
+                your portal dashboard.
+              </p>
+            )}
             <button className="paypage-btn-ghost" onClick={() => navigate('/login')}>
               <ArrowLeft size={15} /> Back to Login
             </button>
@@ -201,6 +220,15 @@ export default function DetailsPage() {
               </p>
             </div>
           </div>
+
+          {/* Correcting details does not restart the clock, so the deadline
+              stays in view here while the receipt is still owed. */}
+          <PaymentDeadline
+            display={details?.payment_deadline_display}
+            secondsLeft={details?.payment_seconds_left}
+            windowDays={details?.payment_window_days}
+            compact
+          />
 
           {applied !== null && (
             <div className="paypage-note paypage-note--ok">
@@ -237,6 +265,8 @@ export default function DetailsPage() {
               errors={errors}
               disabled={submitting}
               idPrefix="rd"
+              studentLevel={details?.student_level}
+              original={original}
             />
 
             <div className="rdpage-locked">

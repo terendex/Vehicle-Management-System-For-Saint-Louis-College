@@ -74,8 +74,10 @@
 
 @media (max-width: 460px) {
   .rdpage-actions { flex-direction: column-reverse; align-items: stretch; }
+  /* flex: none — stacked in a column, the 220px basis above would become the
+     submit button's HEIGHT. */
   .rdpage-actions .paypage-btn-ghost,
-  .rdpage-actions .paypage-btn-submit { width: 100%; }
+  .rdpage-actions .paypage-btn-submit { width: 100%; flex: none; }
 }
 
 .rd-diff-empty {

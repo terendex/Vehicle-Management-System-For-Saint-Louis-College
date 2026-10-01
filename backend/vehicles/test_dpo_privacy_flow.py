@@ -37,8 +37,7 @@ def student_payload(**over):
     """What the form posts for a College student who drives themselves."""
     data = dict(
         # Name block
-        last_name='DELA CRUZ', first_name='JUAN', middle_name='SANTOS',
-        full_name='DELA CRUZ, JUAN, SANTOS',
+        last_name='DELA CRUZ', first_name='JUAN', middle_initial='S',
         email='12345678@slc-sflu.edu.ph',
         # Student block — the four *_student fields are form-only and stripped
         # by the view; program_year is what the form composes from them.
@@ -63,8 +62,7 @@ def student_payload(**over):
 
 def employee_payload(**over):
     data = dict(
-        last_name='REYES', first_name='MARIA', middle_name='',
-        full_name='REYES, MARIA',
+        last_name='REYES', first_name='MARIA', middle_initial='',
         email='maria.reyes@slc-sflu.edu.ph',
         student_level='',
         student_strand='', student_grade='',
@@ -86,8 +84,7 @@ def employee_payload(**over):
 
 def fetcher_payload(**over):
     data = dict(
-        last_name='SANTOS', first_name='PEDRO', middle_name='',
-        full_name='SANTOS, PEDRO',
+        last_name='SANTOS', first_name='PEDRO', middle_initial='',
         email='pedro.santos@gmail.com',
         student_level='',
         student_strand='', student_grade='',
@@ -123,7 +120,7 @@ class TrialFlowTestCase(TestCase):
             label='DPO privacy flow', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='dpoadmin@slc.edu.ph', full_name='Dpo Admin',
+            email='dpoadmin@slc.edu.ph', last_name='Admin', first_name='Dpo',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     def submit(self, payload):
@@ -157,7 +154,7 @@ class TheFormsPayloadIsAcceptedTests(TrialFlowTestCase):
     def test_a_student_application_is_accepted_and_stores_what_it_should(self):
         reg = self.submit(student_payload())
 
-        self.assertEqual(reg.full_name, 'DELA CRUZ, JUAN, SANTOS')
+        self.assertEqual(reg.full_name, 'DELA CRUZ, JUAN S.')
         self.assertEqual(reg.email, '12345678@slc-sflu.edu.ph')
         self.assertEqual(reg.plate_number, 'ABC1234')
         self.assertEqual(reg.vehicle_color, 'BLUE')
@@ -387,7 +384,9 @@ class TheGuardsThatSurvivedTests(TrialFlowTestCase):
         for name in ('drivers_license_image', 'assessment_form', 'or_receipt_image'):
             self.assertIsNone(data[name])
         # …and what it must still carry, or the reviewer cannot review.
-        self.assertEqual(data['full_name'], 'DELA CRUZ, JUAN, SANTOS')
+        self.assertEqual(data['full_name'], 'DELA CRUZ, JUAN S.')
+        self.assertEqual((data['last_name'], data['first_name'], data['middle_initial']),
+                         ('DELA CRUZ', 'JUAN', 'S'))
         self.assertEqual(data['drivers_license'], 'N01-20-800001')
         self.assertEqual(data['plate_number'], 'ABC1234')
 
@@ -435,10 +434,10 @@ class TheGuardsThatSurvivedTests(TrialFlowTestCase):
         reg.refresh_from_db()
 
         owner = User.objects.create_user(
-            email='dpoowner@slc-sflu.edu.ph', full_name='Dpo Owner',
+            email='dpoowner@slc-sflu.edu.ph', last_name='Owner', first_name='Dpo',
             password='pw', role='vehicle_owner')
         guard = User.objects.create_user(
-            email='dpoguard@slc-sflu.edu.ph', full_name='Dpo Guard',
+            email='dpoguard@slc-sflu.edu.ph', last_name='Guard', first_name='Dpo',
             password='pw', role='security')
 
         for user in (owner, guard, AnonymousUser()):

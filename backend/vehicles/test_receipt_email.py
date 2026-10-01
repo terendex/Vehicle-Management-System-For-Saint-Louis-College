@@ -28,7 +28,7 @@ def _jpeg():
 
 def _registration(**kwargs):
     fields = dict(
-        registrant_type='student', full_name='DELA CRUZ, JUAN',
+        registrant_type='student', last_name='DELA CRUZ', first_name='JUAN',
         email='receipt-mail@slc.edu.ph', vehicle_type='Motorcycle',
         plate_number='RCP1234', status='accepted',
     )

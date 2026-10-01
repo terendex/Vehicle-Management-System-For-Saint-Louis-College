@@ -33,6 +33,7 @@ from scanning.views import (_apply_status_group, _filter_access_logs,
                             _merge_access_log_visits)
 from vehicles.models import Vehicle, VehicleRegistration
 from vehicles.views import _filter_registrations_report
+from accounts.names import name_kwargs
 
 User = get_user_model()
 
@@ -45,10 +46,10 @@ class AuditLogReportFilterTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.alice = User.objects.create_user(
-            email='rf-alice@slc.edu.ph', full_name='ALICE ADMIN',
+            email='rf-alice@slc.edu.ph', last_name='ADMIN', first_name='ALICE',
             password='x', role='admin')
         cls.bob = User.objects.create_user(
-            email='rf-bob@slc.edu.ph', full_name='BOB GUARD',
+            email='rf-bob@slc.edu.ph', last_name='GUARD', first_name='BOB',
             password='x', role='security')
         AuditLog.objects.create(actor=cls.alice, action=AuditLog.Action.GUARD_LOGIN,
                                 details='alice signed in')
@@ -100,10 +101,10 @@ class VehicleLogReportFilterTests(APITestCase):
         self.addCleanup(patcher.stop)
 
         self.guard = User.objects.create_user(
-            email='rf-vl-guard@slc.edu.ph', full_name='VL GUARD',
+            email='rf-vl-guard@slc.edu.ph', last_name='GUARD', first_name='VL',
             password='x', role='security')
         owner = User.objects.create_user(
-            email='rf-vl-owner@slc.edu.ph', full_name='CRUZ, MARIA',
+            email='rf-vl-owner@slc.edu.ph', last_name='CRUZ', first_name='MARIA',
             password='x', role='vehicle_owner')
         veh = Vehicle.objects.create(plate_number='VLR0001',
                                      vehicle_type=Vehicle.Type.CAR, user=owner)
@@ -161,7 +162,7 @@ class RegistrationReportFilterTests(APITestCase):
     def setUpTestData(cls):
         def mk(plate, name, status, rtype, payment):
             return VehicleRegistration.objects.create(
-                plate_number=plate, full_name=name, email=f'{plate}@slc.edu.ph',
+                plate_number=plate, **name_kwargs(name), email=f'{plate}@slc.edu.ph',
                 status=status, registrant_type=rtype, payment_status=payment)
 
         mk('RG00001', 'SANTOS, JOSE',  'pending',  'student',  'unpaid')
@@ -215,10 +216,10 @@ class RegistrationReportConductionTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.new_car = VehicleRegistration.objects.create(
-            plate_number='', conduction_number='CS12345A678', full_name='NAME, KO, G',
+            plate_number='', conduction_number='CS12345A678', last_name='NAME', first_name='KO', middle_initial='G',
             email='newcar@slc.edu.ph', status='pending', registrant_type='employee')
         cls.plated = VehicleRegistration.objects.create(
-            plate_number='YAB2500', conduction_number='', full_name='NUGAO, KRIS',
+            plate_number='YAB2500', conduction_number='', last_name='NUGAO', first_name='KRIS',
             email='plated@slc.edu.ph', status='pending', registrant_type='employee')
 
     def rows(self, **params):
@@ -229,8 +230,8 @@ class RegistrationReportConductionTests(APITestCase):
 
     def test_the_identifier_column_shows_the_conduction_number(self):
         rows = self.rows()
-        self.assertEqual(rows['Name, Ko, G'], 'CS12345A678')
+        self.assertEqual(rows['Name, Ko G.'], 'CS12345A678')   # LAST, FIRST M.
         self.assertEqual(rows['Nugao, Kris'], 'YAB2500')
 
     def test_the_report_search_finds_a_conduction_number(self):
-        self.assertEqual(list(self.rows(search='cs12345')), ['Name, Ko, G'])
+        self.assertEqual(list(self.rows(search='cs12345')), ['Name, Ko G.'])

@@ -30,7 +30,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from vehicles.tasks import (auto_backup, auto_manage_events,
                                     auto_archive_expired_accounts, auto_archive_past_visits,
-                                    purge_old_records)
+                                    purge_old_records, scheduled_backup)
 
         # Events first: it is the job with visible consequences, and it should
         # still run even if the purge fails.
@@ -48,6 +48,16 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"auto_backup: {result.get('created') or result.get('skipped')}"
         ))
+
+        # The calendar-pinned backup to the chosen folder. A missing drive is
+        # reported and the run carries on: the jobs below do not depend on it.
+        try:
+            result = scheduled_backup()
+            self.stdout.write(self.style.SUCCESS(
+                f"scheduled_backup: {result.get('created') or result.get('skipped')}"
+            ))
+        except Exception as exc:                        # noqa: BLE001
+            self.stdout.write(self.style.ERROR(f"scheduled_backup: failed: {exc}"))
 
         result = auto_archive_expired_accounts()
         self.stdout.write(self.style.SUCCESS(

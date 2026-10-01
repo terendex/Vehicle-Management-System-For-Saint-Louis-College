@@ -44,7 +44,7 @@ class EditFlowTestCase(TestCase):
             label='Edit flow', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='editadmin@slc.edu.ph', full_name='Edit Admin',
+            email='editadmin@slc.edu.ph', last_name='Admin', first_name='Edit',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     # ── the pending half ──
@@ -488,7 +488,7 @@ class OwnerChangeRequestTests(EditFlowTestCase):
 
     def test_a_guard_cannot_file_one(self):
         guard = User.objects.create_user(
-            email='guard@slc.edu.ph', full_name='Guard', password='pw',
+            email='guard@slc.edu.ph', last_name='Guard', first_name='Guard', password='pw',
             role='security')
         self.as_owner(guard)
         res = self.client.post('/api/vehicles/registrations/my/changes/',
@@ -566,12 +566,16 @@ class ApprovalAppliesTheChangeTests(EditFlowTestCase):
     def test_approval_carries_a_name_change_onto_the_account(self):
         """The portal and every notice address the owner from User.full_name."""
         reg, owner = self.approved_owner()
-        filed = self.request_change(owner, full_name='DELA CRUZ, JUAN, S.')
+        # All three parts move, and all three must reach the account.
+        filed = self.request_change(owner, last_name='DE LOS SANTOS', first_name='JUAN CARLOS',
+                                    middle_initial='r')
         self.decide(filed.data['id'], 'approve')
         reg.refresh_from_db()
         owner.refresh_from_db()
-        self.assertEqual(reg.full_name, 'DELA CRUZ, JUAN, S.')
-        self.assertEqual(owner.full_name, 'DELA CRUZ, JUAN, S.')
+        self.assertEqual(reg.full_name, 'DE LOS SANTOS, JUAN CARLOS R.')
+        self.assertEqual(owner.full_name, 'DE LOS SANTOS, JUAN CARLOS R.')
+        self.assertEqual((owner.last_name, owner.first_name, owner.middle_initial),
+                         ('DE LOS SANTOS', 'JUAN CARLOS', 'R'))
 
     def test_approval_carries_a_colour_change_onto_the_vehicle(self):
         reg, owner = self.approved_owner()

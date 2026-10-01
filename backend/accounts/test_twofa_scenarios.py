@@ -146,11 +146,11 @@ class Journey(TestCase):
 
     def make_admin(self, email='cdso@slc.edu.ph', **kw):
         return User.objects.create_user(
-            email=email, full_name='CDSO ADMIN', password=PASSWORD, role='admin', **kw)
+            email=email, last_name='ADMIN', first_name='CDSO', password=PASSWORD, role='admin', **kw)
 
     def make_owner(self, email='owner@slc.edu.ph', **kw):
         return User.objects.create_user(
-            email=email, full_name='VEHICLE OWNER', password=PASSWORD,
+            email=email, last_name='OWNER', first_name='VEHICLE', password=PASSWORD,
             role='vehicle_owner', **kw)
 
     def make_guard(self, email='guard@slc.edu.ph', **kw):
@@ -158,7 +158,7 @@ class Journey(TestCase):
         Gate.objects.get_or_create(
             gate_id='gate1', defaults={'name': 'Gate 1', 'is_active': True})
         return User.objects.create_user(
-            email=email, full_name='GATE GUARD', password=PASSWORD,
+            email=email, last_name='GUARD', first_name='GATE', password=PASSWORD,
             role='security', gate_assignment='gate1', **kw)
 
 

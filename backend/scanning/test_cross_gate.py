@@ -12,9 +12,9 @@ from scanning.models import AccessLog
 
 class CrossGateRecordTests(TestCase):
     def setUp(self):
-        self.admin = User.objects.create_user(email='xg-cdso@slc.edu.ph', full_name='CDSO ONE',
+        self.admin = User.objects.create_user(email='xg-cdso@slc.edu.ph', last_name='ONE', first_name='CDSO',
                                               password='x', role='admin')
-        self.guard = User.objects.create_user(email='xg-guard@slc.edu.ph', full_name='GUARD ONE',
+        self.guard = User.objects.create_user(email='xg-guard@slc.edu.ph', last_name='ONE', first_name='GUARD',
                                               password='x', role='security', gate_assignment='gate4')
         self.client = APIClient()
         self.client.force_authenticate(self.admin)

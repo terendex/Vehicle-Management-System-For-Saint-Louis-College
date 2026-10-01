@@ -20,29 +20,29 @@ from accounts.serializers import (
 class UserEmailUniquenessTests(TestCase):
     def setUp(self):
         self.existing = User.objects.create_user(
-            email='taken@example.com', full_name='Existing', password='Passw0rd!23', role='admin',
+            email='taken@example.com', last_name='Existing', first_name='Existing', password='Passw0rd!23', role='admin',
         )
 
     def test_guard_rejects_duplicate_email_case_insensitive(self):
-        s = GuardCreateSerializer(data={'full_name': 'G', 'email': 'TAKEN@Example.com', 'agency': 'ACME'})
+        s = GuardCreateSerializer(data={'last_name': 'G', 'first_name': 'G', 'email': 'TAKEN@Example.com', 'agency': 'ACME'})
         self.assertFalse(s.is_valid())
         self.assertIn('email', s.errors)
 
     def test_guard_created_email_is_lowercased(self):
-        s = GuardCreateSerializer(data={'full_name': 'G', 'email': 'NewGuard@Example.COM', 'agency': 'ACME'})
+        s = GuardCreateSerializer(data={'last_name': 'G', 'first_name': 'G', 'email': 'NewGuard@Example.COM', 'agency': 'ACME'})
         self.assertTrue(s.is_valid(), s.errors)
         guard = s.save()
         self.assertEqual(guard.email, 'newguard@example.com')
         self.assertEqual(guard.role, 'security')
 
     def test_admin_replace_rejects_duplicate_email_case_insensitive(self):
-        s = AdminReplaceSerializer(data={'full_name': 'A', 'email': 'Taken@example.COM'})
+        s = AdminReplaceSerializer(data={'last_name': 'A', 'first_name': 'A', 'email': 'Taken@example.COM'})
         self.assertFalse(s.is_valid())
         self.assertIn('email', s.errors)
 
     def test_register_rejects_duplicate_email_case_insensitive(self):
         s = RegisterSerializer(data={
-            'full_name': 'S', 'email': 'TAKEN@example.com',
+            'last_name': 'S', 'first_name': 'S', 'email': 'TAKEN@example.com',
             'password': 'Passw0rd!23', 'confirm_password': 'Passw0rd!23', 'role': 'security',
         })
         self.assertFalse(s.is_valid())
@@ -50,17 +50,17 @@ class UserEmailUniquenessTests(TestCase):
 
     def test_user_update_rejects_another_users_email(self):
         other = User.objects.create_user(
-            email='other@example.com', full_name='Other', password='Passw0rd!23', role='security',
+            email='other@example.com', last_name='Other', first_name='Other', password='Passw0rd!23', role='security',
         )
         s = UserUpdateSerializer(instance=other, data={
-            'full_name': 'Other', 'email': 'TAKEN@example.com', 'role': 'security',
+            'last_name': 'Other', 'first_name': 'Other', 'email': 'TAKEN@example.com', 'role': 'security',
         })
         self.assertFalse(s.is_valid())
         self.assertIn('email', s.errors)
 
     def test_user_update_allows_same_users_own_email(self):
         s = UserUpdateSerializer(instance=self.existing, data={
-            'full_name': 'Existing', 'email': 'TAKEN@example.com', 'role': 'admin',
+            'last_name': 'Existing', 'first_name': 'Existing', 'email': 'TAKEN@example.com', 'role': 'admin',
         })
         self.assertTrue(s.is_valid(), s.errors)
 
@@ -70,7 +70,7 @@ class AdminOwnerCreateConflictTests(TestCase):
     def setUp(self):
         from vehicles.models import VehicleRegistration
         VehicleRegistration.objects.create(
-            registrant_type='employee', full_name='X', email='occupied@example.com',
+            registrant_type='employee', last_name='X', first_name='X', email='occupied@example.com',
             plate_number='ABC 1234', vehicle_type='car', employee_id='E-1',
             drivers_license='N01-20-123456', status=VehicleRegistration.Status.ACCEPTED,
         )
@@ -120,7 +120,7 @@ class NotificationBellTests(TestCase):
         from rest_framework.test import APIClient
         # Note: migration 0005 seeds cdso.slc.sflu@gmail.com — use a distinct email
         self.admin = User.objects.create_user(
-            email='bell-admin@test.local', full_name='Admin', password='Passw0rd!23', role='admin',
+            email='bell-admin@test.local', last_name='Admin', first_name='Admin', password='Passw0rd!23', role='admin',
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.admin)
@@ -158,7 +158,7 @@ class NotificationBellTests(TestCase):
         from vehicles.models import VehicleRegistration
         from accounts.models import Notification
         reg = VehicleRegistration.objects.create(
-            registrant_type='student', full_name='Stud', email='stud@example.com',
+            registrant_type='student', last_name='Stud', first_name='Stud', email='stud@example.com',
             plate_number='NTF 0003', vehicle_type='car',
         )
         self.assertTrue(Notification.objects.filter(event='registration_submitted').exists())
@@ -190,7 +190,7 @@ class NotificationBellTests(TestCase):
     def test_guard_cannot_access_notifications(self):
         from rest_framework.test import APIClient
         guard = User.objects.create_user(
-            email='g@slc.edu.ph', full_name='G', password='Passw0rd!23', role='security',
+            email='g@slc.edu.ph', last_name='G', first_name='G', password='Passw0rd!23', role='security',
         )
         client = APIClient()
         client.force_authenticate(user=guard)
@@ -199,7 +199,7 @@ class NotificationBellTests(TestCase):
     def test_cdso_admin_can_access_notifications(self):
         from rest_framework.test import APIClient
         cdso = User.objects.create_user(
-            email='c@slc.edu.ph', full_name='C', password='Passw0rd!23', role='admin',
+            email='c@slc.edu.ph', last_name='C', first_name='C', password='Passw0rd!23', role='admin',
         )
         client = APIClient()
         client.force_authenticate(user=cdso)
@@ -252,7 +252,7 @@ class SystemBackupTests(TestCase):
         from rest_framework.test import APIClient
 
         admin = User.objects.create_user(
-            email='backup-admin@slc.edu.ph', full_name='BACKUP ADMIN',
+            email='backup-admin@slc.edu.ph', last_name='ADMIN', first_name='BACKUP',
             password='SecurePassword123!', role='admin')
         client = APIClient()
         client.force_authenticate(admin)
@@ -269,7 +269,7 @@ class SystemBackupTests(TestCase):
         from rest_framework.test import APIClient
 
         guard = User.objects.create_user(
-            email='backup-guard@slc.edu.ph', full_name='BACKUP GUARD',
+            email='backup-guard@slc.edu.ph', last_name='GUARD', first_name='BACKUP',
             password='SecurePassword123!', role='security')
         client = APIClient()
         client.force_authenticate(guard)
@@ -289,7 +289,7 @@ class AdminReplaceAtomicityTests(TestCase):
         from rest_framework.test import APIClient
 
         self.old = User.objects.create_user(
-            email='old.cdso@slc.edu.ph', full_name='OLD CDSO',
+            email='old.cdso@slc.edu.ph', last_name='CDSO', first_name='OLD',
             password='SecurePassword123!', role='admin',
             is_staff=True, is_superuser=True,
         )
@@ -298,7 +298,7 @@ class AdminReplaceAtomicityTests(TestCase):
 
     def test_replace_swaps_the_admin(self):
         resp = self.client.post('/api/accounts/replace-admin/', {
-            'full_name': 'NEW CDSO', 'email': 'new.cdso@slc.edu.ph'}, format='json')
+            'last_name': 'CDSO', 'first_name': 'NEW', 'email': 'new.cdso@slc.edu.ph'}, format='json')
         self.assertEqual(resp.status_code, 201)
         self.assertTrue(User.objects.filter(email='new.cdso@slc.edu.ph', role='admin').exists())
         self.assertFalse(User.objects.filter(pk=self.old.pk).exists())
@@ -310,7 +310,7 @@ class AdminReplaceAtomicityTests(TestCase):
         with patch('accounts.views.log_action', side_effect=RuntimeError('boom')):
             with self.assertRaises(RuntimeError):
                 self.client.post('/api/accounts/replace-admin/', {
-                    'full_name': 'NEW CDSO', 'email': 'new.cdso@slc.edu.ph'}, format='json')
+                    'last_name': 'CDSO', 'first_name': 'NEW', 'email': 'new.cdso@slc.edu.ph'}, format='json')
 
         self.assertEqual(User.objects.count(), before)
         self.assertFalse(User.objects.filter(email='new.cdso@slc.edu.ph').exists())

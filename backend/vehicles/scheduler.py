@@ -29,6 +29,7 @@ import os
 import socket
 import sys
 import threading
+import zlib
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -63,17 +64,33 @@ CHECK_INTERVAL_SECONDS = 3600
 # It deletes nothing, so it sits with the other archiving jobs; the gate and
 # the parking reserve read the date directly, so the up-to-an-hour wait for
 # this pass after midnight never lets a finished event act.
+#
+# scheduled_backup is the calendar-pinned one ("Fridays at 5 PM"). It sits
+# beside auto_backup for the same reason, and the loop below wakes at its
+# exact time rather than up to an hour after it.
 DAILY_JOBS = (
     'auto_backup',
+    'scheduled_backup',
     'auto_manage_events',
+    'expire_unpaid_registrations',
     'auto_archive_expired_accounts',
     'auto_archive_past_visits',
     'purge_old_records',
 )
 
+# Jobs claimed once per HOUR rather than once per day. The registration payment
+# deadline is a time of day ("3 days from 2:14 PM"), and a once-a-day sweep
+# would leave an expired application holding its plate and schedule slot for up
+# to a day. Not keyed by machine like the backups: the work is all in the shared
+# database, so a sweep by either server is the same sweep.
+HOURLY_JOBS = frozenset({'expire_unpaid_registrations'})
+
 _started = False
 _lock = threading.Lock()
 _stop = threading.Event()
+# Set by wake() to cut the current sleep short — a settings save that moves the
+# scheduled-backup time must not wait out an hour-long sleep computed before it.
+_wake = threading.Event()
 
 
 def _claim(job: str, today):
@@ -106,7 +123,33 @@ def _claim_key(job: str) -> str:
     whichever woke first each hour take the backup — onto its own disk — and
     the campus PC, whose System Settings lists only its own folder, never took
     another one. Each machine now claims its own slots.
+
+    Scheduled backups are per machine for the same reason, and their key also
+    carries a fingerprint of the SLOT being served (the latest moment the
+    schedule called for, plus the folder). Keyed by day instead, a catch-up
+    backup taken in the morning for yesterday's 5 PM would hold the day's claim
+    and silently skip today's 5 PM. Moving the time or the folder is likewise
+    a new slot, looked at again on the next pass. The file in the folder, not
+    the claim, is what stops a second backup for the same slot.
+
+    HOURLY_JOBS always take the hour-keyed form ("job:hNN").
     """
+    if job in HOURLY_JOBS:
+        return f'{job}:h{timezone.localtime():%H}'
+    if job == 'scheduled_backup':
+        from accounts.backup_utils import scheduled_slots
+        from .models import SystemSettings
+        try:
+            cfg = SystemSettings.get()
+            slot, _ = scheduled_slots(cfg)
+        except Exception:                               # noqa: BLE001 — pre-migrate
+            return job
+        schedule = '|'.join(str(v) for v in (
+            slot.isoformat() if slot else 'off',
+            (cfg.scheduled_backup_folder or '').strip(),
+        ))
+        # 64 wide: 17 for "scheduled_backup@", 30 of hostname, 9 for "#xxxxxxxx".
+        return f'{job}@{socket.gethostname()[:30]}#{zlib.crc32(schedule.encode()):08x}'
     if job != 'auto_backup':
         return job
     from .models import SystemSettings
@@ -149,7 +192,7 @@ def run_due_jobs(force: bool = False) -> dict:
         # first pass after a restart lands a little before the 24 hours are up.
         # The file age decides; the claim only stops two processes writing at
         # once.
-        skipped = (job == 'auto_backup' and isinstance(result, dict)
+        skipped = (job in ('auto_backup', 'scheduled_backup') and isinstance(result, dict)
                    and result.get('skipped') == 'not due')
 
         outcomes[job] = summary
@@ -183,13 +226,42 @@ def _loop():
             log.exception("[scheduler] pass failed; will retry")
         finally:
             close_old_connections()
-        _stop.wait(CHECK_INTERVAL_SECONDS)
+        timeout = _seconds_until_next_pass()
+        close_old_connections()
+        _wake.wait(timeout)
+        _wake.clear()
+
+
+def _seconds_until_next_pass() -> float:
+    """The hourly interval, or less when a scheduled backup falls due sooner.
+
+    The hourly pass is fine for "sometime after midnight", but "Fridays at
+    5 PM" should mean 5 PM, not whenever the hour's wake-up happens to land.
+    """
+    try:
+        from accounts.backup_utils import scheduled_slots
+        from .models import SystemSettings
+        _, upcoming = scheduled_slots(SystemSettings.get())
+    except Exception:                                  # noqa: BLE001 — pre-migrate, DB down
+        return CHECK_INTERVAL_SECONDS
+    if upcoming is None:
+        return CHECK_INTERVAL_SECONDS
+    # A couple of seconds past the slot, so the pass lands after it, not on it.
+    until = (upcoming - timezone.now()).total_seconds() + 2
+    return max(1.0, min(CHECK_INTERVAL_SECONDS, until))
+
+
+def wake():
+    """Run a pass now instead of at the end of the current sleep. Called when
+    the backup schedule is saved; a no-op if the thread is not running."""
+    _wake.set()
 
 
 def stop():
     """Ask the loop to exit at its next wake-up. Used by tests; the thread is a
     daemon, so process shutdown does not need it."""
     _stop.set()
+    _wake.set()
 
 
 def start():
@@ -222,6 +294,7 @@ def start():
         _started = True
 
     _stop.clear()   # a previous stop() must not kill the new thread instantly
+    _wake.clear()
     threading.Thread(target=_loop, name='daily-scheduler', daemon=True).start()
     log.info("[scheduler] started — checking every %ds for: %s",
              CHECK_INTERVAL_SECONDS, ', '.join(DAILY_JOBS))

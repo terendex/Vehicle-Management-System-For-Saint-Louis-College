@@ -39,15 +39,15 @@ class TwoFactorTestCase(TestCase):
         cache.clear()          # the attempt counter is cache-backed
         self.client = APIClient()
         self.admin = User.objects.create_user(
-            email='cdso@slc.edu.ph', full_name='CDSO ADMIN',
+            email='cdso@slc.edu.ph', last_name='ADMIN', first_name='CDSO',
             password=PASSWORD, role='admin',
         )
         self.owner = User.objects.create_user(
-            email='owner@slc.edu.ph', full_name='VEHICLE OWNER',
+            email='owner@slc.edu.ph', last_name='OWNER', first_name='VEHICLE',
             password=PASSWORD, role='vehicle_owner',
         )
         self.guard = User.objects.create_user(
-            email='guard@slc.edu.ph', full_name='GATE GUARD',
+            email='guard@slc.edu.ph', last_name='GUARD', first_name='GATE',
             password=PASSWORD, role='security', gate_assignment='gate1',
         )
 

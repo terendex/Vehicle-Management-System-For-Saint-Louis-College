@@ -1,5 +1,7 @@
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import { formatDriversLicense, isValidDriversLicense } from '../../utils/licenseFormat'
+import { isValidProgramYear } from '../../utils/collegePrograms'
+import { cleanInitial } from '../../utils/names'
 
 /* The vocabularies and rules behind the editable-detail form.
 
@@ -48,7 +50,8 @@ export function formatDetailValue(field, value) {
   if (field === 'plate_number') return formatPlateNumber(value)
   if (field === 'drivers_license') return formatDriversLicense(value)
   if (field === 'conduction_number') return (value || '').toUpperCase().replace(/\s/g, '')
-  if (['full_name', 'vehicle_color', 'body_number', 'driver_name'].includes(field)) {
+  if (field === 'middle_initial') return cleanInitial(value)
+  if (['last_name', 'first_name', 'vehicle_color', 'body_number', 'driver_name'].includes(field)) {
     return (value || '').toUpperCase()
   }
   return value
@@ -56,14 +59,16 @@ export function formatDetailValue(field, value) {
 
 /* What is wrong with this one value, or null. Only the checks that need no
    database — the rest is the server's to answer. */
-export function detailFieldProblem(field, value, { editable = [] } = {}) {
+export function detailFieldProblem(field, value, { editable = [], studentLevel = '' } = {}) {
   const text = (value || '').trim()
   const required = editable.some(f => f.field === field)
   if (!required) return null
 
   switch (field) {
-    case 'full_name':
-      return text ? null : 'Enter your full name.'
+    case 'last_name':
+      return text ? null : 'Enter your last name.'
+    case 'first_name':
+      return text ? null : 'Enter your first name.'
     case 'drivers_license':
       if (!text) return "Enter your driver's license number."
       return isValidDriversLicense(text) ? null : "Driver's license must look like A00-00-000000."
@@ -74,6 +79,10 @@ export function detailFieldProblem(field, value, { editable = [] } = {}) {
       if (!text) return 'Enter your conduction number.'
       return CONDUCTION_RE.test(text) ? null : 'Conduction number must be 5–12 letters or digits.'
     case 'program_year':
+      // College programs come from the official list, as on the form.
+      if (studentLevel === 'college') {
+        return isValidProgramYear(text) ? null : 'Choose your program and year level.'
+      }
       return text ? null : 'Enter your program and year.'
     case 'department':
       return text ? null : 'Choose your department.'
@@ -95,11 +104,11 @@ export function detailFieldProblem(field, value, { editable = [] } = {}) {
    Only the fields the person actually touched are checked: a blank they never
    opened is the value already on file, and the server would refuse it anyway
    with a better message than a client guess. */
-export function detailFormProblems(values, original, editable) {
+export function detailFormProblems(values, original, editable, studentLevel = '') {
   const problems = []
   editable.forEach(({ field }) => {
     if ((values[field] ?? '') === (original[field] ?? '')) return
-    const problem = detailFieldProblem(field, values[field], { editable })
+    const problem = detailFieldProblem(field, values[field], { editable, studentLevel })
     if (problem) problems.push(problem)
   })
   return problems

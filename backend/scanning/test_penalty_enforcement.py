@@ -44,10 +44,10 @@ class PenaltyEnforcementTests(APITestCase):
         self.now = frozen
 
         self.guard = User.objects.create_user(
-            email='pe-guard@slc.edu.ph', full_name='GUARD', password='x',
+            email='pe-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD', password='x',
             role='security', gate_assignment='main')
         self.owner = User.objects.create_user(
-            email='pe-owner@slc.edu.ph', full_name='TANGALIN, AXEL JONAS',
+            email='pe-owner@slc.edu.ph', last_name='TANGALIN', first_name='AXEL JONAS',
             password='x', role='vehicle_owner', owner_type='student')
         self.vehicle = Vehicle.objects.create(
             plate_number='PEN0001', conduction_number='CD-PEN-01',

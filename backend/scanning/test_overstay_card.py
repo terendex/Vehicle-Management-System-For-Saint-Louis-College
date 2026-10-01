@@ -17,6 +17,7 @@ from scanning.models import AccessLog
 from scanning.views import _overstaying_now
 from vehicles.models import RuleConstraint, Vehicle, VehicleRegistration
 from violations.models import Violation
+from accounts.names import name_kwargs
 
 User = get_user_model()
 
@@ -61,12 +62,12 @@ class OverstayCardTests(APITestCase):
         )
 
         self.guard = User.objects.create_user(
-            email='os-guard@slc.edu.ph', full_name='GUARD ONE', password='x',
+            email='os-guard@slc.edu.ph', last_name='ONE', first_name='GUARD', password='x',
             role='security', gate_assignment='main')
 
     def _owner(self, email, owner_type):
         return User.objects.create_user(
-            email=email, full_name=email.split('@')[0].upper(), password='x',
+            email=email, **name_kwargs(email.split('@')[0].upper()), password='x',
             role='vehicle_owner', owner_type=owner_type)
 
     def _enter(self, plate, owner, minutes_ago, gate_id='main'):
@@ -122,7 +123,7 @@ class OverstayCardTests(APITestCase):
         """Standby fetchers may sit on campus — that is what the type means."""
         owner = self._owner('os6@slc.edu.ph', 'fetcher')
         VehicleRegistration.objects.create(
-            user=owner, full_name=owner.full_name, email=owner.email,
+            user=owner, **name_kwargs(owner.full_name), email=owner.email,
             status='accepted', registrant_type='fetcher', fetcher_type='standby')
         self._enter('STANDBY', owner, 300)
         self.assertEqual(_overstaying_now(), [])
@@ -130,7 +131,7 @@ class OverstayCardTests(APITestCase):
     def test_a_drop_and_go_fetcher_is_not(self):
         owner = self._owner('os7@slc.edu.ph', 'fetcher')
         VehicleRegistration.objects.create(
-            user=owner, full_name=owner.full_name, email=owner.email,
+            user=owner, **name_kwargs(owner.full_name), email=owner.email,
             status='accepted', registrant_type='fetcher', fetcher_type='drop_and_go')
         self._enter('DROPGO1', owner, 45)
         self.assertEqual(self._plates(), {'DROPGO1'})

@@ -12,6 +12,7 @@ from vehicles.models import Vehicle, SupplierPlate
 from vehicles.scheduled_visits import SCHEDULED_ENTRY, visit_expected_today, visit_note
 from violations.models import Violation, NEW_STYLE_TYPES
 from accounts.models import User, AuditLog
+from accounts.names import name_search_q
 from accounts.views import IsAdminRole
 from .models import (AccessLog, VisitorPass, Office, MLTrainingSample,
                      GuardShift, open_shift_for)
@@ -1966,15 +1967,15 @@ def _filter_access_logs(request):
     if search:
         qs = qs.filter(
             Q(plate_number__icontains=search)
-            | Q(vehicle__user__full_name__icontains=search)
+            | name_search_q(search, prefix='vehicle__user__')
             # A hand-recorded plateless vehicle has neither a plate nor an owner
             # account, so without these it could not be found by any search term
             # at all — only by scrolling to the right minute of the day.
             | Q(driver_name__icontains=search)
             | Q(vehicle_color__icontains=search)
             | Q(vehicle_model__icontains=search)
-            | Q(on_duty_guard__full_name__icontains=search)
-            | Q(scanned_by__full_name__icontains=search)
+            | name_search_q(search, prefix='on_duty_guard__')
+            | name_search_q(search, prefix='scanned_by__')
         )
         filters_desc.append(f"Search: '{search}'")
 
@@ -2576,7 +2577,7 @@ class GuardMonitorView(APIView):
 
         today  = timezone.localdate()
         _today_start, _today_end = day_range(today)
-        guards = UserModel.objects.filter(role='security').order_by('full_name')
+        guards = UserModel.objects.filter(role='security').order_by('last_name', 'first_name')
 
         # Current active shifts keyed by gate
         # Keyed by GATE, not by guard: the question this answers is "who is on
@@ -3615,11 +3616,11 @@ class OwnerLookupView(APIView):
             .filter(
                 Q(plate_number__icontains=identifier)
                 | Q(conduction_number__icontains=identifier)
-                | Q(user__full_name__icontains=query)
+                | name_search_q(query, prefix='user__')
                 # The registration carries the name for vehicles whose owner
                 # account has since been renamed or archived; a guard searching
                 # the name on the pass must still find the car.
-                | Q(registrations__full_name__icontains=query)
+                | name_search_q(query, prefix='registrations__')
             )
             .distinct()                      # the registrations join can return the same vehicle more than once
             # MAX_RESULTS + 1: fetching one extra row is how the code below

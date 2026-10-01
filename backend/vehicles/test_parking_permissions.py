@@ -21,11 +21,11 @@ class ParkingPermissionTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='perm-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='perm-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         cls.guard = User.objects.create_user(
-            email='perm-guard@slc.edu.ph', full_name='GUARD', password='x', role='security')
+            email='perm-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD', password='x', role='security')
         cls.owner = User.objects.create_user(
-            email='perm-owner@slc.edu.ph', full_name='OWNER', password='x', role='vehicle_owner')
+            email='perm-owner@slc.edu.ph', last_name='OWNER', first_name='OWNER', password='x', role='vehicle_owner')
 
     def setUp(self):
         self.zone = ParkingZone.objects.create(name='Perm Zone', vehicle_category='motorcycle')

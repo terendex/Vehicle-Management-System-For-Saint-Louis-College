@@ -47,7 +47,7 @@ short_entry_window = patch('scanning.views.ENTRY_BREATHING_SECONDS', 5)
 class OrganizerEntryTests(TestCase):
     def setUp(self):
         self.guard = User.objects.create_user(
-            email='event-guard@slc.edu.ph', full_name='EVENT GUARD',
+            email='event-guard@slc.edu.ph', last_name='GUARD', first_name='EVENT',
             password='SecurePassword123!', role='security', gate_assignment='gate1')
         self.client = APIClient()
         self.client.force_authenticate(user=self.guard)
@@ -135,7 +135,7 @@ class OrganizerEntryTests(TestCase):
         self.assertEqual(self._check('ORG1234')['status'], 'unknown')
 
         admin = User.objects.create_user(
-            email='event-admin@slc.edu.ph', full_name='EVENT ADMIN',
+            email='event-admin@slc.edu.ph', last_name='ADMIN', first_name='EVENT',
             password='SecurePassword123!', role='admin')
         admin_client = APIClient()
         admin_client.force_authenticate(user=admin)
@@ -176,7 +176,7 @@ class OrganizerEntryTests(TestCase):
     def test_a_registered_organizer_keeps_their_own_rules(self):
         """Being on the list adds the label, not an entry — no event slip."""
         owner = User.objects.create_user(
-            email='org-owner@slc.edu.ph', full_name='ORG OWNER', password='SecurePassword123!',
+            email='org-owner@slc.edu.ph', last_name='OWNER', first_name='ORG', password='SecurePassword123!',
             role='vehicle_owner', owner_type='employee')
         Vehicle.objects.create(plate_number='ORG1234', vehicle_type=Vehicle.Type.CAR,
                                is_authorized=True, user=owner)
@@ -216,7 +216,7 @@ class OrganizerEntryTests(TestCase):
 
     def test_a_registered_ebike_listed_by_control_number_gets_the_label(self):
         owner = User.objects.create_user(
-            email='ebike-org@slc.edu.ph', full_name='EBIKE ORG', password='SecurePassword123!',
+            email='ebike-org@slc.edu.ph', last_name='ORG', first_name='EBIKE', password='SecurePassword123!',
             role='vehicle_owner', owner_type='employee')
         Vehicle.objects.create(plate_number='FM-007', vehicle_type=Vehicle.Type.EBIKE,
                                is_authorized=True, user=owner)
@@ -262,7 +262,7 @@ class EventPassTests(TestCase):
 
     def setUp(self):
         self.admin = User.objects.create_user(
-            email='event-admin@slc.edu.ph', full_name='EVENT ADMIN',
+            email='event-admin@slc.edu.ph', last_name='ADMIN', first_name='EVENT',
             password='SecurePassword123!', role='admin')
         self.client = APIClient()
         self.client.force_authenticate(user=self.admin)

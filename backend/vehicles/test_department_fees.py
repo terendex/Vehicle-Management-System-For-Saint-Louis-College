@@ -21,7 +21,7 @@ DT = VehicleRegistration.DepartmentType
 
 def make_reg(**kw):
     base = dict(
-        full_name='DELA CRUZ, JUAN', email='dept-fee@slc.edu.ph',
+        last_name='DELA CRUZ', first_name='JUAN', email='dept-fee@slc.edu.ph',
         plate_number='DPT1234', registrant_type='employee',
     )
     base.update(kw)
@@ -89,7 +89,7 @@ class DepartmentSubmissionTests(APITestCase):
         # /register/open/ is the unauthenticated public form endpoint;
         # /register/ is the CDSO walk-in one and needs a token.
         return self.client.post('/api/vehicles/register/open/', {
-            'full_name': 'DELA CRUZ, JUAN',
+            'last_name': 'DELA CRUZ', 'first_name': 'JUAN',
             'email': f'dept-{slug(label)}@slc.edu.ph',
             'contact_number': '+639171234567',
             'plate_number': f'DP{abs(hash(label)) % 9000 + 1000}',

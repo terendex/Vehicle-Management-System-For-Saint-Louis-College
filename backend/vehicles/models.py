@@ -29,6 +29,7 @@
 #     be applied for again.
 # =============================================================================
 
+import datetime                               # the scheduled-backup time's default
 import re                                     # for the control-number pattern below
 from decimal import Decimal                   # money: exact amounts, no floating-point drift
 
@@ -261,7 +262,12 @@ class VehicleRegistration(models.Model):
 
     # Common fields
     registrant_type = models.CharField(max_length=20, choices=RegistrantType.choices)
-    full_name       = models.CharField(max_length=255)
+    # The applicant's name in three parts, as the form asks for it. Printed
+    # everywhere as the computed `full_name` ("DELA CRUZ, JUAN S.") — see
+    # accounts/names.py; filter and sort on the parts.
+    last_name       = models.CharField(max_length=150)
+    first_name      = models.CharField(max_length=150)
+    middle_initial  = models.CharField(max_length=1, blank=True, default='')
     email           = models.EmailField(db_index=True)   # also the login for the portal account
     address         = models.TextField(blank=True)
     contact_number  = models.CharField(max_length=100, blank=True)
@@ -393,6 +399,10 @@ class VehicleRegistration(models.Model):
         self.plate_number = _normalize_plate(self.plate_number)
         self.conduction_number = _normalize_plate(self.conduction_number)
         self.email = _normalize_email(self.email)
+        from accounts.names import clean_initial
+        self.last_name = ' '.join((self.last_name or '').split())
+        self.first_name = ' '.join((self.first_name or '').split())
+        self.middle_initial = clean_initial(self.middle_initial)
         self.student_id = (self.student_id or '').strip()        # trim only: IDs are case-sensitive as issued
         self.employee_id = (self.employee_id or '').strip()
         self.drivers_license = (self.drivers_license or '').strip().upper()
@@ -439,6 +449,87 @@ class VehicleRegistration(models.Model):
     def pass_fee(self, settings_obj=None) -> Decimal:
         """What this applicant owes — see fee_for, which this delegates to."""
         return self.fee_for(self.registrant_type, self.department_type, settings_obj)
+
+    # ── The 3-day payment deadline ──
+    # An online applicant has PAYMENT_WINDOW from submitting to pay at the
+    # Accounting Office and file their Official Receipt. Miss it and the
+    # application expires (vehicles/registration_deadline.py), which frees the
+    # plate, email, licence and schedule slot it was holding for somebody who
+    # will actually finish. Only the applicant's own step is on the clock: once
+    # the receipt is filed (or the fee is exempt) the wait is the CDSO's, and an
+    # applicant who has paid never loses their application to a review backlog.
+    #
+    # Derived from created_at rather than stored, so it needed no migration —
+    # Railway migrates on deploy but the campus clone never does, and both
+    # share one database.
+    PAYMENT_WINDOW = datetime.timedelta(days=3)
+    # Enforced this long after the deadline the applicant is shown. A receipt
+    # photo can take minutes to upload on slow mobile data, and an applicant who
+    # pressed Submit before the deadline must not lose to their own connection.
+    # Never advertised: every screen and email states PAYMENT_WINDOW alone.
+    PAYMENT_GRACE = datetime.timedelta(hours=1)
+    # Applications filed before the deadline existed were never told about it,
+    # so their three days run from the rollout instead of from submission.
+    # 5 PM Friday, Asia/Manila: their deadline is 5 PM Monday, within office
+    # hours and with a full working day at the Accounting Office to spare.
+    PAYMENT_DEADLINE_ROLLOUT = datetime.datetime(
+        2026, 10, 2, 17, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
+
+    EXPIRED_UNPAID_REASON = (
+        "Expired automatically: the Vehicle Pass fee was not paid and the Official "
+        "Receipt was not filed within 3 days of applying."
+    )
+
+    def on_payment_clock(self) -> bool:
+        """True while this row is an online application still owing its receipt."""
+        return (self.status == self.Status.PENDING
+                and self.payment_status == self.PaymentStatus.UNPAID
+                and self.source == self.Source.PUBLIC
+                and self.created_at is not None)
+
+    def payment_deadline(self):
+        """When the receipt is due — the time every screen and email states.
+
+        None when no deadline applies: a walk-in, an exempt or already-paid
+        applicant. Answered for EXPIRED rows too, so the expiry notice can say
+        which deadline was missed.
+        """
+        if (self.source != self.Source.PUBLIC
+                or self.payment_status != self.PaymentStatus.UNPAID
+                or self.created_at is None):
+            return None
+        return max(self.created_at, self.PAYMENT_DEADLINE_ROLLOUT) + self.PAYMENT_WINDOW
+
+    def payment_overdue(self, now=None) -> bool:
+        """Past the deadline AND its grace — the point it actually expires."""
+        if not self.on_payment_clock():
+            return False
+        now = now or timezone.now()
+        return now >= self.payment_deadline() + self.PAYMENT_GRACE
+
+    @classmethod
+    def overdue_q(cls, now=None):
+        """payment_overdue() as a filter, so a sweep is one UPDATE.
+
+        max(created_at, ROLLOUT) + window + grace < now splits into two plain
+        comparisons; the ROLLOUT half does not depend on the row, so it is
+        answered here, and until it has passed nothing at all is overdue.
+        """
+        now = now or timezone.now()
+        if now < cls.PAYMENT_DEADLINE_ROLLOUT + cls.PAYMENT_WINDOW + cls.PAYMENT_GRACE:
+            return models.Q(pk__in=[])
+        return models.Q(
+            status=cls.Status.PENDING,
+            payment_status=cls.PaymentStatus.UNPAID,
+            source=cls.Source.PUBLIC,
+            created_at__lte=now - cls.PAYMENT_WINDOW - cls.PAYMENT_GRACE,
+        )
+
+    # The name as every screen, email and PDF prints it. Computed, not stored.
+    @property
+    def full_name(self) -> str:
+        from accounts.names import compose_full_name
+        return compose_full_name(self.last_name, self.first_name, self.middle_initial)
 
     def __str__(self):
         return f"{self.full_name} - {self.plate_number} ({self.status})"
@@ -877,6 +968,53 @@ class SystemSettings(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(90)],
         help_text="How many automatic backups to keep before the oldest is deleted. "
                   "Pre-restore snapshots are never rotated away.",
+    )
+
+    # Scheduled backups — a second, independent schedule beside the automatic
+    # one. Automatic backups are "every N since the last", kept with the app.
+    # These are pinned to the calendar ("Fridays at 5 PM", "the 1st of the
+    # month") and can be written to a folder of the admin's choosing, such as
+    # a second drive or a USB stick, so one copy lives away from the install.
+    #
+    # The time is campus-local (TIME_ZONE). The weekday is Python's numbering,
+    # 0 = Monday, and is read only when weekly; the day of month is read only
+    # when monthly, and 29–31 fall on the last day of a shorter month rather
+    # than skipping it. A blank folder means the app's own backups folder.
+    scheduled_backup_frequency = models.CharField(
+        max_length=10, default='off',
+        choices=[
+            ('off',     'Off'),
+            ('daily',   'Daily'),
+            ('weekly',  'Weekly'),
+            ('monthly', 'Monthly'),
+        ],
+        help_text="Calendar schedule for backups saved to the chosen folder.",
+    )
+    scheduled_backup_time = models.TimeField(
+        default=datetime.time(17, 0),
+        help_text="Time of day (campus time) the scheduled backup is taken.",
+    )
+    scheduled_backup_weekday = models.SmallIntegerField(
+        default=4,
+        validators=[MinValueValidator(0), MaxValueValidator(6)],
+        help_text="Weekly schedule only: 0 = Monday … 6 = Sunday.",
+    )
+    scheduled_backup_day = models.SmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        help_text="Monthly schedule only: day of the month. 29–31 fall on the "
+                  "last day of a shorter month.",
+    )
+    scheduled_backup_folder = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text="Folder on the server computer the scheduled backups are "
+                  "written to. Blank uses the app's backups folder.",
+    )
+    scheduled_backup_keep = models.IntegerField(
+        default=12,
+        validators=[MinValueValidator(1), MaxValueValidator(90)],
+        help_text="How many scheduled backups to keep in that folder before the "
+                  "oldest is deleted.",
     )
 
     # ── Report signatories ──

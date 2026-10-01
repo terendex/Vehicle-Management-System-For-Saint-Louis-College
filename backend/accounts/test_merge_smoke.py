@@ -21,7 +21,7 @@ class RestoredEndpointSmokeTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='smoke-admin@slc.edu.ph', full_name='SMOKE ADMIN',
+            email='smoke-admin@slc.edu.ph', last_name='ADMIN', first_name='SMOKE',
             password='Passw0rd!23', role='admin',
         )
 

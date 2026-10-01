@@ -54,12 +54,13 @@ RegistrationPeriod.objects.get_or_create(
 admin = User.objects.filter(email='admin@slc.edu.ph').first()
 if admin:
     admin.email = 'cdso.demo@slc-sflu.edu.ph'
-    admin.full_name = 'MARIA DELA CRUZ'
+    admin.last_name, admin.first_name = 'DELA CRUZ', 'MARIA'
     admin.set_password(PASSWORD)
     admin.must_change_password = False
     admin.save()
 else:
-    admin = User.objects.create_superuser('cdso.demo@slc-sflu.edu.ph', 'MARIA DELA CRUZ', PASSWORD)
+    admin = User.objects.create_superuser('cdso.demo@slc-sflu.edu.ph', PASSWORD,
+                                          last_name='DELA CRUZ', first_name='MARIA')
 
 guards = []
 for name, email, gate, agency in [
@@ -67,8 +68,10 @@ for name, email, gate, agency in [
     ('PEDRO REYES', 'guard.reyes@slc-sflu.edu.ph', 'gate4', 'Northstar Security Agency'),
     ('ANA GARCIA', 'guard.garcia@slc-sflu.edu.ph', 'gate1', 'Northstar Security Agency'),
 ]:
-    g, _ = User.objects.get_or_create(email=email, defaults=dict(full_name=name, role='security'))
-    g.full_name = name; g.role = 'security'; g.gate_assignment = gate; g.agency = agency
+    g_first, g_last = name.split(' ', 1)
+    g, _ = User.objects.get_or_create(email=email, defaults=dict(
+        last_name=g_last, first_name=g_first, role='security'))
+    g.last_name, g.first_name = g_last, g_first; g.role = 'security'; g.gate_assignment = gate; g.agency = agency
     g.set_password(PASSWORD); g.must_change_password = False
     import uuid; g.guard_qr_secret = g.guard_qr_secret or uuid.uuid4()
     g.save()
@@ -116,7 +119,8 @@ for i, (name, rtype, idno, plate, vtype, color, model, sched, status, pay) in en
     days = {'MWF': ['Monday', 'Wednesday', 'Friday'], 'TTHF': ['Tuesday', 'Thursday', 'Friday']}.get(
         sched, ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
     reg = VehicleRegistration.objects.filter(email=email).first() or VehicleRegistration(email=email)
-    reg.registrant_type = rtype; reg.full_name = name
+    reg.registrant_type = rtype
+    reg.first_name, reg.last_name = first.upper(), last.upper()
     reg.address = f'{random.randint(10, 250)} Rizal St., San Fernando, La Union'
     reg.contact_number = f'09{random.randint(100000000, 999999999)}'
     reg.age = random.randint(19, 52)
@@ -148,7 +152,8 @@ for i, (name, rtype, idno, plate, vtype, color, model, sched, status, pay) in en
     if status == 'accepted':
         u = User.objects.filter(email=email, is_archived=False).first()
         if not u:
-            u = User.objects.create_user(email, name, PASSWORD, role='vehicle_owner')
+            u = User.objects.create_user(email, PASSWORD, last_name=last.upper(),
+                                         first_name=first.upper(), role='vehicle_owner')
         u.owner_type = rtype; u.schedule = sched; u.campus_days = days
         u.contact = reg.contact_number; u.address = reg.address; u.must_change_password = False
         u.save()

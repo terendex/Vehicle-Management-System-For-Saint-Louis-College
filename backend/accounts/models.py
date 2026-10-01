@@ -36,11 +36,15 @@ class UserManager(BaseUserManager):
     # Creates an ordinary account. Everything that must be true of a brand-new
     # user — an email, a name, a hashed password, an expiry date for owners —
     # is settled here, so no caller can skip a step.
-    def create_user(self, email, full_name, password=None, **extra_fields):
+    def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError('Email is required')        # the login identifier; refuse rather than save a broken row
-        if not full_name:
-            raise ValueError('Full name is required')    # every screen shows this; a blank name is useless
+        if 'full_name' in extra_fields:
+            # The single name column is gone; a caller still passing one would
+            # otherwise fail later with a far less obvious error.
+            raise TypeError('create_user() takes last_name / first_name / middle_initial, not full_name')
+        if not (extra_fields.get('last_name') or extra_fields.get('first_name')):
+            raise ValueError('A last name or first name is required')   # every screen shows the name; a blank one is useless
         email = self.normalize_email(email)              # tidy the address (lower-cases the domain part)
 
         # Owner accounts expire a configurable time after creation (System
@@ -52,7 +56,7 @@ class UserManager(BaseUserManager):
             if expiry is not None:
                 extra_fields['expires_at'] = expiry      # freeze the date now, so later settings changes cannot move it
 
-        user = self.model(email=email, full_name=full_name, **extra_fields)  # build the row in memory
+        user = self.model(email=email, **extra_fields)   # build the row in memory
         user.set_password(password)                      # store the password hashed, never as typed
         user.save(using=self._db)                        # write it to the database
         return user
@@ -89,11 +93,11 @@ class UserManager(BaseUserManager):
 
     # Creates an account with full administrative rights — used by Django's
     # "createsuperuser" command and the seeding migration.
-    def create_superuser(self, email, full_name, password=None, **extra_fields):
+    def create_superuser(self, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)        # may reach Django's own admin site
         extra_fields.setdefault('is_superuser', True)    # bypasses per-permission checks
         extra_fields.setdefault('role', 'admin')         # in this system, admin means the CDSO
-        return self.create_user(email, full_name, password, **extra_fields)
+        return self.create_user(email, password, **extra_fields)
 
 
 # Everyone who can sign in. Extends Django's AbstractUser, which already brings
@@ -140,7 +144,11 @@ class User(AbstractUser):
         GATE4 = 'gate4', 'Gate 4'
 
     id = models.BigAutoField(primary_key=True, db_column='user_id')   # the row's own number; column named user_id by convention
-    full_name = models.CharField(max_length=150)         # shown on every screen and in gate messages
+    # The name, in three parts. last_name and first_name are AbstractUser's
+    # own columns (they sat empty while a single full_name column held the
+    # name); middle_initial is ours. Shown everywhere as the computed
+    # `full_name` below — see accounts/names.py.
+    middle_initial = models.CharField(max_length=1, blank=True, default='')
     # Not globally unique: an archived owner keeps their email so history is
     # preserved, while a new live account may reuse it. Uniqueness among *live*
     # accounts is enforced by the partial constraint in Meta.
@@ -224,14 +232,34 @@ class User(AbstractUser):
     username = models.CharField(max_length=150, blank=True, null=True)
 
     USERNAME_FIELD = 'email'                             # tells Django to authenticate on email
-    REQUIRED_FIELDS = ['full_name']  # email is already required via USERNAME_FIELD
+    REQUIRED_FIELDS = ['last_name', 'first_name']  # email is already required via USERNAME_FIELD
 
     objects = UserManager()                              # User.objects uses the manager defined above
+
+    # The name as every screen, email and gate message prints it:
+    # "DELA CRUZ, JUAN S.". Computed, not stored — filter and sort on the parts.
+    @property
+    def full_name(self) -> str:
+        from .names import compose_full_name
+        return compose_full_name(self.last_name, self.first_name, self.middle_initial)
+
+    # Django's own name hooks (admin, auth emails) answer the same.
+    def get_full_name(self):
+        return self.full_name
+
+    def get_short_name(self):
+        return self.first_name or self.last_name
 
     # Saves the row, then gives brand-new accounts their readable code. The code
     # contains the row's number, which only exists once the row has been saved,
     # so this has to happen after the save rather than before it.
     def save(self, *args, **kwargs):
+        from .names import clean_initial
+        # Tidy the parts once here, so every path that saves an account stores
+        # them the same way: single spaces, and a lone capital for the initial.
+        self.last_name = ' '.join((self.last_name or '').split())
+        self.first_name = ' '.join((self.first_name or '').split())
+        self.middle_initial = clean_initial(self.middle_initial)
         super().save(*args, **kwargs)                    # Django's own save: writes the row
         # Generate user_code once after pk is available
         if not self.user_code:

@@ -23,11 +23,11 @@ class LiftViolationTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='lift-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='lift-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         cls.guard = User.objects.create_user(
-            email='lift-guard@slc.edu.ph', full_name='GUARD', password='x', role='security')
+            email='lift-guard@slc.edu.ph', last_name='GUARD', first_name='GUARD', password='x', role='security')
         cls.owner = User.objects.create_user(
-            email='lift-owner@slc.edu.ph', full_name='OWNER', password='x', role='vehicle_owner')
+            email='lift-owner@slc.edu.ph', last_name='OWNER', first_name='OWNER', password='x', role='vehicle_owner')
 
     def setUp(self):
         self.vehicle = Vehicle.objects.create(

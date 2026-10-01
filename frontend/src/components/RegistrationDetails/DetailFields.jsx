@@ -2,6 +2,7 @@ import {
   DEPARTMENTS, DRIVER_RELATIONSHIPS, OTHER_VEHICLE_TYPE, VEHICLE_COLORS, VEHICLE_TYPES,
   formatDetailValue,
 } from './detailRules'
+import { COLLEGES, composeProgramYear, splitProgramYear, yearsFor } from '../../utils/collegePrograms'
 
 /* The editable-detail fields, rendered from whatever the server says is
    editable for this particular registration.
@@ -19,12 +20,15 @@ const HINTS = {
   plate_number:      'e.g. AAA 0000 · AA 0000 · A000AA',
   conduction_number: 'e.g. CS12345A678',
   drivers_license:   'e.g. A00-00-000000',
-  full_name:         'Last name, First name, Middle name',
+  last_name:         'e.g. DELA CRUZ',
+  first_name:        'e.g. JUAN',
+  middle_initial:    'One letter — leave blank if you have none',
   body_number:       'Tricycles only — leave blank if yours has none',
 }
 
 export default function DetailFields({
   editable, values, onChange, errors = {}, disabled = false, idPrefix = 'rd',
+  studentLevel = '', original = {},
 }) {
   const set = (field) => (event) => onChange(field, formatDetailValue(field, event.target.value))
 
@@ -65,6 +69,49 @@ export default function DetailFields({
               )}
             </>
           )
+        } else if (field === 'program_year' && studentLevel === 'college') {
+          /* The same two pickers as the registration form, from the same
+             official list. A program picked without a year yet is held as
+             "BSIT - ", which the rules flag until a year is chosen. */
+          const { code, year } = splitProgramYear(value)
+          const onFile = original[field] || ''
+          const legacy = onFile && !splitProgramYear(onFile).code
+          control = (
+            <>
+              <select
+                id={id} value={code} disabled={disabled}
+                onChange={e => {
+                  const next = e.target.value
+                  const keep = yearsFor(next).includes(year) ? year : ''
+                  onChange(field, !next ? '' : keep ? composeProgramYear(next, keep) : `${next} - `)
+                }}
+              >
+                <option value="">Select program</option>
+                {COLLEGES.map(c => (
+                  <optgroup key={c.college} label={`${c.college} — ${c.name}`}>
+                    {c.programs.map(p => (
+                      <option key={p.code} value={p.code}>{`${p.code} — ${p.name}`}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <select
+                value={year} disabled={disabled || !code} aria-label="Year level"
+                onChange={e => onChange(field, e.target.value
+                  ? composeProgramYear(code, e.target.value) : `${code} - `)}
+                style={{ marginTop: 8 }}
+              >
+                <option value="">{code ? 'Select year' : 'Choose a program first'}</option>
+                {yearsFor(code).map(y => <option key={y} value={y}>{`Year ${y}`}</option>)}
+              </select>
+              {legacy && value === onFile && (
+                <span className="rd-field-hint">
+                  On file: {onFile} — no longer on the program list. Choose from the list
+                  only if you need to change it.
+                </span>
+              )}
+            </>
+          )
         } else if (field === 'department') {
           control = (
             <select id={id} value={value} onChange={set(field)} disabled={disabled}>
@@ -102,6 +149,7 @@ export default function DetailFields({
             <input
               id={id} type="text" value={value} onChange={set(field)}
               disabled={disabled} autoComplete="off"
+              maxLength={field === 'middle_initial' ? 1 : undefined}
             />
           )
         }

@@ -50,14 +50,14 @@ class PaymentTestCase(TestCase):
             label='Payment tests', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='payadmin@slc.edu.ph', full_name='Pay Admin',
+            email='payadmin@slc.edu.ph', last_name='Admin', first_name='Pay',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     def submit(self, **over):
         self._n += 1
         i = self._n
         data = dict(
-            registrant_type='student', full_name='PAYER, TESTER',
+            registrant_type='student', last_name='PAYER', first_name='TESTER',
             email=f'payer{i}@slc.edu.ph', plate_number=f'PAY {i:04d}',
             vehicle_type='car', contact_number='+639171234567',
             address='San Fernando, La Union',
@@ -73,7 +73,7 @@ class PaymentTestCase(TestCase):
         self._n += 1
         i = self._n
         data = dict(
-            registrant_type='employee', full_name='STAFFER, TESTER',
+            registrant_type='employee', last_name='STAFFER', first_name='TESTER',
             email=f'staff{i}@slc.edu.ph', plate_number=f'EMP {i:04d}',
             vehicle_type='car', contact_number='+639171234567',
             address='San Fernando, La Union',
@@ -400,7 +400,7 @@ class WalkInPaymentTests(PaymentTestCase):
         self._n += 1
         i = self._n
         data = dict(
-            registrant_type='employee', full_name='WALKIN, TESTER',
+            registrant_type='employee', last_name='WALKIN', first_name='TESTER',
             email=f'walkin{i}@slc.edu.ph', plate_number=f'WLK {i:04d}',
             vehicle_type='car', contact_number='+639171234567',
             address='San Fernando, La Union',

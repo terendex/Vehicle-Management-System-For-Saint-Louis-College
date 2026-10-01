@@ -1,0 +1,49 @@
+[
+  {
+    "college": "CASTE",
+    "name": "College of Arts, Sciences, Technology, and Education",
+    "programs": [
+      { "code": "BEEd",     "name": "Bachelor of Elementary Education",                  "years": 4 },
+      { "code": "BAELS",    "name": "Bachelor of Arts in English Language Studies",      "years": 4 },
+      { "code": "BAPOS",    "name": "Bachelor of Arts in Political Science",             "years": 4 },
+      { "code": "BS Psych", "name": "Bachelor of Science in Psychology",                 "years": 4 },
+      { "code": "BLIS",     "name": "Bachelor of Library and Information Science",       "years": 4 },
+      { "code": "BECEd",    "name": "Bachelor of Early Childhood Education",             "years": 4 },
+      { "code": "BSNEd",    "name": "Bachelor of Special Needs Education",               "years": 4 },
+      { "code": "BSEd",     "name": "Bachelor of Secondary Education",                   "years": 4 },
+      { "code": "BPEd",     "name": "Bachelor of Physical Education",                    "years": 4 },
+      { "code": "BTLEd",    "name": "Bachelor of Technology and Livelihood Education",   "years": 4 },
+      { "code": "BSIT",     "name": "Bachelor of Science in Information Technology",     "years": 4 }
+    ]
+  },
+  {
+    "college": "CBA",
+    "name": "College of Business and Accountancy",
+    "programs": [
+      { "code": "BSA",   "name": "Bachelor of Science in Accountancy",                  "years": 4 },
+      { "code": "BSAIS", "name": "Bachelor of Science in Accounting Information System", "years": 4 },
+      { "code": "BSIA",  "name": "Bachelor of Science in Internal Auditing",            "years": 4 },
+      { "code": "BSMA",  "name": "Bachelor of Science in Management Accounting",        "years": 4 },
+      { "code": "BSBA",  "name": "Bachelor of Science in Business Administration",      "years": 4 },
+      { "code": "BSHM",  "name": "Bachelor of Science in Hospitality Management",       "years": 4 },
+      { "code": "BSTM",  "name": "Bachelor of Science in Tourism Management",           "years": 4 },
+      { "code": "BSOA",  "name": "Bachelor of Science in Office Administration",        "years": 4 }
+    ]
+  },
+  {
+    "college": "CEA",
+    "name": "College of Engineering and Architecture",
+    "programs": [
+      { "code": "BS Arch", "name": "Bachelor of Science in Architecture",      "years": 5 },
+      { "code": "BSCE",    "name": "Bachelor of Science in Civil Engineering", "years": 4 }
+    ]
+  },
+  {
+    "college": "CLCJE",
+    "name": "College of Law and Criminal Justice Education",
+    "programs": [
+      { "code": "BS Crim", "name": "Bachelor of Science in Criminology", "years": 4 },
+      { "code": "JD",      "name": "Juris Doctor",                      "years": 4, "requires_bachelors": true }
+    ]
+  }
+]

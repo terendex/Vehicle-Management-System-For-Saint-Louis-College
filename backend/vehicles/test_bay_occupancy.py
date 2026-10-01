@@ -209,7 +209,7 @@ class SetBaselineFromReferenceTests(TestCase):
         self.addCleanup(storage.disable)
 
         self.admin = User.objects.create_user(
-            email='baselineadmin@slc.edu.ph', full_name='Baseline Admin',
+            email='baselineadmin@slc.edu.ph', last_name='Admin', first_name='Baseline',
             password='pw', role='admin', is_staff=True, is_superuser=True)
         self.client = APIClient()
         self.client.force_authenticate(user=self.admin)

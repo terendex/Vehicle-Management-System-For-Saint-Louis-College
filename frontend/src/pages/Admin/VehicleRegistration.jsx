@@ -616,6 +616,15 @@ export default function VehicleRegistration() {
                       <span className={`payment-badge payment-${r.payment_status || 'unpaid'}`}>
                         {PAYMENT_LABELS[r.payment_status] || 'Unpaid'}
                       </span>
+                      {/* The applicant's 3-day receipt deadline; the row
+                          expires by itself once it passes. */}
+                      {r.status === 'pending' && r.payment_deadline && (
+                        <div className="payment-due" title={`Receipt due by ${r.payment_deadline_display}`}>
+                          {new Date(r.payment_deadline) < new Date()
+                            ? 'Overdue — expiring'
+                            : `Due ${format(new Date(r.payment_deadline), 'MMM d, h:mm a')}`}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <span className={`status-badge status-${r.status}`}>
@@ -778,6 +787,20 @@ export default function VehicleRegistration() {
                 {selectedReg.payment_status === 'exempt' && (
                   <div className="detail-value vr-attach-empty" style={{ marginTop: 6 }}>
                     No fee due — this department is exempt.
+                  </div>
+                )}
+
+                {selectedReg.status === 'pending' && selectedReg.payment_deadline_display && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#7A5C00', background: '#FEF9E4', border: '1px solid #F7E08A', borderRadius: 8, padding: '8px 10px' }}>
+                    <strong>Receipt due by {selectedReg.payment_deadline_display}.</strong> The applicant
+                    was told this application expires automatically if the receipt is not filed by then.
+                  </div>
+                )}
+
+                {selectedReg.status === 'expired' && selectedReg.rejection_reason && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: '#841818', background: '#FCEDED', border: '1px solid #F3C0C0', borderRadius: 8, padding: '8px 10px' }}>
+                    {selectedReg.rejection_reason}
+                    {selectedReg.payment_deadline_display && <> Deadline was {selectedReg.payment_deadline_display}.</>}
                   </div>
                 )}
 

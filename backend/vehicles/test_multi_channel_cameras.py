@@ -59,7 +59,7 @@ class MultiChannelRegistrationTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='nvr-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='nvr-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
 
     def setUp(self):
         self.client.force_authenticate(self.admin)

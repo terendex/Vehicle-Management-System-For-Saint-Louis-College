@@ -26,7 +26,7 @@ DEAD_SMTP = dict(EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
 
 APPLICANT = dict(
     registrant_type='student',
-    full_name='ATOMIC, TESTER',
+    last_name='ATOMIC', first_name='TESTER',
     email='atomic@slc.edu.ph',
     plate_number='ATM 1001',
     vehicle_type='car',
@@ -54,7 +54,7 @@ class AcceptanceAtomicityTests(TestCase):
             label='Atomicity window', is_active=True,
             start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
         self.admin = User.objects.create_user(
-            email='atomicadmin@slc.edu.ph', full_name='Atomic Admin',
+            email='atomicadmin@slc.edu.ph', last_name='Admin', first_name='Atomic',
             password='pw', role='admin', is_staff=True, is_superuser=True)
 
     def _submit(self, **over):

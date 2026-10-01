@@ -8,6 +8,7 @@ import { fieldProblems } from '../../components/Feedback/formProblems'
 import { formatPlateNumber, isValidPlateNumber } from '../../utils/plateFormat'
 import { formatDriversLicense } from '../../utils/licenseFormat'
 import BrandLogos from '../../components/BrandLogos'
+import PaymentDeadline from '../../components/PaymentDeadline/PaymentDeadline'
 import {
   IllustratedStep,
   PayAtAccountingArt, NoFeeArt, UploadOrArt, ApprovalMailArt, CdsoOfficeArt,
@@ -147,7 +148,8 @@ const REGISTRATION_TYPES = [
     description: 'Parent or guardian fetching a student',
   },
 ]
-import ComboBox from '../../components/ComboBox'
+import { COLLEGES, composeProgramYear, findProgram, yearsFor } from '../../utils/collegePrograms'
+import { cleanInitial, namePayload } from '../../utils/names'
 import './RegisterPage.css'
 
 const ALL_CAMPUS_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -416,6 +418,9 @@ export default function RegisterPage() {
   // back from the submit and is what the success screen shows.
   const [controlNumberPreview, setControlNumberPreview] = useState('')
   const [issuedControlNumber, setIssuedControlNumber] = useState('')
+  // The receipt deadline as the server set it (display string + seconds
+  // left), shown on the confirmation screen. Null for an exempt applicant.
+  const [paymentDeadline, setPaymentDeadline] = useState(null)
   const [dupChecking, setDupChecking] = useState({})
 
   /* Data privacy gate — see PrivacyGateModal. `privacyOpen` is only what is on
@@ -424,16 +429,16 @@ export default function RegisterPage() {
   const [privacyOpen, setPrivacyOpen] = useState(true)
   const [privacyChecked, setPrivacyChecked] = useState(false)
 
-  // Schedule slots & reference lists
+  // Schedule slots. The department and college-program lists are bundled
+  // with the app (DEPARTMENT_OPTIONS above, utils/collegePrograms), not fetched: two
+  // fewer requests for a slow connection to stall on.
   const [scheduleSlots, setScheduleSlots] = useState(null)
   const [loadingSlots, setLoadingSlots] = useState(false)
-  const [departments, setDepartments] = useState([])
-  const [programs, setPrograms] = useState([])
 
   const [formData, setFormData] = useState({
     last_name: '',
     first_name: '',
-    middle_name: '',
+    middle_initial: '',
     email: '',
     student_level: '',
     student_strand: '',
@@ -513,19 +518,6 @@ export default function RegisterPage() {
     }
   }, [])
 
-  const fetchRefLists = useCallback(async () => {
-    try {
-      const [deps, progs] = await Promise.all([
-        registrationApi.getDepartments(),
-        registrationApi.getPrograms(),
-      ])
-      setDepartments(deps)
-      setPrograms(progs)
-    } catch {
-      // non-critical — ComboBox still works with empty options
-    }
-  }, [])
-
   const fetchRegStatus = useCallback(async () => {
     setRegStatusLoading(true)
     try {
@@ -539,14 +531,13 @@ export default function RegisterPage() {
   }, [])
 
   useEffect(() => {
-    fetchRefLists()
     fetchRegStatus()
     if (directType) {
       setRegistrantType(directType)
       if (directType === 'student') fetchScheduleSlots()
     }
     setLoading(false)
-  }, [directType, fetchScheduleSlots, fetchRefLists, fetchRegStatus])
+  }, [directType, fetchScheduleSlots, fetchRegStatus])
 
   /* Which email rule this applicant falls under. Employees and College
      students are the only ones the school issues an address to; fetchers and
@@ -635,7 +626,9 @@ export default function RegisterPage() {
       if (name === 'plate_number') formatted = formatPlateNumber(value)
       else if (name === 'drivers_license') formatted = formatDriversLicense(value)
       else if (name === 'email') formatted = formatted.toLowerCase()
-      else if (['last_name', 'first_name', 'middle_name', 'vehicle_color', 'driver_name'].includes(name))
+      // Stored as one letter: anything else typed into the box is dropped.
+      else if (name === 'middle_initial') formatted = cleanInitial(formatted)
+      else if (['last_name', 'first_name', 'vehicle_color', 'driver_name'].includes(name))
         formatted = formatted.toUpperCase()
       setFormData((prev) => ({
         ...prev,
@@ -820,7 +813,7 @@ export default function RegisterPage() {
     if (registrantType === 'student') {
       if (!formData.student_level) {
         problems.push('Select your education level.')
-      } else if (formData.student_level === 'college' && (!formData.student_program.trim() || !formData.student_year)) {
+      } else if (formData.student_level === 'college' && (!findProgram(formData.student_program) || !formData.student_year)) {
         problems.push('Select your program and year level.')
       } else if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
         problems.push('Select your track/strand and grade level.')
@@ -857,13 +850,10 @@ export default function RegisterPage() {
 
     setSubmitting(true)
     try {
-      const full_name = [formData.last_name, formData.first_name, formData.middle_name]
-        .map(s => s.trim()).filter(Boolean).join(', ')
-
       // Compose program_year from the level-specific fields
       let program_year = formData.program_year
       if (registrantType === 'student' && formData.student_level === 'college') {
-        program_year = `${formData.student_program.trim()} - ${formData.student_year}`
+        program_year = composeProgramYear(formData.student_program, formData.student_year)
       } else if (registrantType === 'student' && formData.student_level !== 'college') {
         const grade = formData.student_grade ? `Grade ${formData.student_grade}` : ''
         if (formData.student_level === 'shs') {
@@ -884,7 +874,9 @@ export default function RegisterPage() {
         // e-bike sends neither — the server issues its control number.
         plate_number:      isEbike || isNewVehicle ? '' : formData.plate_number,
         conduction_number: !isEbike && isNewVehicle ? formData.conduction_number : '',
-        full_name,
+        // The name goes as its three parts (formData's last_name / first_name /
+        // middle_initial) — the server stores them separately.
+        ...namePayload(formData),
         program_year,
         registrant_type: registrantType,
         student_level: registrantType === 'student' ? formData.student_level : '',
@@ -910,11 +902,29 @@ export default function RegisterPage() {
 
       const result = await registrationApi.submitOpenRegistration(payload)
       setIssuedControlNumber(result?.control_number || '')
+      setPaymentDeadline(result?.payment_deadline_display
+        ? { display: result.payment_deadline_display,
+            secondsLeft: result.payment_seconds_left,
+            windowDays: result.payment_window_days }
+        : null)
 
       // Go straight to the success screen
       setSubmitted(true)
     } catch (err) {
       const errData = err.response?.data
+      if (!err.response) {
+        // No answer at all — a slow or dropped connection. The application
+        // may have been filed anyway, and pressing Submit again would then
+        // be refused as a duplicate, which reads like a different problem.
+        notify.error(
+          'Your connection dropped before the server answered, so we cannot tell whether your '
+          + 'application went through. Check your email (and spam folder) for the confirmation '
+          + 'before submitting again — if it arrived, you are already registered and only need to '
+          + 'follow the steps in that email.',
+          { title: 'Connection problem' })
+        console.error('Registration error:', err)
+        return
+      }
       const msg = errData?.error
         || (typeof errData === 'object' ? Object.entries(errData).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' | ') : null)
         || 'Failed to submit registration. Please try again.'
@@ -969,7 +979,7 @@ export default function RegisterPage() {
      others get defaults the moment a registrant type is picked, and warning
      about those would fire on an empty form. */
   const TYPED_FIELDS = [
-    'last_name', 'first_name', 'middle_name', 'email',
+    'last_name', 'first_name', 'middle_initial', 'email',
     'plate_number', 'conduction_number',
     'drivers_license', 'driver_name',
   ]
@@ -1081,6 +1091,11 @@ export default function RegisterPage() {
               Registration opens 2 months before the school year and closes during the first semester.
               Dates are tentative and subject to change.
             </p>
+            <p className="reg-modal-note">
+              <strong>After you submit, you have 3 days</strong> to pay the Vehicle Pass fee at the
+              Accounting Office and file your Official Receipt through the link we email you —
+              otherwise the application expires and you will need to apply again.
+            </p>
 
             <button className="reg-back-btn" onClick={() => navigate('/login')}>
               Back to Login
@@ -1130,6 +1145,16 @@ export default function RegisterPage() {
               </div>
             </div>
 
+            {/* The deadline, with the exact date, directly above the steps it
+                applies to. Absent for an exempt applicant (nothing to file). */}
+            {paymentDeadline && (
+              <PaymentDeadline
+                display={paymentDeadline.display}
+                secondsLeft={paymentDeadline.secondsLeft}
+                windowDays={paymentDeadline.windowDays}
+              />
+            )}
+
             {/* Next steps. Each one is drawn as well as written — this screen is
                 read once, on a phone, and the applicant has to remember the
                 errand for days afterwards. */}
@@ -1164,7 +1189,8 @@ export default function RegisterPage() {
                     <IllustratedStep step={2} art={<UploadOrArt />} title="File your Official Receipt number">
                       Open the link in the email we just sent and enter the OR number printed on
                       your receipt. Keep the receipt itself — the CDSO checks the paper copy at
-                      the counter. Your application is not queued for review until this is done.
+                      the counter. Your application is not queued for review until this is done,
+                      and it <strong>expires</strong> if this is not done within 3 days.
                     </IllustratedStep>
                   </>
                 )}
@@ -1193,19 +1219,10 @@ export default function RegisterPage() {
   const isGuardianOnlyLevel = isStudent && GUARDIAN_ONLY_LEVELS.includes(formData.student_level)
   const guardianDriven = isStudent && formData.who_drives === 'guardian'
 
-  // The backend program list stores combined "BSIT - 3" entries; split them into
-  // a unique program list and per-program year options for the two separate fields.
-  const stripYear = (p) => p.replace(/\s*-\s*\d+\s*$/, '').trim()
-  const programOptions = [...new Set(programs.map(stripYear))]
-  const yearOptions = (() => {
-    const years = [...new Set(
-      programs
-        .filter(p => stripYear(p) === formData.student_program.trim())
-        .map(p => (p.match(/-\s*(\d+)\s*$/) || [])[1])
-        .filter(Boolean)
-    )]
-    return years.length ? years.sort((a, b) => a - b) : ['1', '2', '3', '4']
-  })()
+  // The official program list (utils/collegePrograms) decides the year levels
+  // on offer: 1–4, or 1–5 for BS Arch.
+  const yearOptions = yearsFor(formData.student_program)
+  const selectedProgram = findProgram(formData.student_program)
 
   const TYPE_OPTIONS = [
     { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'Registered SLC student' },
@@ -1534,13 +1551,15 @@ export default function RegisterPage() {
               </div>
 
               <div className="form-group col-span-2">
-                <label>Middle Name <span className="field-note">(optional)</span></label>
+                <label>Middle Initial <span className="field-note">(optional)</span></label>
                 <input
                   type="text"
-                  name="middle_name"
-                  value={formData.middle_name}
+                  name="middle_initial"
+                  value={formData.middle_initial}
                   onChange={handleInputChange}
-                  placeholder="e.g. Santos"
+                  maxLength={1}
+                  placeholder="e.g. S"
+                  aria-label="Middle initial"
                 />
               </div>
 
@@ -1627,24 +1646,44 @@ export default function RegisterPage() {
                     <>
                       <div className="form-group">
                         <label>Program <span className="required">*</span></label>
-                        <ComboBox
+                        {/* Grouped by college, from the official list only — a
+                            typed program is what let "BSIT", "B.S. IT" and
+                            "Info Tech" all end up on file. */}
+                        <select
                           name="student_program"
                           value={formData.student_program}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             student_program: e.target.value,
-                            // Year options depend on the program — reset stale picks
-                            ...(stripYear(e.target.value) !== stripYear(prev.student_program) ? { student_year: '' } : {}),
+                            // Year options depend on the program; drop a year the
+                            // new one does not offer (Year 5 is BS Arch only).
+                            ...(yearsFor(e.target.value).includes(prev.student_year) ? {} : { student_year: '' }),
                           }))}
-                          options={programOptions}
-                          placeholder="e.g. BSIT"
                           required
-                        />
+                        >
+                          <option value="">Select Program</option>
+                          {COLLEGES.map(c => (
+                            <optgroup key={c.college} label={`${c.college} — ${c.name}`}>
+                              {c.programs.map(p => (
+                                <option key={p.code} value={p.code}>{`${p.code} — ${p.name}`}</option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                        {selectedProgram?.requires_bachelors && (
+                          <span className="field-hint">
+                            Juris Doctor is a graduate law program: it admits only students who
+                            have already finished a bachelor's degree.
+                          </span>
+                        )}
                       </div>
                       <div className="form-group">
                         <label>Year Level <span className="required">*</span></label>
-                        <select name="student_year" value={formData.student_year} onChange={handleInputChange} required>
-                          <option value="">Select Year</option>
+                        <select
+                          name="student_year" value={formData.student_year} onChange={handleInputChange}
+                          disabled={!formData.student_program} required
+                        >
+                          <option value="">{formData.student_program ? 'Select Year' : 'Choose a program first'}</option>
                           {yearOptions.map(y => <option key={y} value={y}>{`Year ${y}`}</option>)}
                         </select>
                       </div>
@@ -2033,9 +2072,10 @@ export default function RegisterPage() {
                   {feeExempt ? (
                     <li>To settle the Vehicle Pass fee assessed for your department at the
                       <strong> Accounting Office</strong>, where one applies, and to upload the
-                      Official Receipt (OR) using the link sent to my email.</li>
+                      Official Receipt (OR) using the link sent to my email <strong>within 3 days
+                      of submitting</strong>, failing which this application expires.</li>
                   ) : (
-                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong>, and to upload the Official Receipt (OR) using the link sent to my email.</li>
+                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong>, and to upload the Official Receipt (OR) using the link sent to my email <strong>within 3 days of submitting</strong>, failing which this application expires and must be submitted again.</li>
                   )}
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
@@ -2115,6 +2155,23 @@ export default function RegisterPage() {
             </>}
 
 
+
+            {/* Last thing read before pressing Submit. The terms above say it
+                too, but they are long and mostly skimmed. Not shown to exempt
+                staff, who have nothing to file. */}
+            {!feeExempt && (
+              <div className="pay-deadline" role="note">
+                <Clock size={16} />
+                <div className="pay-deadline-body">
+                  <p className="pay-deadline-when">
+                    <strong>3-day deadline:</strong> after you submit, pay
+                    ₱{vehiclePassFee.toFixed(2)} at the Accounting Office and file your Official
+                    Receipt number through the link we email you within <strong>3 days</strong>,
+                    or this application expires and you will need to apply again.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="form-actions">
               <button

@@ -130,9 +130,10 @@ export const HELP_TOPICS = [
       { type: 'steps', items: [
         'Fill in the form: campus schedule, vehicle details and plate number, and your personal details. Names are stored in uppercase and the plate is formatted automatically.',
         'Attach the required documents and submit. Your application becomes “Pending” until the CDSO reviews it.',
-        'Pay the Vehicle Pass fee at the Accounting Office, then use the link in your email to record the Official Receipt: its number and a photograph of the receipt itself. Both are required.',
+        'Pay the Vehicle Pass fee at the Accounting Office, then use the link in your email to record the Official Receipt: its number and a photograph of the receipt itself. Both are required, within 3 days of submitting.',
         'You will be emailed when your application is accepted or rejected.',
       ] },
+      { type: 'note', text: 'You have 3 days from submitting to pay and file your Official Receipt. The exact deadline is shown on the confirmation screen, in your email and on the payment page. If the receipt is not filed by then, the application expires automatically and you will need to submit a new one. Once the receipt is filed, there is no deadline: your application simply waits for the CDSO.' },
       { type: 'figure', id: 'start-student-application-form' },
       { type: 'note', text: 'Choosing E-Bike asks for no plate and no conduction number. The college issues the unit a control number (FM-001, FM-002, and so on) when you submit, and that number is your vehicle\'s identity at the gate and on your QR code.' },
       { type: 'note', text: 'Your application cannot be approved until the fee is settled. The photograph of the receipt is what the CDSO checks your OR number against; it is never emailed, and only the reviewer sees it.' },
@@ -339,6 +340,7 @@ export const HELP_TOPICS = [
       { type: 'note', text: 'A row with no receipt photograph says so plainly, so “nothing was uploaded” is not mistaken for “the picture has not loaded”. Click a photograph to enlarge it.' },
       { type: 'note', text: 'Reports exported from this screen carry the filters the table is showing — registrant type, payment and status — as well as the date range, and the bar names them beside the label.' },
       { type: 'note', text: 'For walk-in applicants you can register directly — these are accepted immediately without a pending step.' },
+      { type: 'note', text: 'An online applicant has 3 days from submitting to file their Official Receipt. The Payment column shows each unpaid application\'s due date. Once it passes, the application moves to Expired by itself, the applicant is emailed, and its plate and schedule slot are freed. Paid and fee-exempt applications never expire, however long they wait for review.' },
     ],
   },
   {

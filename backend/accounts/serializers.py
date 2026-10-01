@@ -25,13 +25,58 @@ def validate_password_strength(password):
         raise serializers.ValidationError(errors)
 
 
+def with_name_parts(data):
+    """`data` with last/first/middle_initial filled from a lone `full_name`.
+
+    The name is stored in three parts now. A browser still running the
+    previous bundle posts one `full_name` string; splitting it here means that
+    edit still lands instead of being silently dropped as an unknown field.
+    """
+    from .names import split_full_name
+    if not hasattr(data, 'get') or not data.get('full_name'):
+        return data
+    if any(data.get(k) for k in ('last_name', 'first_name')):
+        return data
+    data = data.copy() if hasattr(data, 'copy') else dict(data)
+    last, first, initial = split_full_name(data.get('full_name'))
+    data['last_name'], data['first_name'], data['middle_initial'] = last, first, initial
+    return data
+
+
+class NamePartsMixin(serializers.Serializer):
+    """The three name inputs every account form takes, validated one way."""
+    last_name      = serializers.CharField(max_length=150)
+    first_name     = serializers.CharField(max_length=150)
+    # Wider than the column: "Santos" or "S." is accepted and reduced to "S".
+    middle_initial = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+
+    def to_internal_value(self, data):
+        return super().to_internal_value(with_name_parts(data))
+
+    def validate_last_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Last name is required.')
+        return ' '.join(value.split())
+
+    def validate_first_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('First name is required.')
+        return ' '.join(value.split())
+
+    def validate_middle_initial(self, value):
+        from .names import clean_initial
+        return clean_initial(value)
+
+
 class UserSerializer(serializers.ModelSerializer):
     photo_url       = serializers.SerializerMethodField()
     registrant_type = serializers.SerializerMethodField()
 
     class Meta:
         model  = User
-        fields = ['id', 'user_code', 'full_name', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type', 'contact', 'address']
+        # full_name is the computed display name (read-only); the three parts
+        # are what an edit form fills its boxes from.
+        fields = ['id', 'user_code', 'full_name', 'last_name', 'first_name', 'middle_initial', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type', 'contact', 'address']
 
     def get_photo_url(self, obj):
         if not obj.photo:
@@ -52,13 +97,13 @@ class UserSerializer(serializers.ModelSerializer):
         return min(regs, key=lambda r: r.pk).registrant_type
 
 
-class UserUpdateSerializer(serializers.ModelSerializer):
+class UserUpdateSerializer(NamePartsMixin, serializers.ModelSerializer):
     """For editing user details (no password change). Accepts optional photo upload."""
     photo = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'role', 'photo', 'gate_assignment', 'agency', 'contact', 'address']
+        fields = ['last_name', 'first_name', 'middle_initial', 'email', 'role', 'photo', 'gate_assignment', 'agency', 'contact', 'address']
 
     def validate_email(self, value):
         value = value.strip().lower()
@@ -68,13 +113,13 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
-class RegisterSerializer(serializers.ModelSerializer):
+class RegisterSerializer(NamePartsMixin, serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
 
     class Meta:
         model  = User
-        fields = ['full_name', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
+        fields = ['last_name', 'first_name', 'middle_initial', 'email', 'password', 'confirm_password', 'role', 'gate_assignment']
         extra_kwargs = {'gate_assignment': {'required': False, 'allow_null': True, 'allow_blank': True}}
 
     def validate_email(self, value):
@@ -186,20 +231,14 @@ def _send_account_created_email(full_name, email, password, extra_rows=None):
         )
 
 
-class GuardCreateSerializer(serializers.Serializer):
+class GuardCreateSerializer(NamePartsMixin, serializers.Serializer):
     """Admin creates a security-guard account. A temporary password is
     auto-generated and emailed to the guard, who must change it on first login.
     Guards log in at the dedicated guard gate login page (credentials or QR badge).
     Gate is assigned when the guard selects a gate at the kiosk login screen,
     not at creation time."""
-    full_name = serializers.CharField(max_length=150)
     email     = serializers.EmailField()
     agency    = serializers.CharField(max_length=150)
-
-    def validate_full_name(self, value):
-        if not value.strip():
-            raise serializers.ValidationError('Full name is required.')
-        return value.strip()
 
     def validate_email(self, value):
         value = value.strip().lower()
@@ -216,14 +255,16 @@ class GuardCreateSerializer(serializers.Serializer):
         password = _generate_secure_password()
         user = User.objects.create_user(
             email=validated_data['email'],
-            full_name=validated_data['full_name'],
+            last_name=validated_data['last_name'],
+            first_name=validated_data['first_name'],
+            middle_initial=validated_data.get('middle_initial', ''),
             password=password,
             role='security',
             agency=validated_data['agency'],
             must_change_password=True,
         )
         _send_account_created_email(
-            full_name=validated_data['full_name'],
+            full_name=user.full_name,
             email=validated_data['email'],
             password=password,
             extra_rows=[('Agency', validated_data['agency'])],
@@ -237,7 +278,8 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
     # Personal
     last_name       = serializers.CharField(max_length=100)
     first_name      = serializers.CharField(max_length=100)
-    middle_name     = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    middle_name     = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')   # only its initial is stored
+    middle_initial  = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     email           = serializers.EmailField()
     contact_number  = serializers.CharField(max_length=50,  required=False, allow_blank=True, default='')
     age             = serializers.IntegerField(required=False, allow_null=True, default=None)
@@ -307,11 +349,14 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
     def create(self, validated_data):
         from vehicles.models import Vehicle, VehicleRegistration
 
+        from .names import clean_initial
         reg_type    = validated_data['registrant_type']
-        last        = validated_data['last_name'].strip()
-        first       = validated_data['first_name'].strip()
-        middle      = validated_data.get('middle_name', '').strip()
-        full_name   = ', '.join(filter(None, [last, first, middle]))
+        names       = {
+            'last_name':      ' '.join(validated_data['last_name'].split()),
+            'first_name':     ' '.join(validated_data['first_name'].split()),
+            'middle_initial': clean_initial(validated_data.get('middle_initial')
+                                            or validated_data.get('middle_name', '')),
+        }
         email       = validated_data['email']
         plate       = validated_data['plate_number']
         campus_days = validated_data.get('campus_days') or []
@@ -320,7 +365,7 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
 
         user = User.objects.create_user(
             email=email,
-            full_name=full_name,
+            **names,
             password=password,
             role='vehicle_owner',
             must_change_password=True,
@@ -353,7 +398,7 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             user=user,
             vehicle=vehicle,
             registrant_type=reg_type,
-            full_name=full_name,
+            **names,
             email=email,
             address=validated_data.get('address', ''),
             contact_number=validated_data.get('contact_number', ''),
@@ -374,21 +419,15 @@ class AdminOwnerCreateSerializer(serializers.Serializer):
             source=VehicleRegistration.Source.DIRECT,
         )
 
-        _send_account_created_email(full_name=full_name, email=email, password=password)
+        _send_account_created_email(full_name=user.full_name, email=email, password=password)
 
         return user
 
 
-class AdminReplaceSerializer(serializers.Serializer):
+class AdminReplaceSerializer(NamePartsMixin, serializers.Serializer):
     """Create a new admin and delete the requesting admin. A temporary password
     is auto-generated and emailed to the new admin, who must change it on first login."""
-    full_name = serializers.CharField(max_length=150)
     email = serializers.EmailField()
-
-    def validate_full_name(self, value):
-        if not value.strip():
-            raise serializers.ValidationError('Full name is required.')
-        return value.strip()
 
     def validate_email(self, value):
         value = value.strip().lower()
@@ -399,7 +438,9 @@ class AdminReplaceSerializer(serializers.Serializer):
     def create(self, validated_data):
         password = _generate_secure_password()
         user = User.objects.create_user(
-            full_name=validated_data['full_name'],
+            last_name=validated_data['last_name'],
+            first_name=validated_data['first_name'],
+            middle_initial=validated_data.get('middle_initial', ''),
             email=validated_data['email'],
             password=password,
             role='admin',
@@ -408,7 +449,7 @@ class AdminReplaceSerializer(serializers.Serializer):
             must_change_password=True,
         )
         _send_account_created_email(
-            full_name=validated_data['full_name'],
+            full_name=user.full_name,
             email=validated_data['email'],
             password=password,
         )
@@ -477,6 +518,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'id': self.user.id,
             'user_code': self.user.user_code,
             'full_name': self.user.full_name,
+            'last_name': self.user.last_name,
+            'first_name': self.user.first_name,
+            'middle_initial': self.user.middle_initial,
             'email': self.user.email,
             'role': self.user.role,
             'must_change_password': self.user.must_change_password,

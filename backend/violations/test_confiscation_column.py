@@ -23,9 +23,9 @@ class OwnerPenaltyStateTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.admin = User.objects.create_user(
-            email='cc-admin@slc.edu.ph', full_name='ADMIN', password='x', role='admin')
+            email='cc-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
         cls.owner = User.objects.create_user(
-            email='cc-owner@slc.edu.ph', full_name='OWNER', password='x', role='vehicle_owner')
+            email='cc-owner@slc.edu.ph', last_name='OWNER', first_name='OWNER', password='x', role='vehicle_owner')
 
     def setUp(self):
         self.vehicle = Vehicle.objects.create(plate_number='CCO1234', vehicle_type='car', user=self.owner)

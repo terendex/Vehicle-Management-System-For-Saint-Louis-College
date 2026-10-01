@@ -54,9 +54,10 @@ BACKUP_EXCLUDE = [
 # listing labels a file with and what the pruner matches on, so an automatic
 # backup can be rotated away while a pre-restore snapshot — the only copy of
 # what the system looked like before someone overwrote it — is never touched.
-AUTO_PREFIX    = 'auto-backup-'
-MANUAL_PREFIX  = 'manual-backup-'
-SAFETY_PREFIX  = 'pre-restore-'
+AUTO_PREFIX      = 'auto-backup-'
+MANUAL_PREFIX    = 'manual-backup-'
+SAFETY_PREFIX    = 'pre-restore-'
+SCHEDULED_PREFIX = 'scheduled-backup-'
 
 # One flat directory. Names carry the kind and the timestamp, so nothing needs
 # a database row to be understood — a file copied off the server still explains
@@ -84,13 +85,20 @@ def stamp(seconds: bool = True) -> str:
     return tz.localtime().strftime(fmt)
 
 
-def write_backup(prefix: str, payload: str | None = None) -> tuple[str, int]:
-    """Write a backup file named `<prefix><stamp>.json`. Returns (name, bytes)."""
+def write_backup(prefix: str, payload: str | None = None,
+                 folder: str | None = None) -> tuple[str, int]:
+    """Write a backup file named `<prefix><stamp>.json`. Returns (name, bytes).
+
+    Written under a `.part` name and renamed into place, so a write cut short
+    (a full disk, a USB stick pulled out) never leaves a truncated file that
+    looks like a valid backup — the listing only picks up `.json`.
+    """
     payload = dump_backup() if payload is None else payload
     name = f'{prefix}{stamp()}.json'
-    path = os.path.join(backup_dir(), name)
-    with open(path, 'w', encoding='utf-8') as fh:
+    path = os.path.join(folder or backup_dir(), name)
+    with open(path + '.part', 'w', encoding='utf-8') as fh:
         fh.write(payload)
+    os.replace(path + '.part', path)
     return name, os.path.getsize(path)
 
 
@@ -101,7 +109,177 @@ def kind_of(name: str) -> str:
         return 'safety'
     if name.startswith(MANUAL_PREFIX):
         return 'manual'
+    if name.startswith(SCHEDULED_PREFIX):
+        return 'scheduled'
     return 'other'
+
+
+# ── Scheduled backups ────────────────────────────────────────────────────────
+#
+# Scheduled backups may live outside the backups directory, in a folder the
+# admin chose (a second drive, a USB stick). Only files carrying the scheduled
+# prefix are ever read, listed, served or deleted from that folder: it is the
+# admin's folder, and whatever else they keep in it is none of this code's
+# business.
+
+class BackupFolderError(Exception):
+    """The scheduled-backup folder cannot be used on this machine."""
+
+
+def scheduled_folder_setting() -> str:
+    """The folder exactly as configured; '' means the backups directory."""
+    from vehicles.models import SystemSettings
+    try:
+        return (SystemSettings.get().scheduled_backup_folder or '').strip()
+    except Exception:                                   # noqa: BLE001 — pre-migrate
+        return ''
+
+
+def scheduled_dir(folder: str | None = None, create: bool = True) -> str:
+    """Absolute path scheduled backups are written to, checked usable.
+
+    Raises BackupFolderError with a sentence fit to show an admin. Campus and
+    the cloud deployment share one settings row, so a Windows path set on the
+    campus PC reaches a Linux server too; there it is not an absolute path at
+    all, and that is refused rather than letting `makedirs` create a folder
+    literally named "D:\\Backups" next to the app.
+    """
+    folder = scheduled_folder_setting() if folder is None else (folder or '').strip()
+    if not folder:
+        return backup_dir()
+    if not os.path.isabs(folder):
+        raise BackupFolderError(
+            f'"{folder}" is not a full folder path on this server (for example D:\\SLC Backups).')
+    if create:
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as exc:
+            raise BackupFolderError(
+                f'The folder "{folder}" cannot be created on this server ({exc.strerror or exc}). '
+                'If it is on a USB or external drive, check that it is plugged in.') from exc
+    if not os.path.isdir(folder):
+        raise BackupFolderError(f'The folder "{folder}" does not exist on this server.')
+    return folder
+
+
+def check_scheduled_dir(folder: str) -> str:
+    """scheduled_dir() plus a real write test, for when the admin sets a folder.
+
+    A folder can exist and still refuse writes (a read-only share, a
+    permissions mismatch with the service account), and finding that out at
+    5 PM on Friday is worse than finding it out on Save.
+    """
+    path = scheduled_dir(folder)
+    probe = os.path.join(path, f'.slc-write-test-{os.getpid()}')
+    try:
+        with open(probe, 'w', encoding='utf-8') as fh:
+            fh.write('ok')
+        os.remove(probe)
+    except OSError as exc:
+        raise BackupFolderError(
+            f'The server cannot write to "{path}" ({exc.strerror or exc}).') from exc
+    return path
+
+
+def _custom_scheduled_dir() -> str | None:
+    """The configured folder when it is a usable folder other than the backups
+    directory; None otherwise. Never creates anything — listing must not."""
+    try:
+        path = scheduled_dir(create=False)
+    except BackupFolderError:
+        return None
+    if os.path.realpath(path) == os.path.realpath(backup_dir()):
+        return None
+    return path
+
+
+def _scheduled_items(folder: str) -> list[dict]:
+    items = []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return items
+    for name in names:
+        if not (name.startswith(SCHEDULED_PREFIX) and _NAME_RE.match(name)):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            items.append({
+                'name': name,
+                'kind': 'scheduled',
+                'size': os.path.getsize(path),
+                'created_at': taken_at(name, path).isoformat(),
+            })
+    items.sort(key=lambda item: item['created_at'], reverse=True)
+    return items
+
+
+def latest_scheduled_backup(folder: str) -> dict | None:
+    items = _scheduled_items(folder)
+    return items[0] if items else None
+
+
+def prune_scheduled(keep: int, folder: str) -> list[str]:
+    """Delete all but the newest `keep` scheduled backups in `folder`."""
+    keep = max(int(keep), 1)
+    removed = []
+    for item in _scheduled_items(folder)[keep:]:
+        try:
+            os.remove(os.path.join(folder, item['name']))
+            removed.append(item['name'])
+        except OSError:
+            pass
+    return removed
+
+
+def _at(day, clock):
+    """`day` at `clock`, campus time, as an aware datetime."""
+    return tz.make_aware(datetime.combine(day, clock), tz.get_current_timezone())
+
+
+def _month_slot(year: int, month: int, day: int, clock):
+    import calendar
+    last = calendar.monthrange(year, month)[1]
+    return _at(datetime(year, month, min(day, last)).date(), clock)
+
+
+def scheduled_slots(cfg, now=None):
+    """(previous, next) moments the schedule calls for, around `now`.
+
+    `previous` is the latest slot at or before now, `next` the first one after
+    it. None for both when the schedule is off. Plain calendar arithmetic on
+    campus-local dates, so "Friday 5 PM" means 5 PM in Manila whatever the
+    server's own clock zone is.
+    """
+    from datetime import timedelta
+
+    freq = cfg.scheduled_backup_frequency
+    if freq not in ('daily', 'weekly', 'monthly'):
+        return None, None
+    now = tz.localtime(now or tz.now())
+    clock = cfg.scheduled_backup_time
+    today = now.date()
+
+    if freq == 'daily':
+        prev = _at(today, clock)
+        if prev > now:
+            prev = _at(today - timedelta(days=1), clock)
+        return prev, _at(prev.date() + timedelta(days=1), clock)
+
+    if freq == 'weekly':
+        back = (today.weekday() - cfg.scheduled_backup_weekday) % 7
+        prev = _at(today - timedelta(days=back), clock)
+        if prev > now:
+            prev = _at(prev.date() - timedelta(days=7), clock)
+        return prev, _at(prev.date() + timedelta(days=7), clock)
+
+    day = cfg.scheduled_backup_day
+    prev = _month_slot(today.year, today.month, day, clock)
+    if prev > now:
+        y, m = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+        prev = _month_slot(y, m, day, clock)
+    y, m = (prev.year, prev.month + 1) if prev.month < 12 else (prev.year + 1, 1)
+    return prev, _month_slot(y, m, day, clock)
 
 
 def taken_at(name: str, path: str):
@@ -134,15 +312,26 @@ def safe_path(name: str) -> str | None:
     """
     if not name or not _NAME_RE.match(name):
         return None
-    root = os.path.realpath(backup_dir())
-    path = os.path.realpath(os.path.join(root, name))
-    if os.path.dirname(path) != root or not os.path.isfile(path):
-        return None
-    return path
+    roots = [backup_dir()]
+    # A scheduled backup may live in the admin's chosen folder instead. Only a
+    # scheduled-prefix name is looked for there, so this cannot be used to read
+    # or delete anything else the admin keeps in that folder.
+    if name.startswith(SCHEDULED_PREFIX):
+        custom = _custom_scheduled_dir()
+        if custom:
+            roots.insert(0, custom)
+    for root in roots:
+        root = os.path.realpath(root)
+        path = os.path.realpath(os.path.join(root, name))
+        if os.path.dirname(path) == root and os.path.isfile(path):
+            return path
+    return None
 
 
 def list_backups() -> list[dict]:
-    """Every backup file on disk, newest first."""
+    """Every backup file on disk, newest first — including the scheduled ones
+    in the admin's chosen folder, so they can be downloaded and restored from
+    the same list."""
     root = backup_dir()
     items = []
     for name in os.listdir(root):
@@ -157,6 +346,9 @@ def list_backups() -> list[dict]:
             'size': os.path.getsize(path),
             'created_at': taken_at(name, path).isoformat(),
         })
+    custom = _custom_scheduled_dir()
+    if custom:
+        items += _scheduled_items(custom)
     items.sort(key=lambda item: item['created_at'], reverse=True)
     return items
 
@@ -479,6 +671,11 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
       appear after their children.
     """
     connection = connections[using]
+
+    # A backup from before the name split carries `full_name`, which no longer
+    # exists; rewrite it into last/first/middle initial so it still loads.
+    from .names import upgrade_legacy_backup
+    payload = upgrade_legacy_backup(payload)
 
     # Group by model, keeping the last row for any primary key that appears
     # twice. dumpdata never repeats one, but a fixture assembled by hand can,

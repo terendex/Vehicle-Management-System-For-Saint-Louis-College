@@ -114,7 +114,7 @@ class DwellSettingsTests(TestCase):
         self.addCleanup(pc.invalidate_dwell_settings)
 
         self.admin = User.objects.create_user(
-            email='dwell-cdso@example.com', full_name='CDSO', password='Passw0rd!23',
+            email='dwell-cdso@example.com', last_name='CDSO', first_name='CDSO', password='Passw0rd!23',
             role='admin')
         self.client = APIClient()
         self.client.force_authenticate(self.admin)

@@ -13,6 +13,7 @@ from rest_framework.test import APIClient
 
 from accounts.email_utils import notify_password_set
 from accounts.models import User
+from accounts.names import name_kwargs
 
 LOCMEM = 'django.core.mail.backends.locmem.EmailBackend'
 NEW_PASSWORD = 'BrandNew1!'
@@ -32,7 +33,7 @@ class PasswordChangeEmailTests(TestCase):
         user = User.objects.create_user(
             email=kw.pop('email', 'owner@slc.edu.ph'),
             password=OLD_PASSWORD,
-            full_name=kw.pop('full_name', 'DELA CRUZ, JUAN'),
+            **name_kwargs(kw.pop('full_name', 'DELA CRUZ, JUAN')),
             **kw)
         user.must_change_password = must_change
         user.save(update_fields=['must_change_password'])

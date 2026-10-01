@@ -44,7 +44,7 @@ class PasswordResetFlowTests(TestCase):
         cache.clear()   # the request limits are cache-backed
         self.client = APIClient()
         self.owner = User.objects.create_user(
-            email='reset-owner@test.local', full_name='RESET OWNER',
+            email='reset-owner@test.local', last_name='OWNER', first_name='RESET',
             password=OLD_PASSWORD, role='vehicle_owner',
         )
 
@@ -128,9 +128,9 @@ class PasswordResetFlowTests(TestCase):
     def test_case_variant_live_accounts_do_not_crash_the_request(self):
         # The uniqueness constraint is case-sensitive; only the serializers
         # compare case-insensitively, so accounts made another way can collide.
-        User.objects.create_user(email='Dup@test.local', full_name='DUP ONE',
+        User.objects.create_user(email='Dup@test.local', last_name='ONE', first_name='DUP',
                                  password=OLD_PASSWORD, role='vehicle_owner')
-        User.objects.create_user(email='dup@test.local', full_name='DUP TWO',
+        User.objects.create_user(email='dup@test.local', last_name='TWO', first_name='DUP',
                                  password=OLD_PASSWORD, role='vehicle_owner')
         res = self.client.post(REQUEST, {'email': 'dup@test.local'}, format='json')
         self.assertEqual(res.status_code, 200)

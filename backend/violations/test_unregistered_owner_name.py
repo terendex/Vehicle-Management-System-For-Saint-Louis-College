@@ -27,7 +27,7 @@ class UnregisteredOwnerNameTests(TestCase):
 
     def test_a_registered_owner_is_unaffected(self):
         owner = User.objects.create_user(
-            email='un-owner@slc.edu.ph', full_name='SANTOS, MARIA',
+            email='un-owner@slc.edu.ph', last_name='SANTOS', first_name='MARIA',
             password='x', role='vehicle_owner')
         vehicle = Vehicle.objects.create(
             plate_number='REG0001', vehicle_type=Vehicle.Type.CAR, user=owner)

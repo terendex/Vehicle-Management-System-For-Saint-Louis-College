@@ -349,6 +349,14 @@
   white-space: nowrap;
 }
 
+/* The applicant's 3-day receipt deadline, under an Unpaid badge. */
+.payment-due {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #7A5C00;
+  white-space: nowrap;
+}
+
 .payment-paid {
   background: #D6F0E6;
   color: #0A5C43;

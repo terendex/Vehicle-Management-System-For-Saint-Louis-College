@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, AlertTriangle, Receipt, ArrowLeft } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Receipt, ArrowLeft, Clock } from 'lucide-react'
 
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
+import PaymentDeadline from '../../components/PaymentDeadline/PaymentDeadline'
+import compressReceipt from '../../utils/compressReceipt'
 import {
   IllustratedStep, PayAtAccountingArt, OrNumberArt, CdsoReviewArt,
 } from '../../components/Illustrations/RegArt'
@@ -58,11 +60,15 @@ export default function PaymentPage() {
   const [loading, setLoading]   = useState(true)
   const [details, setDetails]   = useState(null)
   const [loadError, setLoadError] = useState(null)
+  // The server's 410: the 3-day deadline ran out. A different screen from a
+  // plain dead link, because the way forward is a new application.
+  const [expired, setExpired] = useState(false)
 
   const [orNumber, setOrNumber] = useState('')
   const [receiptFile, setReceiptFile] = useState(null)
 
   const [submitting, setSubmitting] = useState(false)
+  const [progress, setProgress]     = useState(null)   // upload %, while the receipt is on its way
   const [submitted, setSubmitted]   = useState(false)
 
   const load = useCallback(async () => {
@@ -78,9 +84,14 @@ export default function PaymentPage() {
       // have to find the receipt again.
       if (data.or_number) setOrNumber(data.or_number)
     } catch (err) {
+      setExpired(Boolean(err.response?.data?.expired))
       setLoadError(
         err.response?.data?.error
-        || 'This payment link is no longer valid. It may have expired, or your application may already have been reviewed.'
+        // No response at all is the connection, not the link — say so, or a
+        // slow signal reads as "your application is gone".
+        || (!err.response
+          ? 'Could not reach the server — your connection may be slow or offline. Check it and reload this page.'
+          : 'This payment link is no longer valid. It may have expired, or your application may already have been reviewed.')
       )
     } finally {
       setLoading(false)
@@ -106,13 +117,33 @@ export default function PaymentPage() {
     if (await notify.validation(problems, { title: 'Receipt not submitted' })) return
 
     setSubmitting(true)
+    setProgress(0)
     try {
-      await registrationApi.submitPaymentReceipt(token, orNumber, receiptFile)
+      // Shrunk first: on slow mobile data a full-size phone photo is minutes
+      // of upload, against a deadline.
+      const upload = await compressReceipt(receiptFile)
+      await registrationApi.submitPaymentReceipt(token, orNumber, upload, setProgress)
       setSubmitted(true)
     } catch (err) {
-      notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
+      if (err.response?.data?.expired) {
+        // Ran out while the page was open. Show the expiry screen, not a
+        // retry prompt they cannot succeed at.
+        setExpired(true)
+        setLoadError(err.response.data.error)
+      } else if (!err.response) {
+        // The request left but no answer came back. It may well have been
+        // saved, and the page shows that on reload ("already on file").
+        notify.error(
+          'Your connection dropped before the server answered, so we cannot tell whether the '
+          + 'receipt was saved. Reload this page: if it says a receipt is already on file, you are done. '
+          + 'If not, submit it again.',
+          { title: 'Connection problem' })
+      } else {
+        notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
+      }
     } finally {
       setSubmitting(false)
+      setProgress(null)
     }
   }
 
@@ -139,14 +170,22 @@ export default function PaymentPage() {
         <main className="paypage-main">
           <div className="paypage-card paypage-card--center">
             <div className="paypage-icon paypage-icon--warn">
-              <AlertTriangle size={44} strokeWidth={1.8} />
+              {expired ? <Clock size={44} strokeWidth={1.8} /> : <AlertTriangle size={44} strokeWidth={1.8} />}
             </div>
-            <h2 className="paypage-title">Link Unavailable</h2>
+            <h2 className="paypage-title">{expired ? 'Application Expired' : 'Link Unavailable'}</h2>
             <p className="paypage-muted">{loadError}</p>
-            <p className="paypage-muted paypage-muted--small">
-              If you have already paid, bring your Official Receipt to the <strong>CDSO Office</strong> and
-              they will record it for you.
-            </p>
+            {/* The expiry message from the server already says this. */}
+            {!expired && (
+              <p className="paypage-muted paypage-muted--small">
+                If you have already paid, bring your Official Receipt to the <strong>CDSO Office</strong> and
+                they will record it for you.
+              </p>
+            )}
+            {expired && (
+              <button className="paypage-btn-submit" onClick={() => navigate('/register')}>
+                Submit a New Application
+              </button>
+            )}
             <button className="paypage-btn-ghost" onClick={() => navigate('/login')}>
               <ArrowLeft size={15} /> Back to Login
             </button>
@@ -259,6 +298,14 @@ export default function PaymentPage() {
             <span className="paypage-amount-note">Payable at the Accounting Office</span>
           </div>
 
+          {/* Only while the receipt is still owed: the server sends no
+              deadline once it is filed, and none to an exempt applicant. */}
+          <PaymentDeadline
+            display={details?.payment_deadline_display}
+            secondsLeft={details?.payment_seconds_left}
+            windowDays={details?.payment_window_days}
+          />
+
           {alreadyPaid && (
             <div className="paypage-note paypage-note--ok">
               <CheckCircle size={14} />
@@ -340,7 +387,9 @@ export default function PaymentPage() {
             </div>
 
             <button type="submit" className="paypage-btn-submit" disabled={submitting}>
-              {submitting ? 'Submitting…' : 'Submit Receipt'}
+              {!submitting ? 'Submit Receipt'
+                : progress != null && progress < 100 ? `Uploading… ${progress}%`
+                : 'Submitting…'}
             </button>
           </form>
         </div>

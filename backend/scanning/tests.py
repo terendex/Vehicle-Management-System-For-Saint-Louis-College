@@ -19,7 +19,7 @@ def _make_owner(email, plate, owner_type, campus_days=None, schedule='ANY',
                 is_active=True, is_authorized=True):
     user = User.objects.create_user(
         email=email,
-        full_name='Test Owner',
+        last_name='Owner', first_name='Test',
         password='SecurePassword123!',
         role='vehicle_owner',
         owner_type=owner_type,
@@ -41,7 +41,7 @@ def _make_owner(email, plate, owner_type, campus_days=None, schedule='ANY',
 def _make_guard(email='guard@slc.edu.ph'):
     return User.objects.create_user(
         email=email,
-        full_name='Test Guard',
+        last_name='Guard', first_name='Test',
         password='SecurePassword123!',
         role='security',
         gate_assignment='gate1',
@@ -53,7 +53,7 @@ def _make_guard(email='guard@slc.edu.ph'):
 class PlatedVehicleSuspensionTests(TestCase):
     def test_plated_vehicle_suspended_owner_denied(self):
         user = User.objects.create_user(
-            email='plated@slc.edu.ph', full_name='Plated Owner',
+            email='plated@slc.edu.ph', last_name='Owner', first_name='Plated',
             password='SecurePassword123!', role='vehicle_owner',
             owner_type=User.OwnerType.STUDENT, schedule=User.Schedule.MWF,
         )
@@ -831,7 +831,7 @@ class ConductionNumberLookupTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.guard)
         owner = User.objects.create_user(
-            email='newcar@slc.edu.ph', full_name='New Car Owner',
+            email='newcar@slc.edu.ph', last_name='Owner', first_name='New', middle_initial='C',
             password='SecurePassword123!', role='vehicle_owner',
             owner_type=User.OwnerType.EMPLOYEE, schedule='ANY',
         )
@@ -878,7 +878,7 @@ class AccessLogFilterAPITests(TestCase):
     def setUp(self):
         self.guard = _make_guard()
         self.admin = User.objects.create_user(
-            email='cdso-logs@slc.edu.ph', full_name='Test CDSO',
+            email='cdso-logs@slc.edu.ph', last_name='CDSO', first_name='Test',
             password='SecurePassword123!', role='admin',
         )
         self.owner, self.vehicle = _make_owner(
@@ -999,7 +999,7 @@ class VehicleLogReportAPITests(TestCase):
     def setUp(self):
         self.guard = _make_guard()
         self.admin = User.objects.create_user(
-            email='cdso-reports@slc.edu.ph', full_name='Test CDSO',
+            email='cdso-reports@slc.edu.ph', last_name='CDSO', first_name='Test',
             password='SecurePassword123!', role='admin',
         )
         self.owner, self.vehicle = _make_owner(
@@ -1093,7 +1093,7 @@ class VehicleLogReportAPITests(TestCase):
         rows, _ = self._rows()
         self.assertEqual(len(rows), 1)          # one visit, one row
         self.assertEqual(self._col(rows[0], 'Plate'), 'ABC 1234')
-        self.assertEqual(self._col(rows[0], 'Owner'), 'Test Owner')
+        self.assertEqual(self._col(rows[0], 'Owner'), 'Owner, Test')   # LAST, FIRST
         self.assertEqual(self._col(rows[0], 'Category'), 'Employee')
         self.assertEqual(self._col(rows[0], 'Duration'), '2h')
 
