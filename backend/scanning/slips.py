@@ -194,7 +194,7 @@ def _scheduled_rows(visit, purpose_shown=''):
 # visitor pass form, which the visitor fills in by hand while on campus so the
 # car is not held at the barrier. The guard types them in later (Record Visitor
 # Slip). A label marked 2 gets two lines; Purpose runs longer than a name.
-VISITOR_FORM = [['Visitor Name', 1], ['Conduction No.', 1], ['Office to Visit', 1], ['Purpose of Visit', 2]]
+VISITOR_FORM = [['Visitor Name', 1], ['Conduction/Plate Number', 1], ['Office to Visit', 1], ['Purpose of Visit', 2]]
 VISITOR_FORM_FOOTER = ['FILL IN THIS FORM', 'RETURN THIS SLIP UPON EXIT']
 
 

@@ -503,7 +503,7 @@ class VisitorPassAPITests(TestCase):
         slip = self._walk_in('VIS030').data['slip']
         self.assertFalse(slip['recorded'])
         self.assertEqual([label for label, _ in slip['form']],
-                         ['Visitor Name', 'Conduction No.', 'Office to Visit', 'Purpose of Visit'])
+                         ['Visitor Name', 'Conduction/Plate Number', 'Office to Visit', 'Purpose of Visit'])
         labels = [row[0] for section in slip['sections'] for row in section]
         self.assertNotIn('Visitor', labels)               # the form asks instead
         self.assertIn('Expires', labels)

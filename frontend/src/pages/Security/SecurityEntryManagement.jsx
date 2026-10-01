@@ -448,7 +448,7 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
                 onChange={(e) => setVisitorName(e.target.value.toUpperCase())} />
             </div>
             <div className="em-field">
-              <label className="em-label">Conduction Number <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
+              <label className="em-label">Conduction/Plate Number <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
               <input className="em-input" value={conduction}
                 placeholder="e.g. CS1234" maxLength={20}
                 onChange={(e) => setConduction(e.target.value.toUpperCase().replace(/\s/g, ''))} />
