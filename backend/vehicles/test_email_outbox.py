@@ -165,6 +165,82 @@ class OutboxTests(TestCase):
         self.assertEqual(email_outbox.run_due()['sent'], 1)
 
 
+@override_settings(**dict(OUTBOX, EMAIL_SEND_ASYNC=True))
+class QueueFirstTests(TestCase):
+    """In a server process the caller only stores the message; the worker sends
+    it. A slow mail provider then costs nobody a frozen screen."""
+
+    def setUp(self):
+        FlakyTransport.failures = 0
+        FlakyTransport.sent = []
+        patcher = mock.patch.object(email_outbox, '_started', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_caller_only_stores_and_the_worker_sends(self):
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            self.assertEqual(send_mail('Approved', 'body', None, ['owner@test.local']), 1)
+        self.assertEqual(FlakyTransport.sent, [])                 # nothing sent on the caller's time
+        row = EmailOutbox.objects.get()
+        self.assertEqual((row.attempts, row.last_error), (0, ''))
+        self.assertLessEqual(row.next_attempt_at, timezone.now())  # due at once
+        self.assertIn(email_outbox.wake, callbacks)                # the worker is woken after commit
+
+        self.assertEqual(email_outbox.run_due()['sent'], 1)
+        self.assertEqual(FlakyTransport.sent[0].subject, 'Approved')
+        self.assertFalse(EmailOutbox.objects.exists())
+
+    def test_a_first_send_that_fails_waits_a_minute_like_any_retry(self):
+        send_mail('Approved', 'body', None, ['owner@test.local'])
+        FlakyTransport.failures = 1
+        self.assertEqual(email_outbox.run_due()['retrying'], 1)
+        row = EmailOutbox.objects.get()
+        self.assertEqual(row.attempts, 1)
+        self.assertGreater(row.next_attempt_at, timezone.now() + timedelta(seconds=50))
+
+    def test_if_storing_fails_it_is_sent_directly(self):
+        with mock.patch.object(EmailOutbox.objects, 'create', side_effect=RuntimeError('db down')):
+            self.assertEqual(send_mail('Approved', 'body', None, ['owner@test.local']), 1)
+        self.assertEqual(len(FlakyTransport.sent), 1)
+
+    def test_not_in_a_server_process_it_sends_directly(self):
+        with mock.patch.object(email_outbox, '_started', False):
+            send_mail('Approved', 'body', None, ['owner@test.local'])
+        self.assertEqual(len(FlakyTransport.sent), 1)
+        self.assertFalse(EmailOutbox.objects.exists())
+
+
+@override_settings(BREVO_API_KEY='xkeysib-test', EMAIL_TIMEOUT=1)
+class SlowNetworkTests(TestCase):
+    def _send(self, side_effect):
+        backend = BrevoEmailBackend()
+        msg = EmailMultiAlternatives('s', 'b', 'cdso@test.local', ['o@test.local'])
+        with mock.patch.object(requests.Session, 'post', side_effect=side_effect) as post, \
+                mock.patch('config.email_backends.time.sleep'):
+            try:
+                backend.send_messages([msg])
+            finally:
+                self.calls = post.call_count
+                self.timeout = post.call_args.kwargs['timeout']
+
+    def test_a_lost_answer_is_not_resent_on_the_spot(self):
+        """The request reached Brevo, which usually means the mail went out.
+        Resending at once delivered up to four copies of one email."""
+        with self.assertRaises(requests.ReadTimeout):
+            self._send(requests.ReadTimeout('read timed out'))
+        self.assertEqual(self.calls, 1)
+
+    def test_a_connection_that_never_opened_is_still_retried(self):
+        with self.assertRaises(requests.ConnectionError):
+            self._send(requests.ConnectionError('connection refused'))
+        self.assertEqual(self.calls, 4)
+
+    def test_the_answer_gets_longer_to_arrive_than_the_connection(self):
+        with self.assertRaises(requests.ConnectionError):
+            self._send(requests.ConnectionError('x'))
+        self.assertEqual(self.timeout, (1, 30))
+
+
 @override_settings(BREVO_API_KEY='xkeysib-test', EMAIL_TIMEOUT=1)
 class BrevoErrorClassTests(TestCase):
     def _send_with_status(self, status):

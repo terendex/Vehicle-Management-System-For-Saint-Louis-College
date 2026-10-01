@@ -47,6 +47,7 @@ log = logging.getLogger(__name__)
 # the burst is absorbed here rather than surfacing as a send failure.
 MAX_ATTEMPTS = 4
 RETRY_BACKOFF = 1.0  # seconds; doubled per attempt
+READ_TIMEOUT = 30    # seconds to wait for the provider's answer once the request is sent
 
 
 class PermanentEmailError(RuntimeError):
@@ -60,10 +61,18 @@ class OutboxEmailBackend(BaseEmailBackend):
 
     Each message goes to settings.EMAIL_TRANSPORT_BACKEND (Gmail SMTP on campus,
     Brevo on Railway, both taken from the EMAIL_BACKEND env var as before).
-    If that send raises, the message is parked in vehicles.EmailOutbox and
-    retried in the background until it goes out (see vehicles/email_outbox.py),
-    and the caller is told it was sent. Failures a retry cannot fix, and
-    failures the outbox cannot store, still raise exactly as before.
+
+    In a server process, where the outbox worker runs, a message is stored
+    first and the worker sends it a moment later. Whoever clicked Approve, or
+    the guard recording a violation, never waits on the mail provider. On a
+    slow line that wait was 20-50 seconds of frozen screen per email. A message
+    stored before a restart also survives it.
+
+    Anywhere else (management commands, tests, shells), or when storing fails,
+    the message is sent directly. If that send raises, it is parked in
+    vehicles.EmailOutbox for retry, and the caller is told it was sent.
+    Failures a retry cannot fix, and failures the outbox cannot store, still
+    raise exactly as before.
     """
 
     def __init__(self, fail_silently=False, **kwargs):
@@ -71,6 +80,19 @@ class OutboxEmailBackend(BaseEmailBackend):
         self._kwargs = kwargs
 
     def send_messages(self, email_messages):
+        from vehicles import email_outbox
+
+        if not email_outbox.worker_running():
+            return self._send_now(email_messages)
+        sent = 0
+        for message in email_messages or []:
+            if email_outbox.enqueue(message):
+                sent += 1
+            else:
+                sent += self._send_now([message])
+        return sent
+
+    def _send_now(self, email_messages):
         from django.conf import settings
         from django.core.mail import get_connection
         from vehicles import email_outbox
@@ -111,10 +133,13 @@ class _HttpApiEmailBackend(BaseEmailBackend):
         super().__init__(fail_silently=fail_silently, **kwargs)
         from django.conf import settings
         self.api_key = getattr(settings, self.KEY_SETTING, '') or ''
-        # Reuse the SMTP knob rather than inventing a second one: it already
-        # means "how long a stalled mail server may hold up the caller", and the
-        # scan pipeline sends mail inline.
-        self.timeout = getattr(settings, 'EMAIL_TIMEOUT', 10) or 10
+        # (connect, read). Connecting reuses the SMTP knob: it means "how long a
+        # dead network may hold things up". Waiting for the provider's ANSWER
+        # gets longer, because by then the request has been delivered. On a
+        # slow line, giving up early only turns a successful send into a
+        # "failure" that gets sent again.
+        connect = getattr(settings, 'EMAIL_TIMEOUT', 10) or 10
+        self.timeout = (connect, max(connect, READ_TIMEOUT))
         self.session = None
 
     # ── provider hooks ───────────────────────────────────────────────────
@@ -182,6 +207,16 @@ class _HttpApiEmailBackend(BaseEmailBackend):
             try:
                 resp = self.session.post(self.API_URL, json=payload, timeout=self.timeout)
             except requests.RequestException as exc:
+                # A read timeout means the request arrived and only the answer
+                # is missing. On a slow line the provider has usually sent the
+                # mail already, and resending at once delivered up to four
+                # copies of one email. Hand it to the caller (the outbox
+                # retries later, after a pause) instead of resending now.
+                if isinstance(exc, requests.ReadTimeout):
+                    if not self.fail_silently:
+                        raise
+                    log.exception('%s accepted the request but did not answer', self.PROVIDER)
+                    return False
                 # The network itself failed. Retrying is worthwhile — but only up
                 # to the attempt budget, so a hard outage cannot stall a scan.
                 if attempt == MAX_ATTEMPTS:

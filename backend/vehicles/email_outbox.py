@@ -6,10 +6,13 @@ carrying an applicant's receipt-upload link, was lost for good. The only trace
 was a bell notice telling the CDSO to pass the details on by hand, and the
 applicant was stuck until someone did.
 
-config.email_backends.OutboxEmailBackend wraps the real transport. When a send
-raises, the message is stored in tbl_email_outbox and a background thread
-retries it: after 1, 2, 5, 10, 15 and 30 minutes, then every 30 minutes until
-MAX_AGE. Callers see a successful send, because the message will still arrive.
+config.email_backends.OutboxEmailBackend wraps the real transport. In a server
+process every message is stored in tbl_email_outbox first and a background
+thread sends it moments later, so no screen waits on the mail provider. When a
+send fails, the row stays and is retried after 1, 2, 5, 10, 15 and 30 minutes,
+then every 30 minutes until MAX_AGE. Elsewhere (management commands, tests) the
+message is sent directly and stored only if that fails. Either way, callers see
+a successful send, because the message will still arrive.
 The CDSO hears about it only if it stays stuck for DELAY_NOTICE_AFTER, if the
 outbox gives up, and again when a delayed message finally gets through.
 
@@ -175,37 +178,75 @@ def _delay_after(attempts: int) -> timedelta:
 
 
 # ── queueing (called by OutboxEmailBackend) ──────────────────────────────────
+def worker_running() -> bool:
+    """True in a server process whose retry worker is up, and only when mail is
+    meant to leave the request path at all (EMAIL_SEND_ASYNC, off under test).
+    Only then can a message be stored first and sent by the worker."""
+    return _started and getattr(settings, 'EMAIL_SEND_ASYNC', True)
+
+
+def _store(message, *, attempts, last_error, next_attempt_at, expires_at):
+    from .models import EmailOutbox
+    # A savepoint: the caller may be inside its own transaction, and a failed
+    # INSERT must not poison it.
+    with transaction.atomic():
+        return EmailOutbox.objects.create(
+            subject=(message.subject or '')[:255],
+            recipients=', '.join(message.recipients())[:500],
+            message=serialize(message),
+            attempts=attempts,
+            last_error=last_error,
+            next_attempt_at=next_attempt_at,
+            expires_at=expires_at,
+        )
+
+
+def _expiry(now):
+    deadline = _deadline_seconds.get()
+    return now + (timedelta(seconds=deadline) if deadline is not None else max_age())
+
+
+def enqueue(message) -> bool:
+    """Store a message for the worker to send right away. Returns False if it
+    could not be stored, so the caller can send it directly instead.
+
+    The worker is woken only once the caller's transaction commits. Before
+    that the row is invisible to it, and a worker woken too early would find
+    nothing and go back to sleep for IDLE_POLL_SECONDS. A rolled-back action
+    takes its email with it, which is right: what it announced never happened.
+    """
+    now = timezone.now()
+    try:
+        row = _store(message, attempts=0, last_error='', next_attempt_at=now,
+                     expires_at=_expiry(now))
+    except Exception:
+        log.exception('[email-outbox] could not store %r; sending it directly', message.subject)
+        return False
+    transaction.on_commit(wake)
+    log.info('[email-outbox] #%s %r to %s handed to the worker',
+             row.pk, row.subject, row.recipients)
+    return True
+
+
 def queue(message, exc) -> bool:
     """Store a message whose send just failed. Returns False if it could not be
     stored (e.g. the table is not migrated yet), so the caller can fall back to
     raising the original error."""
-    from .models import EmailOutbox
-
     now = timezone.now()
-    deadline = _deadline_seconds.get()
-    expires_at = now + (timedelta(seconds=deadline) if deadline is not None else max_age())
+    expires_at = _expiry(now)
     if expires_at <= now + _delay_after(1):
         return False   # it would expire before the first retry; report the failure now
 
     try:
-        # A savepoint: the caller may be inside its own transaction, and a
-        # failed INSERT must not poison it.
-        with transaction.atomic():
-            row = EmailOutbox.objects.create(
-                subject=(message.subject or '')[:255],
-                recipients=', '.join(message.recipients())[:500],
-                message=serialize(message),
-                last_error=_describe(exc),
-                next_attempt_at=now + _delay_after(1),
-                expires_at=expires_at,
-            )
+        row = _store(message, attempts=1, last_error=_describe(exc),
+                     next_attempt_at=now + _delay_after(1), expires_at=expires_at)
     except Exception:
         log.exception('[email-outbox] could not queue %r for retry', message.subject)
         return False
 
     log.warning('[email-outbox] send of %r to %s failed (%s); queued as #%s for retry',
                 message.subject, row.recipients, row.last_error, row.pk)
-    wake()
+    transaction.on_commit(wake)
     return True
 
 
@@ -343,6 +384,10 @@ def _loop():
             if any(outcome.values()):
                 log.info('[email-outbox] pass: %s', outcome)
         except Exception:   # noqa: BLE001 — includes "table not migrated yet"
+            # Usually the database itself was unreachable (slow or dropped
+            # internet to Neon). Mail now waits in this table, so come back
+            # in a minute rather than after a full idle poll.
+            wait = 60
             log.exception('[email-outbox] pass failed; will retry')
         finally:
             close_old_connections()
