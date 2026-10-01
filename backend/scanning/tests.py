@@ -489,6 +489,77 @@ class VisitorPassAPITests(TestCase):
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.data['visitor_name'], 'JUAN DELA CRUZ')
 
+    # ── Allow Entry as Visitor: a blank slip, recorded later ──────────────────
+
+    def _walk_in(self, plate):
+        """Let in on the plate alone — the slip prints a form to fill in."""
+        resp = self.client.post('/api/scan/visitor-pass/',
+                                {'plate_number': plate, 'allowed_duration': 15}, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.client.post(f"/api/scan/visitor-pass/{resp.data['id']}/printed/")
+        return resp
+
+    def test_walk_in_slip_prints_a_blank_form(self):
+        slip = self._walk_in('VIS030').data['slip']
+        self.assertFalse(slip['recorded'])
+        self.assertEqual([label for label, _ in slip['form']],
+                         ['Visitor Name', 'Conduction No.', 'Office to Visit', 'Purpose of Visit'])
+        labels = [row[0] for section in slip['sections'] for row in section]
+        self.assertNotIn('Visitor', labels)               # the form asks instead
+        self.assertIn('Expires', labels)
+        self.assertEqual(slip['footer'][0], 'FILL IN THIS FORM')
+
+    def test_named_pass_slip_has_no_form(self):
+        slip = self.client.post('/api/scan/visitor-pass/',
+                                {'plate_number': 'VIS031', 'visitor_name': 'ANA', 'purpose': 'Visit'},
+                                format='json').data['slip']
+        self.assertTrue(slip['recorded'])
+        self.assertNotIn('form', slip)
+
+    def test_record_visitor_slip(self):
+        from accounts.models import AuditLog
+        from scanning.models import VisitorPass
+        pass_id = self._walk_in('VIS032').data['id']
+        entered = VisitorPass.objects.get(pk=pass_id).entered_at
+        resp = self.client.patch(f'/api/scan/visitor-pass/{pass_id}/details/', {
+            'visitor_name': '  juan  dela cruz ', 'purpose': 'Enrollment',
+            'conduction_number': 'cs 12345', 'allowed_duration': 90,
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertNotIn('confiscation', resp.data)
+        pass_ = VisitorPass.objects.get(pk=pass_id)
+        self.assertEqual(pass_.visitor_name, 'JUAN DELA CRUZ')
+        self.assertEqual(pass_.conduction_number, 'CS12345')
+        self.assertEqual(pass_.allowed_duration, 90)
+        self.assertEqual(pass_.expires_at, entered + timedelta(minutes=90))   # from the entry, not now
+        self.assertTrue(resp.data['slip']['recorded'])
+        self.assertNotIn('form', resp.data['slip'])
+        self.assertIn(['Visitor', 'JUAN DELA CRUZ', True], resp.data['slip']['sections'][0])
+        self.assertTrue(AuditLog.objects.filter(details__startswith='Visitor slip recorded | Plate: VIS032').exists())
+
+    def test_record_visitor_slip_needs_name_and_purpose(self):
+        pass_id = self._walk_in('VIS033').data['id']
+        url = f'/api/scan/visitor-pass/{pass_id}/details/'
+        self.assertEqual(self.client.patch(url, {'purpose': 'Visit'}, format='json').status_code, 400)
+        self.assertEqual(self.client.patch(url, {'visitor_name': 'ANA'}, format='json').status_code, 400)
+
+    def test_record_visitor_slip_refused_after_exit(self):
+        pass_id = self._walk_in('VIS034').data['id']
+        self.client.post(f'/api/scan/visitor-pass/{pass_id}/exit/')
+        resp = self.client.patch(f'/api/scan/visitor-pass/{pass_id}/details/',
+                                 {'visitor_name': 'ANA', 'purpose': 'Visit'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_form_slip_renders_longer(self):
+        from scanning.models import VisitorPass
+        from scanning.slip_printer import render_slip
+        from scanning.slips import visitor_slip
+        pass_ = VisitorPass.objects.get(pk=self._walk_in('VIS035').data['id'])
+        blank = render_slip(visitor_slip(pass_))
+        pass_.visitor_name, pass_.purpose = 'ANA', 'Visit'
+        filled = render_slip(visitor_slip(pass_))
+        self.assertGreater(blank.height, filled.height)
+
     def _visitor_inside(self, plate, name='MARIA SANTOS'):
         """A printed pass — the visitor's entry is logged and they are inside.
         Not backdated: a backdated entry falls into yesterday just after

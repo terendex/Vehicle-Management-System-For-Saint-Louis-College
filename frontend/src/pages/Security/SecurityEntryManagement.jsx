@@ -16,7 +16,7 @@ import { useFullscreen } from '../../hooks/useFullscreen'
 import {
   manualEntry, getAccessLogs, getOffices,
   createVisitorPass, overrideEntry, denyEntry,
-  getVisitorPasses, extendVisitorPass,
+  getVisitorPasses, extendVisitorPass, recordVisitorDetails,
   confirmVisitorSlipPrinted, lookupSlip, exitSlip,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
   getOverstaying, acknowledgeOverstay,
@@ -212,6 +212,294 @@ function findExpectedVisit(expected, plate) {
   return expected.find(v => !v.is_arrived && compactPlate(v.plate_number) === want) || null
 }
 
+// ─── Issuing a visitor pass ────────────────────────────────────────────────────
+// Create the pass, print its slip, and log the entry once it prints. Shared by
+// the full pass form (a scheduled check-in) and "Allow Entry as Visitor", which
+// lets a walk-in in on a blank slip they fill in on campus — so the car is not
+// held at the barrier while the guard types.
+function useIssueVisitorPass({ onCreated, onClose }) {
+  const [loading, setLoading]   = useState(false)
+  const [printing, setPrinting] = useState(false)
+  // A pass that was created but whose slip did not print (printer offline, out
+  // of paper…). The pass already exists, so the caller switches to retrying the
+  // print rather than letting a second submit create a duplicate.
+  const [unprinted, setUnprinted] = useState(null)  // { pass, reason }
+  // Set while a confirmation is up: notify hands a repeated identical
+  // confirm the same promise, so a second submit would create a second pass.
+  const submitting = useRef(false)
+
+  // Auto-log the visitor's entry as soon as the slip is printed — no separate
+  // manual confirmation step.
+  const finish = async (pass, how = 'printer') => {
+    const plate   = formatPlateNumber(pass.plate_number)
+    const printed = how === 'printer' ? 'slip printed' : 'slip sent to the print dialog'
+    const blank   = pass.slip?.recorded === false
+      ? ' The visitor fills in the form on the slip — record it later with Record Visitor Slip.' : ''
+    try {
+      await confirmVisitorSlipPrinted(pass.id)
+      toast.success(`Visitor pass issued for ${plate} — ${printed} and entry logged, valid ${fmtMinutes(pass.allowed_duration)}.${blank}`,
+        { title: 'Visitor slip printed' })
+    } catch {
+      toast.success(`Visitor pass issued for ${plate} — ${printed}.${blank}`, { title: 'Visitor slip printed' })
+    }
+    onCreated()
+    onClose()
+  }
+
+  // No print dialog on campus — see printSlip. Asked for up front (creating
+  // the pass is what prints it), so no second confirmation here; the success
+  // dialog comes from finish().
+  const printPass = async (pass) => {
+    const { how, reason } = await printSlipWithFeedback(pass.slip, { confirm: false, success: false })
+    if (how === 'failed') {
+      setUnprinted({ pass, reason })
+      return
+    }
+    if (how === 'busy') return
+    setUnprinted(null)
+    await finish(pass, how)
+  }
+
+  const issue = async (payload) => {
+    setLoading(true)
+    try {
+      const res = await createVisitorPass(payload)
+      // The printer takes a few seconds; say so instead of a stuck "Creating…".
+      setPrinting(true)
+      await printPass(res.data)
+    } catch (err) {
+      // A visitor still serving the penalty for an earlier offence. A refusal
+      // the guard must act on — turn the visitor away — so it is a modal they
+      // acknowledge, and the form closes: no pass can be issued to them today.
+      if (err?.response?.data?.error === 'visitor_confiscated') {
+        await notify.error(err.response.data.detail, { title: 'Visitor entry confiscated' })
+        onClose()
+        return
+      }
+      toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
+    } finally { setLoading(false); setPrinting(false) }
+  }
+
+  const retry = async () => {
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      if (!(await notify.confirm({
+        title: 'Retry printing?',
+        message: `Print the visitor slip for ${formatPlateNumber(unprinted.pass.plate_number)} on the thermal printer again?`,
+        confirmLabel: 'Retry Print',
+      }))) return
+      setLoading(true)
+      try { await printPass(unprinted.pass) } finally { setLoading(false) }
+    } finally { submitting.current = false }
+  }
+
+  // The printer is down: print this computer's dialog instead. Still issued by
+  // the server first, so the copy gets its own serial like every other print.
+  const printWithDialog = async () => {
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      const { how } = await printSlip(unprinted.pass.slip, { browser: true })
+      if (how === 'blocked') {
+        await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
+          { title: 'Slip not printed' })
+        return
+      }
+      await finish(unprinted.pass, 'dialog')
+    } catch (err) {
+      await notify.error(err.message, { title: 'Slip not printed' })
+    } finally { submitting.current = false }
+  }
+
+  // Closing without a print: the pass exists, so the lists still refresh.
+  const abandon = () => { onCreated(); onClose() }
+
+  // Runs `fn` unless a submit is already under way — the caller's confirm
+  // and issue share the one guard with retry and the print dialog.
+  const once = async (fn) => {
+    if (submitting.current) return
+    submitting.current = true
+    try { await fn() } finally { submitting.current = false }
+  }
+
+  return { loading, printing, unprinted, once, issue, retry, printWithDialog, abandon }
+}
+
+function SlipNotPrintedDialog({ issuer }) {
+  const { unprinted, loading } = issuer
+  return (
+    <div className="em-overlay">
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><AlertTriangle size={17} /> Slip Not Printed</span>
+          <button className="em-modal-close" onClick={issuer.abandon}><X size={15} /></button>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); issuer.retry() }} noValidate>
+          <div className="em-modal-body">
+            <p style={{ margin: 0 }}>
+              The visitor pass for <strong>{formatPlateNumber(unprinted.pass.plate_number)}</strong> was created,
+              but {unprinted.reason.replace(/^The slip/, 'the slip')}
+            </p>
+            <p style={{ margin: '10px 0 0', color: '#3E5B72' }}>
+              Check that the thermal printer is switched on, has paper, and its lid is closed, then retry.
+              The visitor's entry is logged once the slip prints.
+            </p>
+          </div>
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary"
+              onClick={issuer.printWithDialog}>
+              Use Print Dialog
+            </button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
+              {loading ? <><div className="em-spinner" /> Printing…</> : 'Retry Print'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── RecordVisitorSlipModal ────────────────────────────────────────────────────
+// A walk-in let in on "Allow Entry as Visitor" wrote their details on the slip
+// while on campus. The guard copies them in here — usually when the slip comes
+// back at the exit. Opened with the pass (side panel) or the slip (status
+// dialog); both carry the pass id and what is on it so far.
+function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
+  const [visitorName, setVisitorName] = useState((pass.visitor_name || '').toUpperCase())
+  const [conduction, setConduction]   = useState(pass.conduction_number || '')
+  const [officeId, setOfficeId]       = useState(pass.office ? String(pass.office) : '')
+  const [purpose, setPurpose]         = useState(pass.purpose || '')
+  const total = pass.allowed_duration || 15
+  const [hours, setHours]     = useState(String(Math.floor(total / 60)))
+  const [minutes, setMinutes] = useState(String(total % 60))
+  const [loading, setLoading] = useState(false)
+  const submitting = useRef(false)   // see useIssueVisitorPass
+  const plate = formatPlateNumber(pass.plate_number)
+
+  const typedMinutes = (parseInt(hours, 10) || 0) * 60 + (parseInt(minutes, 10) || 0)
+  const durationNum  = Math.min(MAX_PASS_MINUTES, typedMinutes || total)
+  const normalizeDuration = () => {
+    setHours(String(Math.floor(durationNum / 60)))
+    setMinutes(String(durationNum % 60))
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    if (submitting.current) return
+    submitting.current = true
+    try {
+      const problems = [...fieldProblems(e.currentTarget)]
+      if (!visitorName.trim()) problems.push("Enter the visitor's name.")
+      if (conduction.trim() && !isValidConductionNumber(conduction)) {
+        problems.push('The conduction number should be 5–12 letters and digits, or left blank.')
+      }
+      if (!purpose.trim()) problems.push('Enter the purpose of the visit.')
+      if (await notify.validation(problems, { title: 'Slip not recorded' })) return
+      if (!(await notify.confirm({
+        title: 'Record visitor slip?',
+        message: `Save ${visitorName.trim()}'s details for ${plate}?`,
+        description: durationNum !== total
+          ? `The allowed time changes to ${fmtMinutes(durationNum)}, counted from when they entered.` : '',
+        confirmLabel: 'Record',
+      }))) return
+      setLoading(true)
+      try {
+        const { data } = await recordVisitorDetails(pass.id, {
+          visitor_name: visitorName.trim(), conduction_number: conduction.trim(),
+          office: officeId || null, purpose, allowed_duration: durationNum,
+        })
+        // Matched to a penalty on the name or conduction number — something
+        // the gate could not check with only the plate. They are already in.
+        if (data.confiscation) {
+          await notify.error(data.detail, { title: 'Visitor entry confiscated' })
+        } else {
+          await notify.success(`${data.visitor_name}'s details are recorded for ${plate}.`, { title: 'Visitor slip recorded' })
+        }
+        onSaved?.(data)
+        onClose()
+      } catch (err) {
+        await notify.error(err?.response?.data?.error || 'Failed to record the visitor slip.', { title: 'Slip not recorded' })
+      } finally { setLoading(false) }
+    } finally { submitting.current = false }
+  }
+
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><ClipboardList size={17} /> Record Visitor Slip</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="em-modal-body">
+            <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
+              Copy in what the visitor wrote on their slip.
+            </p>
+            <div className="em-field">
+              <label className="em-label">License Plate</label>
+              <input className="em-input" value={plate} readOnly />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Visitor's Name</label>
+              <input className="em-input" value={visitorName} required autoFocus
+                placeholder="e.g. JUAN DELA CRUZ" maxLength={150}
+                onChange={(e) => setVisitorName(e.target.value.toUpperCase())} />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Conduction Number <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
+              <input className="em-input" value={conduction}
+                placeholder="e.g. CS1234" maxLength={20}
+                onChange={(e) => setConduction(e.target.value.toUpperCase().replace(/\s/g, ''))} />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Destination Office <span style={{ color: '#64839C', fontWeight: 400 }}>(optional)</span></label>
+              <select className="em-select" value={officeId} onChange={(e) => setOfficeId(e.target.value)}>
+                <option value="">No specific office</option>
+                {offices.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </div>
+            <div className="em-field">
+              <label className="em-label">Purpose of Visit</label>
+              <textarea className="em-textarea" placeholder="e.g. Enrollment inquiry…" value={purpose}
+                onChange={(e) => setPurpose(e.target.value)} required />
+            </div>
+            <div className="em-field">
+              <label className="em-label">Allowed Duration</label>
+              <div className="em-duration">
+                <label className="em-duration-part">
+                  <input className="em-input" type="text" inputMode="numeric" value={hours}
+                    placeholder="0" aria-label="Hours"
+                    onChange={(e) => setHours(e.target.value.replace(/\D/g, '').slice(0, 2))}
+                    onBlur={normalizeDuration} />
+                  <span>hr</span>
+                </label>
+                <label className="em-duration-part">
+                  <input className="em-input" type="text" inputMode="numeric" value={minutes}
+                    placeholder="15" aria-label="Minutes"
+                    onChange={(e) => setMinutes(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                    onBlur={normalizeDuration} />
+                  <span>min</span>
+                </label>
+              </div>
+              <span style={{ fontSize: 11, color: '#64839C', marginTop: 4, display: 'block' }}>
+                Counted from when the visitor entered, up to 24 hours.
+              </span>
+            </div>
+          </div>
+          <div className="em-modal-foot">
+            <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
+              {loading ? <><div className="em-spinner" /> Saving…</> : 'Record Slip'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── VisitorPassModal ──────────────────────────────────────────────────────────
 // `scheduled` is the CDSO's booking when the guard checks someone in from
 // Expected Today (or a scanned plate matched one): its name and purpose fill
@@ -247,15 +535,8 @@ function VisitorPassModal({ plate: scannedPlate, scheduled: fixedScheduled, expe
   // Typeable strings; the pass defaults to 0 hr 15 min.
   const [hours, setHours]       = useState('0')
   const [minutes, setMinutes]   = useState('15')
-  const [loading, setLoading]   = useState(false)
-  // A pass that was created but whose slip did not print (printer offline, out
-  // of paper…). The pass already exists, so the modal switches to retrying the
-  // print rather than letting a second submit create a duplicate.
-  const [unprinted, setUnprinted] = useState(null)  // { pass, reason }
-  const [printing, setPrinting]   = useState(false)
-  // Set while the confirmation is up: notify hands a repeated identical
-  // confirm the same promise, so a second submit would create a second pass.
-  const submitting = useRef(false)
+  const issuer = useIssueVisitorPass({ onCreated, onClose })
+  const { loading, printing } = issuer
 
   const typedMinutes = (parseInt(hours, 10) || 0) * 60 + (parseInt(minutes, 10) || 0)
   const durationNum  = Math.min(MAX_PASS_MINUTES, typedMinutes || 15)
@@ -266,69 +547,11 @@ function VisitorPassModal({ plate: scannedPlate, scheduled: fixedScheduled, expe
     setMinutes(String(durationNum % 60))
   }
 
-  // Auto-log the visitor's entry as soon as the slip is printed — no separate
-  // manual confirmation step.
-  const finish = async (pass, how = 'printer') => {
-    const printed = how === 'printer' ? 'slip printed' : 'slip sent to the print dialog'
-    try {
-      await confirmVisitorSlipPrinted(pass.id)
-      toast.success(`Visitor pass issued for ${plate} — ${printed} and entry logged, valid ${fmtMinutes(durationNum)}.`,
-        { title: 'Visitor slip printed' })
-    } catch {
-      toast.success(`Visitor pass issued for ${plate} — ${printed}.`, { title: 'Visitor slip printed' })
-    }
-    onCreated()
-    onClose()
-  }
-
-  // No print dialog on campus — see printSlip. Asked for up front (creating
-  // the pass is what prints it), so no second confirmation here; the success
-  // dialog comes from finish().
-  const printPass = async (pass) => {
-    const { how, reason } = await printSlipWithFeedback(pass.slip, { confirm: false, success: false })
-    if (how === 'failed') {
-      setUnprinted({ pass, reason })
-      return
-    }
-    if (how === 'busy') return
-    setUnprinted(null)
-    await finish(pass, how)
-  }
-
-  // The printer is down: print this computer's dialog instead. Still issued by
-  // the server first, so the copy gets its own serial like every other print.
-  const printWithDialog = async () => {
-    if (submitting.current) return
-    submitting.current = true
-    try {
-      const { how } = await printSlip(unprinted.pass.slip, { browser: true })
-      if (how === 'blocked') {
-        await notify.error('The print window was blocked by the browser. Allow pop-ups for this site, then try again.',
-          { title: 'Slip not printed' })
-        return
-      }
-      await finish(unprinted.pass, 'dialog')
-    } catch (err) {
-      await notify.error(err.message, { title: 'Slip not printed' })
-    } finally { submitting.current = false }
-  }
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
-    if (submitting.current) return
-    submitting.current = true
-    try {
-      if (unprinted) {
-        if (!(await notify.confirm({
-          title: 'Retry printing?',
-          message: `Print the visitor slip for ${plate} on the thermal printer again?`,
-          confirmLabel: 'Retry Print',
-        }))) return
-        setLoading(true)
-        try { await printPass(unprinted.pass) } finally { setLoading(false) }
-        return
-      }
-      const problems = [...fieldProblems(e.currentTarget)]
+    const form = e.currentTarget
+    return issuer.once(async () => {
+      const problems = [...fieldProblems(form)]
       if (!scannedPlate && !isValidPlateNumber(plate)) problems.push('Enter a valid license plate, e.g. ABC 1234.')
       if (!visitorName.trim()) problems.push("Enter the visitor's name.")
       if (conduction.trim() && !isValidConductionNumber(conduction)) {
@@ -342,67 +565,16 @@ function VisitorPassModal({ plate: scannedPlate, scheduled: fixedScheduled, expe
         description: "The visitor's entry is logged once the slip prints.",
         confirmLabel: 'Create & Print',
       }))) return
-      await createAndPrint()
-    } finally { submitting.current = false }
-  }
-
-  const createAndPrint = async () => {
-    setLoading(true)
-    try {
-      const res = await createVisitorPass({
+      await issuer.issue({
         plate_number: plate, visitor_name: visitorName.trim(),
         conduction_number: conduction.trim(), office: officeId || null,
         purpose, allowed_duration: durationNum,
         scheduled_visit: scheduled?.id || null,
       })
-      // The printer takes a few seconds; say so instead of a stuck "Creating…".
-      setPrinting(true)
-      await printPass(res.data)
-    } catch (err) {
-      // A visitor still serving the penalty for an earlier offence. A refusal
-      // the guard must act on — turn the visitor away — so it is a modal they
-      // acknowledge, and the form closes: no pass can be issued to them today.
-      if (err?.response?.data?.error === 'visitor_confiscated') {
-        await notify.error(err.response.data.detail, { title: 'Visitor entry confiscated' })
-        onClose()
-        return
-      }
-      toast.error(err?.response?.data?.detail || 'Failed to create visitor pass.')
-    } finally { setLoading(false); setPrinting(false) }
+    })
   }
 
-  if (unprinted) {
-    return (
-      <div className="em-overlay">
-        <div className="em-modal">
-          <div className="em-modal-head">
-            <span className="em-modal-title"><AlertTriangle size={17} /> Slip Not Printed</span>
-            <button className="em-modal-close" onClick={() => { onCreated(); onClose() }}><X size={15} /></button>
-          </div>
-          <form onSubmit={handleSubmit} noValidate>
-            <div className="em-modal-body">
-              <p style={{ margin: 0 }}>
-                The visitor pass for <strong>{plate}</strong> was created, but {unprinted.reason.replace(/^The slip/, 'the slip')}
-              </p>
-              <p style={{ margin: '10px 0 0', color: '#3E5B72' }}>
-                Check that the thermal printer is switched on, has paper, and its lid is closed, then retry.
-                The visitor's entry is logged once the slip prints.
-              </p>
-            </div>
-            <div className="em-modal-foot">
-              <button type="button" className="em-btn em-btn-secondary"
-                onClick={printWithDialog}>
-                Use Print Dialog
-              </button>
-              <button type="submit" className="em-btn em-btn-primary" disabled={loading}>
-                {loading ? <><div className="em-spinner" /> Printing…</> : 'Retry Print'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    )
-  }
+  if (issuer.unprinted) return <SlipNotPrintedDialog issuer={issuer} />
 
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -853,14 +1025,17 @@ const SLIP_KIND = {
 // (still inside, time left, overstay, already out). Recording the exit and
 // reprinting a torn slip are separate buttons, so looking a slip up never
 // changes its status by accident.
-function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
+function SlipStatusModal({ slip: initialSlip, gateId, offices = [], onClose, onChanged }) {
   const [slip, setSlip] = useState(initialSlip)
   const [busy, setBusy] = useState('')   // 'exit' | 'reprint' | ''
+  const [recording, setRecording] = useState(false)   // Record Visitor Slip form open
   // Read once when the slip opens — the dialog is a glance, not a live clock.
   const [openedAt] = useState(() => Date.now())
 
   // Same Escape handling as ResultModal: capture phase, one press closes only this.
+  // Stands aside while the Record Visitor Slip form is open on top.
   useEffect(() => {
+    if (recording) return
     const onKey = (e) => {
       if (e.key !== 'Escape' || feedbackOpen()) return
       e.preventDefault()
@@ -869,7 +1044,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  }, [onClose, recording])
 
   const inside   = slip.state === 'inside'
   const kindMeta = SLIP_KIND[slip.kind] ?? SLIP_KIND.visitor
@@ -890,7 +1065,19 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
     : `Exited ${when(slip.exited_at)} after ${slip.minutes_inside} min` +
       (slip.overstay_minutes ? ` · overstayed ${slip.overstay_minutes} min` : '')
 
+  // A walk-in let in on a blank slip whose details were never typed in.
+  const unrecorded = inside && slip.kind === 'visitor' && slip.recorded === false
+
   const recordExit = async () => {
+    // Exiting closes the pass, and a closed pass can no longer be recorded —
+    // so leaving without the details is a choice, never an accident.
+    if (unrecorded && !(await notify.confirm({
+      title: 'Visitor slip not recorded',
+      message: `The details ${slip.headline}'s visitor wrote on the slip are not in the system yet. Record the exit anyway?`,
+      description: 'Press Cancel, then Record Visitor Slip, to copy them in first. They cannot be added after the exit.',
+      confirmLabel: 'Exit Anyway',
+      danger: true,
+    }))) return
     setBusy('exit')
     try {
       const { data } = await exitSlip(slip.code, gateId)
@@ -940,6 +1127,12 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
         <div className="em-result-body">
           <p className="em-result-msg">{timeLine}</p>
           <div className="em-result-rows">
+            {unrecorded && (
+              <div className="em-result-row">
+                <span className="em-result-row-label">Visitor</span>
+                <span className="em-violation-pill"><AlertTriangle size={10} /> Details not recorded yet</span>
+              </div>
+            )}
             {slip.sections.flat().map(([label, value]) => (
               <div className="em-result-row" key={label}>
                 <span className="em-result-row-label">{label}</span>
@@ -948,6 +1141,13 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
             ))}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
+            {inside && slip.kind === 'visitor' && (
+              <button className={`em-btn ${unrecorded ? 'em-btn-primary' : 'em-btn-secondary'}`}
+                style={{ width: '100%', justifyContent: 'center' }}
+                disabled={!!busy} onClick={() => setRecording(true)}>
+                <ClipboardList size={14} /> {unrecorded ? 'Record Visitor Slip' : 'Edit Visitor Slip'}
+              </button>
+            )}
             {inside && (
               <button className="em-btn" disabled={!!busy} onClick={recordExit}
                 style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}>
@@ -967,6 +1167,13 @@ function SlipStatusModal({ slip: initialSlip, gateId, onClose, onChanged }) {
           </div>
         </div>
       </div>
+      {recording && (
+        <RecordVisitorSlipModal
+          pass={{ id: slip.id, plate_number: slip.plate_number, ...slip.details }}
+          offices={offices}
+          onClose={() => setRecording(false)}
+          onSaved={(data) => { setSlip(data.slip); onChanged?.() }} />
+      )}
     </div>
   )
 }
@@ -976,10 +1183,29 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
   const [showOverride, setShowOverride] = useState(false)
   const [showDeny,     setShowDeny]     = useState(false)
 
+  // "Allow Entry as Visitor": a walk-in goes in on a slip that prints a blank
+  // form — they fill it in on campus and the guard records it later — so the
+  // car is not held at the barrier while a pass form is typed. Issuing settles
+  // this scan, so the result goes with it (see the note on showVisitor below).
+  const quickPass = useIssueVisitorPass({
+    onCreated: () => { onPassCreated?.(); onDismiss?.() },
+    onClose: () => {},
+  })
+  const allowVisitorEntry = () => quickPass.once(async () => {
+    if (!(await notify.confirm({
+      title: 'Allow entry as visitor?',
+      message: `Let ${result.plate_number} in as a visitor and print a visitor slip on the thermal printer?`,
+      description: 'The slip carries a blank form for the visitor to fill in while on campus — record it with Record Visitor Slip when they come back. '
+        + 'The pass runs 15 minutes (extend or change it later); the entry is logged once the slip prints.',
+      confirmLabel: 'Allow & Print',
+    }))) return
+    await quickPass.issue({ plate_number: result.plate_number, allowed_duration: 15 })
+  })
+
   // Visitor pass / override / deny open on top of this dialog. While one of
   // them is up it owns the keyboard and the backdrop — dismissing the result
   // underneath would tear the form off the screen mid-entry.
-  const nestedOpen = showVisitor || showOverride || showDeny
+  const nestedOpen = showVisitor || showOverride || showDeny || quickPass.loading || !!quickPass.unprinted
 
   // Capture phase with stopImmediatePropagation, like FeedbackHost: the page
   // underneath (fullscreen viewport, QR scanner) listens for Escape too, and
@@ -1048,7 +1274,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
     <>
       <div
         className="em-overlay"
-        onClick={(e) => e.target === e.currentTarget && onDismiss?.()}
+        onClick={(e) => e.target === e.currentTarget && !nestedOpen && onDismiss?.()}
       >
         <div className={`em-card em-result em-result-dialog ${cls}`} role="dialog" aria-modal="true"
           aria-label={`${label} — ${result.plate_number || 'unknown plate'}`}>
@@ -1211,7 +1437,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
               <p className="em-expected-hint">
                 <CalendarClock size={12} style={{ flexShrink: 0 }} />
                 {stillDue === 1 ? '1 scheduled visitor is' : `${stillDue} scheduled visitors are`} still expected today.
-                If this is one of them, choose them in the visitor pass form.
+                If this is one of them, check them in from Expected Today.
               </p>
             )}
             {supplierSlip && (
@@ -1256,17 +1482,22 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
                     : <><Printer size={14} /> {slipPrint?.state === 'printed' ? `Reprint ${slipName}` : `Print ${slipName}`}</>}
                 </button>
               )}
-              {isVisitor && (
-                <button className={`em-btn ${expectedVisit ? 'em-btn-primary' : 'em-btn-secondary'}`} style={{ width: '100%' }}
+              {isVisitor && (expectedVisit ? (
+                <button className="em-btn em-btn-primary" style={{ width: '100%' }}
                   onClick={() => setShowVisitor(true)}>
-                  {expectedVisit
-                    ? <><CalendarClock size={14} /> Check In Scheduled Visitor</>
-                    : <><UserPlus size={14} /> Create Visitor Pass</>}
+                  <CalendarClock size={14} /> Check In Scheduled Visitor
                 </button>
-              )}
+              ) : (
+                <button className="em-btn em-btn-secondary" style={{ width: '100%', justifyContent: 'center' }}
+                  disabled={quickPass.loading} onClick={allowVisitorEntry}>
+                  {quickPass.loading
+                    ? <><div className="em-spinner" /> {quickPass.printing ? 'Printing slip…' : 'Issuing…'}</>
+                    : <><UserPlus size={14} /> Allow Entry as Visitor</>}
+                </button>
+              ))}
               {isVisitor && (
                 <button className="em-btn" style={{ width: '100%', background: '#C62828', color: '#fff', border: 'none', justifyContent: 'center' }}
-                  onClick={() => setShowDeny(true)}>
+                  disabled={quickPass.loading} onClick={() => setShowDeny(true)}>
                   <Ban size={14} /> Deny Entry
                 </button>
               )}
@@ -1283,6 +1514,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
                 className="em-btn em-btn-primary"
                 style={{ width: '100%', justifyContent: 'center', marginTop: 2 }}
                 onClick={() => onDismiss?.()}
+                disabled={quickPass.loading}
                 autoFocus
               >
                 <CheckCircle size={14} />
@@ -1293,6 +1525,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
         </div>
       </div>
 
+      {quickPass.unprinted && <SlipNotPrintedDialog issuer={quickPass} />}
       {/* Issuing a pass or overriding settles this scan, so the result goes
           with it — as Deny already does. Left open, "Create Visitor Pass" sat
           under the success message and a second press issued a duplicate pass
@@ -1331,6 +1564,7 @@ export default function SecurityEntryManagement() {
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
   const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
   const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
+  const [recordingPass, setRecordingPass] = useState(null)  // the active pass whose slip is being recorded
   const [overstaying, setOverstaying] = useState([])    // still inside, past their rule
   const [ackBusy, setAckBusy]         = useState(null)  // plate currently being acknowledged
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
@@ -2382,10 +2616,17 @@ export default function SecurityEntryManagement() {
                       <div key={p.id} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
                         <div className="em-visitor-main">
                           <span className="em-visitor-plate">{p.plate_number}</span>
-                          <span className="em-visitor-sub">
-                            {p.visitor_name ? `${p.visitor_name} · ` : ''}
-                            {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
-                          </span>
+                          {p.visitor_name ? (
+                            <span className="em-visitor-sub">
+                              {`${p.visitor_name} · `}
+                              {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                            </span>
+                          ) : (
+                            // Let in on a blank slip; the guard has not typed it in yet.
+                            <span className="em-visitor-sub" style={{ color: '#8A6B00', fontWeight: 600 }}>
+                              Details not recorded
+                            </span>
+                          )}
                         </div>
                         <span className={`em-visitor-time${t.overdue ? ' overdue' : t.soon ? ' soon' : ''}`}>
                           {t.overdue && <AlertTriangle size={11} />}
@@ -2398,6 +2639,16 @@ export default function SecurityEntryManagement() {
                           title="Extend by 30 minutes"
                         >
                           +30m
+                        </button>
+                        <button
+                          type="button"
+                          className="em-visitor-extend"
+                          onClick={() => setRecordingPass(p)}
+                          title={p.visitor_name ? 'Edit the visitor slip details' : 'Record Visitor Slip — type in what the visitor wrote'}
+                          aria-label={`Record the visitor slip for ${p.plate_number}`}
+                          style={p.visitor_name ? undefined : { color: '#8A6B00', borderColor: '#F7E08A', background: '#FEF9E4' }}
+                        >
+                          <ClipboardList size={12} />
                         </button>
                         <button
                           type="button"
@@ -2430,6 +2681,7 @@ export default function SecurityEntryManagement() {
             key={scanQueue[0].id}
             slip={scanQueue[0].result.slip}
             gateId={gateId}
+            offices={offices}
             onChanged={refreshAll}
             onClose={() => removeFromQueue(scanQueue[0].id)}
           />
@@ -2445,6 +2697,15 @@ export default function SecurityEntryManagement() {
             onDeny={refreshAll}
             onDismiss={() => removeFromQueue(scanQueue[0].id)}
             queued={scanQueue.length - 1}
+          />
+        )}
+
+        {recordingPass && (
+          <RecordVisitorSlipModal
+            pass={recordingPass}
+            offices={offices}
+            onClose={() => setRecordingPass(null)}
+            onSaved={refreshAll}
           />
         )}
 

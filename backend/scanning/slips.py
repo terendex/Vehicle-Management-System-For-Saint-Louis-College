@@ -190,16 +190,41 @@ def _scheduled_rows(visit, purpose_shown=''):
     return rows
 
 
+# The write-in blanks of a walk-in visitor slip — the fields of the gate's
+# visitor pass form, which the visitor fills in by hand while on campus so the
+# car is not held at the barrier. The guard types them in later (Record Visitor
+# Slip). A label marked 2 gets two lines; Purpose runs longer than a name.
+VISITOR_FORM = [['Visitor Name', 1], ['Conduction No.', 1], ['Office to Visit', 1], ['Purpose of Visit', 2]]
+VISITOR_FORM_FOOTER = ['FILL IN THIS FORM', 'RETURN THIS SLIP UPON EXIT']
+
+
+def visitor_recorded(pass_):
+    """True once the visitor's details are in the system. A walk-in let in on
+    a blank slip has no name until the guard records it."""
+    return bool((pass_.visitor_name or '').strip())
+
+
 def visitor_slip(pass_):
     now = timezone.now()
     end = pass_.exited_at or now
     state = {'active': 'inside', 'exited': 'exited'}.get(pass_.status, pass_.status)
     overstay = _minutes(pass_.expires_at, end) if pass_.expires_at and end > pass_.expires_at else 0
+    recorded = visitor_recorded(pass_)
     issued = [['Issued', _when(pass_.entered_at)],
               ['Expires', _when(pass_.expires_at), KEY],
               ['Guard', pass_.issued_by.full_name if pass_.issued_by else 'N/A']]
     if pass_.slip_token:
         issued.append(['Slip No.', pass_.slip_token])   # tells two paper copies apart
+    if recorded:
+        details = [['Visitor', pass_.visitor_name, KEY],
+                   *([['Conduction No.', pass_.conduction_number]] if pass_.conduction_number else []),
+                   ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
+                   ['Purpose', pass_.purpose or 'N/A'],
+                   ['Duration', _duration(pass_.allowed_duration)]]
+    else:
+        # Nothing to print about the visitor yet — that is what the form is for.
+        details = [['Duration', _duration(pass_.allowed_duration)]]
+    extra = {} if recorded else {'form': VISITOR_FORM, 'footer': VISITOR_FORM_FOOTER}
     return {
         'kind':             'visitor',
         'id':               pass_.pk,
@@ -217,15 +242,22 @@ def visitor_slip(pass_):
         'printed_at':       _iso(pass_.printed_at),
         'minutes_inside':   _minutes(pass_.entered_at, end),
         'overstay_minutes': overstay,
+        'recorded':         recorded,
+        # The pass's own fields, so the guard's Record Visitor Slip form opened
+        # from this slip starts from what is already on it.
+        'details': {
+            'visitor_name':      pass_.visitor_name,
+            'conduction_number': pass_.conduction_number,
+            'office':            pass_.office_id,
+            'purpose':           pass_.purpose,
+            'allowed_duration':  pass_.allowed_duration,
+        },
         'sections': [
-            [['Visitor', pass_.visitor_name or 'N/A', KEY],
-             *([['Conduction No.', pass_.conduction_number]] if pass_.conduction_number else []),
-             ['Office', pass_.office.name if pass_.office else 'N/A', KEY],
-             ['Purpose', pass_.purpose or 'N/A'],
-             ['Duration', _duration(pass_.allowed_duration)]],
+            details,
             *([_scheduled_rows(pass_.scheduled_visit, pass_.purpose)] if pass_.scheduled_visit else []),
             issued,
         ],
+        **extra,
     }
 
 

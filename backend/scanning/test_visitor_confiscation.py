@@ -102,6 +102,18 @@ class OverstayConfiscatesTheVisitorTests(_VisitorCase):
         self.assertEqual(res.status_code, 403)
         self.assertEqual(res.data['confiscation']['matched_on'], ['plate / conduction number'])
 
+    def test_recording_a_walk_in_slip_flags_a_confiscated_name(self):
+        """Let in on the plate alone, the gate could not match the name. The
+        details are kept when they are recorded, and the guard is warned."""
+        self._visit_and_overstay()
+        res = self._issue(plate='XYZ9876', name='')
+        self.assertEqual(res.status_code, 201, res.data)   # another car, no name yet
+        out = self.client.patch(f"{PASS_URL}{res.data['id']}/details/",
+                                {'visitor_name': 'juan dela cruz', 'purpose': 'Visit'}, format='json')
+        self.assertEqual(out.status_code, 200, out.data)
+        self.assertIn('name', out.data['confiscation']['matched_on'])
+        self.assertEqual(VisitorPass.objects.get(pk=res.data['id']).visitor_name, 'JUAN DELA CRUZ')
+
     def test_an_unrelated_visitor_is_not_refused(self):
         self._visit_and_overstay()
         res = self._issue(plate='XYZ9876', name='MARIA SANTOS')

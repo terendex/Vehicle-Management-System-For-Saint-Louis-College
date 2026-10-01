@@ -41,6 +41,12 @@ export function printSlipInBrowser(slip, { reprint = false } = {}) {
   ).join('\n')).join('\n<hr/>\n')
   const footer = (slip.footer?.length ? slip.footer : ENTRY_FOOTER)
     .map(line => `<div class="warn">${escapeHtml(line)}</div>`).join('\n')
+  // A walk-in visitor's write-in form (VISITOR_FORM in slips.py): [label, lines].
+  const form = slip.form?.length
+    ? `<div class="warn">VISITOR TO FILL IN</div>\n` + slip.form.map(([label, lines]) =>
+        `<div class="label">${escapeHtml(label)}:</div>` + '<div class="blank"></div>'.repeat(lines || 1),
+      ).join('\n') + '\n<hr/>'
+    : ''
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>${escapeHtml(slip.title)}</title>
 <style>
@@ -51,7 +57,10 @@ export function printSlipInBrowser(slip, { reprint = false } = {}) {
      custom sizes); the slip runs ~121mm, leaving room for a wrapped line or
      two. A size the driver does not list gets shrunk and centred on its page,
      so this must match that form exactly. */
-  @page { size: 48mm 130mm; margin: 0; }
+  @page { size: 48mm ${form ? 180 : 130}mm; margin: 0; }
+  /* A slip with the visitor's write-in form runs ~45mm longer, on a matching
+     "Visitor Slip 48x180mm" form. */
+  .blank { border-bottom: 1px solid #000; height: 6mm; margin: 0 0 2px; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
   /* Thermal heads cannot print grey — every tint dithers into specks — so
@@ -91,6 +100,7 @@ ${reprint ? '<div class="sub reprint">** REPRINT **</div>' : ''}
 <hr/>
 ${sections}
 <hr/>
+${form}
 <div class="qr">${qrSvg}</div>
 ${footer}
 <div class="footer">Unauthorized possession is subject to penalty.</div>

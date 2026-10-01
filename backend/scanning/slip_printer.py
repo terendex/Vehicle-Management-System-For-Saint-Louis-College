@@ -205,6 +205,21 @@ def render_slip(slip, reprint=False):
                 row(f'{label}:', str(value), body)
     rule()
 
+    # A walk-in visitor's write-in form (slips.VISITOR_FORM): each label on its
+    # own line over solid rules tall enough to write on, so the visitor fills
+    # it in on campus instead of at the barrier.
+    if slip.get('form'):
+        centered('VISITOR TO FILL IN', _font(10, bold=True), 4)
+        for label, lines in slip['form']:
+            draw.text((pad, y), f'{label}:', font=body, fill=0)
+            y += round(body.size * 1.25)
+            for _ in range(lines):
+                y += 44                              # ~5.5mm of writing room — room for a pen
+                draw.rectangle([pad, y, DOTS_WIDE - pad - 1, y + 1], fill=0)
+                y += 4
+            y += 6
+        rule()
+
     # QR, 32mm square, drawn module by module so every module is whole dots.
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
     qr.add_data(slip.get('qr') or slip['code'])

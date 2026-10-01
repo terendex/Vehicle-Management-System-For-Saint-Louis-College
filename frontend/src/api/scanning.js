@@ -69,6 +69,11 @@ export const testRtsp = (rtsp_url) => api.post('/scan/test-rtsp/', { rtsp_url })
 export const extendVisitorPass = (id, extra_minutes) =>
   api.patch(`/scan/visitor-pass/${id}/extend/`, { extra_minutes })
 
+// Record the details a walk-in visitor wrote on their slip (name, purpose,
+// office, conduction no., allowed minutes). Returns the pass with a fresh `slip`.
+export const recordVisitorDetails = (id, data) =>
+  api.patch(`/scan/visitor-pass/${id}/details/`, data)
+
 // Gate slips — visitor passes (SLC-VISITOR:{id}) and no-plate entries
 // (SLC-NOPLATE:{id}). Looking one up changes nothing; exit and reprint are
 // separate, deliberate calls.

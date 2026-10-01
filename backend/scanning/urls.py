@@ -16,6 +16,7 @@ urlpatterns = [
     path('visitor-pass/<int:pk>/printed/',   views.VisitorPassPrintedView.as_view(), name='visitor-printed'),
     path('visitor-pass/<int:pk>/exit/',      views.ExitScanView.as_view(),          name='visitor-exit'),
     path('visitor-pass/<int:pk>/extend/',    views.ExtendVisitorPassView.as_view(), name='visitor-extend'),
+    path('visitor-pass/<int:pk>/details/',   views.RecordVisitorDetailsView.as_view(), name='visitor-details'),
     path('offices/',                views.OfficeListView.as_view(),        name='offices'),
     path('gates/',                  views.GateListView.as_view(),          name='gates'),
     path('gates/<int:pk>/',         views.GateDetailView.as_view(),        name='gate-detail'),

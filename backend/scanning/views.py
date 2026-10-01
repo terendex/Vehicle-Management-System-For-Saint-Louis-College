@@ -2773,6 +2773,79 @@ class ExtendVisitorPassView(APIView):
         return Response(VisitorPassSerializer(pass_).data)
 
 
+# A walk-in visitor is let in on a blank slip ("Allow Entry as Visitor") so the
+# car is not held at the barrier filling in a form; the visitor writes their
+# details on the slip while on campus. This is where the guard types them in —
+# usually when the slip comes back at the exit.
+class RecordVisitorDetailsView(APIView):
+    """Guard records the details a visitor wrote on their slip."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, pk):
+        pass_ = get_object_or_404(VisitorPass.objects.select_related('office'), pk=pk)
+        if pass_.status != VisitorPass.Status.ACTIVE:
+            return Response({'error': f'Cannot record — pass is already {pass_.status}.'}, status=400)
+
+        # Normalised exactly as VisitorPassView.post does at the gate.
+        visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
+        purpose = (request.data.get('purpose') or '').strip()
+        conduction_number = (request.data.get('conduction_number') or '').strip().upper().replace(' ', '')[:50]
+        problems = []
+        if not visitor_name:
+            problems.append("Enter the visitor's name.")
+        if not purpose:
+            problems.append('Enter the purpose of the visit.')
+        if problems:
+            return Response({'error': ' '.join(problems)}, status=400)
+
+        office = None
+        office_id = request.data.get('office')
+        if office_id:
+            from .models import Office as OfficeModel
+            office = OfficeModel.objects.filter(pk=office_id).first()
+
+        fields = ['visitor_name', 'purpose', 'conduction_number', 'office']
+        pass_.visitor_name, pass_.purpose = visitor_name, purpose
+        pass_.conduction_number, pass_.office = conduction_number, office
+        if request.data.get('allowed_duration') not in (None, ''):
+            try:
+                allowed_duration = min(24 * 60, max(1, int(request.data['allowed_duration'])))
+            except (TypeError, ValueError):
+                return Response({'error': 'allowed_duration must be a whole number of minutes.'}, status=400)
+            # From the entry, not from now: the allowance is for the whole visit.
+            pass_.allowed_duration = allowed_duration
+            if pass_.entered_at:
+                pass_.expires_at = pass_.entered_at + timedelta(minutes=allowed_duration)
+            fields += ['allowed_duration', 'expires_at']
+        pass_.save(update_fields=fields)
+
+        _audit(
+            request,
+            AuditLog.Action.VISITOR_ISSUED,
+            f"Visitor slip recorded | Plate: {pass_.plate_number} | Visitor: {visitor_name} | "
+            + (f"Conduction: {conduction_number} | " if conduction_number else "")
+            + f"Office: {office.name if office else 'N/A'} | Purpose: {purpose} | "
+            f"Duration: {pass_.allowed_duration} min | Guard: {request.user.full_name}",
+        )
+
+        from .slips import visitor_slip
+        data = VisitorPassSerializer(pass_).data
+        data['slip'] = visitor_slip(pass_)
+
+        # The gate had only the plate when it let this visitor in, so a penalty
+        # matched on the name or conduction number could not be caught there.
+        # The visitor is already inside — the guard is told, to refer them to
+        # the CDSO on the way out; the details are kept either way.
+        from violations.penalty import visitor_confiscation
+        penalty = visitor_confiscation(pass_.plate_number, conduction_number, visitor_name)
+        if penalty:
+            data['confiscation'] = {**penalty, 'until': penalty['until'].isoformat() if penalty['until'] else None}
+            data['detail'] = (f"This visitor's entry is confiscated (offence {penalty['level']} of 3, matched on "
+                              f"{' and '.join(penalty['matched_on']) or 'a previous offence'}). "
+                              f"Refer them to the CDSO office before they leave.")
+        return Response(data)
+
+
 # "Does this camera URL work?", answered before anyone saves it. Every message
 # below is written to tell an installer what to do next, not to describe an
 # error class.
