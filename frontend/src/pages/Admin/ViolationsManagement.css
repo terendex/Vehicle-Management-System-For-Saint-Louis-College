@@ -248,12 +248,13 @@
   background: #fff;
   border: 1px solid #D3E1EC;
   border-radius: 14px;
-  overflow-x: auto;           /* a safety net only - the layout below is built never to need it */
+  overflow-x: auto;           /* narrow screens scroll the table sideways */
+  -webkit-overflow-scrolling: touch;
   position: relative;
   box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
-  /* The table switches to stacked cards on the CARD's width, not the
-     window's: the admin sidebar takes a different share of each screen, so
-     a viewport breakpoint fires too early on one and too late on another. */
+  /* The table tightens its padding on the CARD's width, not the window's:
+     the admin sidebar takes a different share of each screen, so a
+     viewport breakpoint fires too early on one and too late on another. */
   container-type: inline-size;
   container-name: vm-card;
 }
@@ -277,9 +278,9 @@
   /* Fixed layout + <colgroup> keeps every row on the same grid — without it
      the long Notes text steals width from Owner/Issued row by row. */
   table-layout: fixed;
-  /* No min-width: the table fills whatever the card gives it, and below
-     the container breakpoint it becomes stacked cards instead of
-     scrolling sideways. */
+  /* Stays a table on every screen: below this width the card scrolls
+     sideways rather than the columns crushing their contents. */
+  min-width: 960px;
 }
 
 /* Column widths (sum = 100%) */
@@ -911,78 +912,16 @@
 .vm-or-input:focus { border-color: #03396C; }
 
 /* ── Responsive table ────────────────────────────────────────────
-   Keyed to the card's own width (container-type on .vm-card), so it
-   follows the space the table actually has, sidebar or not.
+   Always the eight-column table, at every width. Keyed to the card's own
+   width (container-type on .vm-card), so it follows the space the table
+   actually has, sidebar or not. Once the card is narrower than the
+   table's min-width, the card scrolls sideways instead of squeezing. */
 
-   Wide:   the eight-column table, filling the card, no sideways scroll.
-   Narrow: each violation becomes a stacked card - the header row is
-           hidden and every cell prints its own label (data-label). */
-
-/* A little tighter before the switch, so 8 columns still breathe. */
+/* A little tighter on narrower cards, so 8 columns still breathe. */
 @container vm-card (max-width: 1180px) {
   .vm-table th,
   .vm-table td { padding: 11px 10px; }
   .vm-table    { font-size: 0.8rem; }
-}
-
-@container vm-card (max-width: 960px) {
-  .vm-table,
-  .vm-table tbody,
-  .vm-table tr,
-  .vm-table td { display: block; width: 100%; }
-  .vm-table colgroup,
-  .vm-table thead { display: none; }
-
-  /* One card per violation: a two-column grid of labelled fields. */
-  .vm-table tbody tr {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px 18px;
-    padding: 16px 18px;
-    border-bottom: 1px solid #E3ECF3;
-  }
-  .vm-table tbody tr:last-child { border-bottom: none; }
-  .vm-table tbody tr:hover { background: #FAFCFD; }
-
-  .vm-table td {
-    padding: 0;
-    border: none;
-    border-radius: 0 !important;       /* drop the table's rounded-corner cells */
-    min-width: 0;
-  }
-  .vm-table td::before {
-    content: attr(data-label);
-    display: block;
-    margin-bottom: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    color: #7A95AA;
-  }
-
-  /* Card head: the plate on the left, status on the right. */
-  .vm-table .vm-cell-plate  { order: 1; font-size: 15px; }
-  .vm-table .vm-cell-status { order: 2; }
-  .vm-table .vm-cell-owner  { order: 3; }
-  .vm-table .vm-cell-type   { order: 4; }
-  .vm-table .vm-cell-conf   { order: 5; }
-  .vm-table .vm-cell-issued { order: 6; }
-  .vm-table .vm-cell-notes  { order: 7; grid-column: 1 / -1; }
-  .vm-table .vm-cell-actions { order: 8; grid-column: 1 / -1; }
-  .vm-table .vm-cell-plate::before,
-  .vm-table .vm-cell-actions::before { display: none; }   /* the plate and buttons speak for themselves */
-
-  .vm-notes { -webkit-line-clamp: 4; }
-}
-
-/* A phone: one field per line. */
-@container vm-card (max-width: 520px) {
-  .vm-table tbody tr {
-    grid-template-columns: 1fr;
-    padding: 14px;
-  }
-  .vm-table .vm-cell-status { order: 2; }
 }
 
 /* ── Responsive page ─────────────────────────────────────────────
