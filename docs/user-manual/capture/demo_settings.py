@@ -28,6 +28,7 @@ STORAGES = {
 MEDIA_ROOT = os.environ['DEMO_MEDIA_ROOT']
 MEDIA_URL = '/media/'
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+EMAIL_TRANSPORT_BACKEND = EMAIL_BACKEND   # the retry outbox sends through this one
 BREVO_API_KEY = ''
 RESEND_API_KEY = ''
 CELERY_BROKER_URL = 'memory://'

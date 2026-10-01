@@ -25,3 +25,8 @@ class VehiclesConfig(AppConfig):
         # for botocore to load. Same server-process guard as the two above.
         from . import document_warmup
         document_warmup.start()
+
+        # Retries mail that failed to send (Brevo/Gmail blips) until it goes
+        # out. Same server-process guard. See vehicles/email_outbox.py.
+        from . import email_outbox
+        email_outbox.start()

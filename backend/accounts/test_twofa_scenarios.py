@@ -683,9 +683,13 @@ class StolenPassword(Journey):
                 self.browser.post('/api/accounts/2fa/verify/',
                                   {'challenge': payload, 'code': '123456'},
                                   format='json').status_code, 400)
+            # No challenge at all falls back to the (absent) session: 401. A bad
+            # one is a 400 naming the problem, so the frontend does not mistake
+            # it for an expired session and log the person out.
             self.assertEqual(
                 self.browser.post('/api/accounts/2fa/setup/',
-                                  {'challenge': payload}, format='json').status_code, 401)
+                                  {'challenge': payload}, format='json').status_code,
+                400 if payload else 401)
 
     def test_a_hijacked_session_still_cannot_reach_the_dangerous_screens(self):
         """The realistic case: an unlocked laptop with a live session on it."""

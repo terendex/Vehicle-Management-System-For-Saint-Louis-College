@@ -972,6 +972,44 @@ class DailyJobRun(models.Model):
         return f"{self.job} @ {self.run_date}"
 
 
+class EmailOutbox(models.Model):
+    """An email whose first send failed, waiting to be retried.
+
+    Brevo (Railway) and Gmail (campus) both drop out now and then, and every
+    send used to be one-shot: an approval or acknowledgement mail that hit a
+    blip was simply lost, and the applicant was left without their login or
+    their receipt-upload link. vehicles/email_outbox.py parks the message here
+    instead and keeps retrying it until it goes out or MAX_AGE runs out.
+
+    A row only exists while the message is undelivered. It is deleted the
+    moment the send succeeds, because the stored message can carry a temporary
+    password; given-up rows are purged after a fortnight for the same reason.
+    """
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'   # still being retried
+        FAILED  = 'failed',  'Failed'    # gave up; `manage.py retry_emails --include-failed` revives it
+
+    id              = models.BigAutoField(primary_key=True, db_column='email_outbox_id')
+    subject         = models.CharField(max_length=255, blank=True)   # for listings only; the real one is in `message`
+    recipients      = models.CharField(max_length=500, blank=True)   # likewise, comma-joined
+    message         = models.JSONField()                             # the whole EmailMessage, see email_outbox.serialize
+    status          = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    attempts        = models.PositiveIntegerField(default=1)         # the original send counts as the first
+    last_error      = models.TextField(blank=True, default='')
+    created_at      = models.DateTimeField(auto_now_add=True)
+    next_attempt_at = models.DateTimeField()                         # doubles as the claim lease while a send is in flight
+    expires_at      = models.DateTimeField()                         # stop retrying after this (a reset link dies sooner)
+    delay_notified  = models.BooleanField(default=False)             # the CDSO has been told it is stuck
+
+    class Meta:
+        db_table = 'tbl_email_outbox'
+        ordering = ['next_attempt_at']
+        indexes = [models.Index(fields=['status', 'next_attempt_at'], name='email_outbox_due_idx')]
+
+    def __str__(self):
+        return f"{self.subject} -> {self.recipients} ({self.status}, {self.attempts} attempts)"
+
+
 # The period during which applications are accepted, e.g. one semester.
 class RegistrationPeriod(models.Model):
     """One row per registration window. Only one row may be active at a time."""

@@ -389,9 +389,81 @@ class EnrollmentTests(TwoFactorTestCase):
         self.assertNotEqual(setup.data['secret'], device.secret)
 
     def test_setup_rejects_a_forged_challenge(self):
+        # 400, not 401: a 401 makes the frontend treat it as an expired session,
+        # refresh, log out, and call the person's correct code "not correct".
         res = self.client.post('/api/accounts/2fa/setup/',
                                {'challenge': 'not-a-real-token'}, format='json')
-        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(res.data['challenge_expired'])
+
+    def _aged_challenge(self, user, purpose, minutes):
+        from unittest import mock
+        from django.core import signing
+        with mock.patch.object(signing.time, 'time', return_value=time.time() - minutes * 60):
+            return twofa.issue_challenge(user, purpose)
+
+    def test_installing_the_app_may_take_longer_than_ten_minutes(self):
+        """The setup screen sends people to the Play Store. On the same phone
+        that easily takes 11 minutes, and their correct code must still pair."""
+        challenge = self._aged_challenge(self.owner, 'setup', 11)
+        setup = self.client.post('/api/accounts/2fa/setup/', {'challenge': challenge}, format='json')
+        self.assertEqual(setup.status_code, 200, setup.data)
+        confirm = self.client.post('/api/accounts/2fa/confirm/',
+                                   {'challenge': challenge,
+                                    'code': pyotp.TOTP(setup.data['secret']).now()},
+                                   format='json')
+        self.assertEqual(confirm.status_code, 200, confirm.data)
+
+    def test_a_verify_challenge_still_lasts_only_ten_minutes(self):
+        make_confirmed_device(self.owner)
+        challenge = self._aged_challenge(self.owner, 'verify', 11)
+        res = self.client.post('/api/accounts/2fa/verify/',
+                               {'challenge': challenge, 'code': '000000'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('expired', res.data['error'].lower())
+
+    def test_an_expired_setup_step_says_sign_in_again_and_is_not_a_401(self):
+        challenge = self._aged_challenge(self.owner, 'setup', 31)
+        res = self.client.post('/api/accounts/2fa/confirm/',
+                               {'challenge': challenge, 'code': '123456'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(res.data['challenge_expired'])
+        self.assertIn('sign in again', res.data['error'].lower())
+
+    def test_signing_in_again_within_thirty_minutes_keeps_the_same_key(self):
+        first = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': self.login(self.owner).data['challenge']},
+                                 format='json')
+        from datetime import timedelta
+        TwoFactorDevice.objects.filter(user=self.owner).update(
+            created_at=timezone.now() - timedelta(minutes=25))
+        again = self.client.post('/api/accounts/2fa/setup/',
+                                 {'challenge': self.login(self.owner).data['challenge']},
+                                 format='json')
+        self.assertEqual(first.data['secret'], again.data['secret'])
+
+    def test_two_setup_calls_racing_do_not_crash(self):
+        """Both calls used to see "no device" and INSERT; the loser got a 500
+        and the phone showed "Setup unavailable"."""
+        from unittest import mock
+        challenge = self.login(self.owner).data['challenge']
+        first = self.client.post('/api/accounts/2fa/setup/', {'challenge': challenge}, format='json')
+        # The second call read "no device" before the first call's row existed.
+        no_device = mock.Mock(first=mock.Mock(return_value=None))
+        with mock.patch.object(TwoFactorDevice.objects, 'filter', return_value=no_device):
+            second = self.client.post('/api/accounts/2fa/setup/', {'challenge': challenge},
+                                      format='json')
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(first.data['secret'], second.data['secret'])
+        self.assertEqual(TwoFactorDevice.objects.filter(user=self.owner).count(), 1)
+
+    def test_a_wrong_setup_code_points_at_a_stale_app_entry(self):
+        challenge = self.login(self.owner).data['challenge']
+        self.client.post('/api/accounts/2fa/setup/', {'challenge': challenge}, format='json')
+        res = self.client.post('/api/accounts/2fa/confirm/',
+                               {'challenge': challenge, 'code': '000000'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('delete those entries', res.data['error'])
 
     def test_re_enrolling_a_confirmed_device_needs_a_step_up(self):
         _, totp = make_confirmed_device(self.admin)

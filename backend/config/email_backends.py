@@ -49,6 +49,51 @@ MAX_ATTEMPTS = 4
 RETRY_BACKOFF = 1.0  # seconds; doubled per attempt
 
 
+class PermanentEmailError(RuntimeError):
+    """The provider rejected the request itself (HTTP 400/422: a malformed
+    address or payload). Retrying sends the same request and gets the same
+    answer, so the outbox does not queue these."""
+
+
+class OutboxEmailBackend(BaseEmailBackend):
+    """What EMAIL_BACKEND points at: the real transport, plus retry on failure.
+
+    Each message goes to settings.EMAIL_TRANSPORT_BACKEND (Gmail SMTP on campus,
+    Brevo on Railway, both taken from the EMAIL_BACKEND env var as before).
+    If that send raises, the message is parked in vehicles.EmailOutbox and
+    retried in the background until it goes out (see vehicles/email_outbox.py),
+    and the caller is told it was sent. Failures a retry cannot fix, and
+    failures the outbox cannot store, still raise exactly as before.
+    """
+
+    def __init__(self, fail_silently=False, **kwargs):
+        super().__init__(fail_silently=fail_silently, **kwargs)
+        self._kwargs = kwargs
+
+    def send_messages(self, email_messages):
+        from django.conf import settings
+        from django.core.mail import get_connection
+        from vehicles import email_outbox
+
+        sent = 0
+        for message in email_messages or []:
+            # A fresh transport per message, so one failure cannot leave a
+            # half-open SMTP session for the next. fail_silently=False always:
+            # this class decides what is silent, after queueing.
+            transport = get_connection(settings.EMAIL_TRANSPORT_BACKEND,
+                                       fail_silently=False, **self._kwargs)
+            try:
+                sent += transport.send_messages([message]) or 0
+            except Exception as exc:
+                if not email_outbox.is_permanent(exc) and email_outbox.queue(message, exc):
+                    sent += 1
+                    continue
+                if not self.fail_silently:
+                    raise
+                log.exception('Email %r failed and was not queued for retry', message.subject)
+        return sent
+
+
 class _HttpApiEmailBackend(BaseEmailBackend):
     """Shared machinery for sending Django email through a provider's HTTP API.
 
@@ -159,7 +204,12 @@ class _HttpApiEmailBackend(BaseEmailBackend):
                 detail = self._error_detail(resp)
                 if not retryable or attempt == MAX_ATTEMPTS:
                     if not self.fail_silently:
-                        raise RuntimeError(
+                        # 400/422 is the request itself being wrong; anything
+                        # else (bad key, IP allowlist, outage) can come right
+                        # without the message changing.
+                        error = (PermanentEmailError if resp.status_code in (400, 422)
+                                 else RuntimeError)
+                        raise error(
                             f'{self.PROVIDER} rejected the message '
                             f'({resp.status_code}): {detail}'
                         )

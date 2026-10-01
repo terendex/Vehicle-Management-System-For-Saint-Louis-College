@@ -73,14 +73,14 @@ class Command(BaseCommand):
     def handle(self, *args, **opts):
         self._report_config()
 
-        provider = HTTPS_BACKENDS.get(settings.EMAIL_BACKEND)
+        provider = HTTPS_BACKENDS.get(settings.EMAIL_TRANSPORT_BACKEND)
         if provider:
             return self._check_https(provider, opts)
 
-        if settings.EMAIL_BACKEND != SMTP_BACKEND:
+        if settings.EMAIL_TRANSPORT_BACKEND != SMTP_BACKEND:
             self.stdout.write(self.style.WARNING(
                 f"\nEMAIL_BACKEND is neither SMTP nor an HTTPS provider, so this command\n"
-                f"  cannot probe the transport. Mail is handled by {settings.EMAIL_BACKEND}."))
+                f"  cannot probe the transport. Mail is handled by {settings.EMAIL_TRANSPORT_BACKEND}."))
             if opts['to']:
                 self._send(opts['to'])
             return
@@ -104,9 +104,9 @@ class Command(BaseCommand):
 
     # ── what this host is configured to do ───────────────────────────────
     def _report_config(self):
-        self.stdout.write(f"backend       : {settings.EMAIL_BACKEND}")
+        self.stdout.write(f"backend       : {settings.EMAIL_TRANSPORT_BACKEND}")
 
-        provider = HTTPS_BACKENDS.get(settings.EMAIL_BACKEND)
+        provider = HTTPS_BACKENDS.get(settings.EMAIL_TRANSPORT_BACKEND)
         if provider:
             key = getattr(settings, provider['key_setting'], '') or ''
             prefix = provider['key_prefix']
@@ -234,8 +234,9 @@ class Command(BaseCommand):
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[to],
             # A fresh connection, not any pooled one, so the failure reported is
-            # this attempt's.
-            connection=get_connection(fail_silently=False),
+            # this attempt's. The transport itself, not the outbox: a probe
+            # that quietly queued its failure for retry would report success.
+            connection=get_connection(settings.EMAIL_TRANSPORT_BACKEND, fail_silently=False),
         )
         try:
             msg.send(fail_silently=False)

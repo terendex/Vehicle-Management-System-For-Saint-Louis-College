@@ -49,9 +49,6 @@ export const registrationApi = {
     const { data } = await api.get('/vehicles/register/payment/', { params: { token } })
     return data
   },
-  // DPO: the OR number alone — no photo of the receipt is
-  // collected, so this is plain JSON rather than a multipart upload. CDSO checks
-  // the paper receipt at the counter instead of an image on the review screen.
   // Multipart rather than JSON, because the receipt photo travels with the
   // number. The OR number on its own is a claim; the photograph is what CDSO
   // checks it against on the review screen. The file is never emailed - see
@@ -63,9 +60,14 @@ export const registrationApi = {
     // Omitted when the applicant is only correcting a number they already
     // filed: the backend keeps the photo already on the row.
     if (receiptFile) form.append('or_receipt_image', receiptFile)
-    // No explicit Content-Type: the browser has to set the multipart boundary
-    // itself, and naming the type here strips it.
-    const { data } = await api.post('/vehicles/register/payment/', form)
+    // The multipart header is required. The shared instance defaults to
+    // application/json, and axios turns a FormData body sent as JSON into a JSON
+    // string, where the photo arrives as `{}`. That made every receipt fail with
+    // "A photo of the Official Receipt is required". Axios drops the header again
+    // for FormData in the browser, so the browser still sets the boundary.
+    const { data } = await api.post('/vehicles/register/payment/', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
     return data
   },
 

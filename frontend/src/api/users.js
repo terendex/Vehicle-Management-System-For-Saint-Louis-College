@@ -35,7 +35,11 @@ export const usersApi = {
     if (userData.photo instanceof File) {
       const fd = new FormData()
       Object.entries(userData).forEach(([k, v]) => { if (v !== null && v !== undefined) fd.append(k, v) })
-      const { data } = await api.patch(`/accounts/users/${id}/update/`, fd)
+      // Multipart header required: the instance's JSON default would serialize
+      // the FormData to JSON and send the photo as `{}` (see submitPaymentReceipt).
+      const { data } = await api.patch(`/accounts/users/${id}/update/`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
       return data
     }
     const { data } = await api.patch(`/accounts/users/${id}/update/`, userData)

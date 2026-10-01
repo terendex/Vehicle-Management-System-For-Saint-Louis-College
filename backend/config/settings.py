@@ -458,7 +458,14 @@ def _env_flag(name, default):
     return raw.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# The env var EMAIL_BACKEND names the real transport (Gmail SMTP on campus, Brevo
+# on Railway), exactly as before. Django's EMAIL_BACKEND wraps it in the outbox,
+# which retries a failed send in the background instead of losing it; see
+# vehicles/email_outbox.py. EMAIL_OUTBOX=false sends straight through, one-shot.
+EMAIL_TRANSPORT_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_BACKEND = ('config.email_backends.OutboxEmailBackend'
+                 if _env_flag('EMAIL_OUTBOX', True) else EMAIL_TRANSPORT_BACKEND)
+EMAIL_OUTBOX_MAX_AGE_HOURS = int(os.getenv('EMAIL_OUTBOX_MAX_AGE_HOURS', '72'))   # then give up and tell the CDSO
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 # TLS (STARTTLS, usually 587) and SSL (implicit, usually 465) are mutually

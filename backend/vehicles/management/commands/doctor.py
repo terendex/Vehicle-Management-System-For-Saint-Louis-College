@@ -226,9 +226,12 @@ class Command(BaseCommand):
         # background (failures then show up in the log, not in the response).
         # Keep the last two parts ("smtp.EmailBackend", "email_backends.BrevoEmailBackend")
         # so it is clear which transport is meant.
-        backend = '.'.join(settings.EMAIL_BACKEND.rsplit('.', 2)[-2:])
+        backend = '.'.join(settings.EMAIL_TRANSPORT_BACKEND.rsplit('.', 2)[-2:])
         mode = 'in the background' if getattr(settings, 'EMAIL_SEND_ASYNC', False) else 'inline'
-        self._ok('Email', f'{backend}, sent {mode}. Run `manage.py check_email` to test delivery')
+        retry = ('failed sends are retried' if settings.EMAIL_BACKEND != settings.EMAIL_TRANSPORT_BACKEND
+                 else 'no retry (EMAIL_OUTBOX=false)')
+        self._ok('Email', f'{backend}, sent {mode}, {retry}. '
+                          f'Run `manage.py check_email` to test delivery')
 
     # ── 7. ffmpeg: needed to read the IP cameras ─────────────────────────────
     def check_ffmpeg(self):

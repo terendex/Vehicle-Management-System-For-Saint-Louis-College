@@ -1835,20 +1835,25 @@ def _send_password_reset_email(user, reset_link, lifetime):
           </body>
         </html>
         """
+    from vehicles.email_outbox import expires_in
+    # A failed send is retried by the outbox, but only while the link in it
+    # still works. Past that, a late email would only hand over a dead link.
+    link_seconds = int(getattr(django_settings, 'PASSWORD_RESET_TIMEOUT', 3600))
     try:
-        send_mail(
-            subject='SPVVS — Password Reset',
-            message=(
-                f"Hello {user.full_name or user.email},\n\n"
-                f"Reset your password by visiting:\n{reset_link}\n\n"
-                f"This link expires in {lifetime}.\n\n"
-                f"If you did not request this, ignore this email."
-            ),
-            from_email=django_settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
+        with expires_in(link_seconds):
+            send_mail(
+                subject='SPVVS — Password Reset',
+                message=(
+                    f"Hello {user.full_name or user.email},\n\n"
+                    f"Reset your password by visiting:\n{reset_link}\n\n"
+                    f"This link expires in {lifetime}.\n\n"
+                    f"If you did not request this, ignore this email."
+                ),
+                from_email=django_settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
     except Exception:
         logger.exception(
             "Failed to send the password-reset email to user %s — they were "

@@ -15,7 +15,8 @@ Three short-lived signed tokens carry state between requests, none of them
 stored in the database:
 
   challenge  — issued when a correct password is not enough (login is paused
-               mid-flight). Spent by the verify call. 10 minutes.
+               mid-flight). Spent by the verify call. 10 minutes, or 30 when
+               it is a first-time setup (the app may still need installing).
   step-up    — proof that a code was entered recently. Sent by the client on
                sensitive writes so a code is not demanded on every save of a
                settings form. 10 minutes.
@@ -59,12 +60,22 @@ DORMANCY_DAYS = 7
 # "Sudo mode": how long one code authorises sensitive writes.
 STEP_UP_MINUTES = 10
 
+# How long a paused login may sit on the SETUP screen. Longer than a verify
+# challenge on purpose: the screen tells a first-time user to install an
+# authenticator app, and on the same phone that means leaving for the Play
+# Store, installing, opening it, adding the account and coming back. Ten
+# minutes was routinely not enough. The confirm call then answered 401, and the
+# person saw "That code is not correct" for the code their app was showing.
+SETUP_CHALLENGE_MINUTES = 30
+
 # How long an unconfirmed QR stays the one setup hands out. Matches the life of
 # the setup challenge, so one sign-in attempt sees one QR however many times the
-# screen is reloaded or whichever server answers. Past it the QR counts as
-# abandoned and is replaced, so a photo of an old one never becomes a live
-# authenticator once the real owner finally pairs.
-PENDING_SECRET_MINUTES = STEP_UP_MINUTES
+# screen is reloaded, the phone is signed in again, or whichever server answers.
+# Past it the QR counts as abandoned and is replaced, so a photo of an old one
+# never becomes a live authenticator once the real owner finally pairs. When it
+# was 10 minutes, someone who installed the app slowly and signed in again got a
+# new key, and the entry already in their app produced genuinely wrong codes.
+PENDING_SECRET_MINUTES = SETUP_CHALLENGE_MINUTES
 
 # Codes are accepted one timestep either side of now, so a phone clock drifting
 # by up to 30s still works. Wider than this and a stolen code stays live longer.
@@ -164,7 +175,11 @@ def read_challenge(token):
     """Resolve a challenge token back to (user, purpose). Raises TwoFactorError."""
     from .models import User
 
-    data = _unsign(token, _CHALLENGE_SALT, STEP_UP_MINUTES * 60)
+    # Unsigned at the longest life any challenge has, then held to its own:
+    # a setup challenge gets SETUP_CHALLENGE_MINUTES, a verify one only ten.
+    data = _unsign(token, _CHALLENGE_SALT, SETUP_CHALLENGE_MINUTES * 60)
+    if data.get('purpose') != 'setup':
+        _unsign(token, _CHALLENGE_SALT, STEP_UP_MINUTES * 60)
     try:
         user = User.objects.get(pk=data.get('uid'), is_archived=False)
     except User.DoesNotExist:

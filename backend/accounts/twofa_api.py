@@ -11,7 +11,7 @@ import logging
 from datetime import timedelta
 
 from django.core.cache import cache
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import exceptions, permissions, status
 from rest_framework.response import Response
@@ -229,6 +229,17 @@ REPLAYED_CODE_MESSAGE = (
 )
 
 
+# Added during setup only. A correct-looking code that fails there is nearly
+# always an app entry left over from an earlier attempt whose key has since
+# been replaced. Both entries carry the same account name, so people read
+# codes off the old one.
+SETUP_WRONG_CODE_HINT = (
+    ' If this account is listed more than once in your authenticator app, or you '
+    'added it during an earlier attempt, delete those entries and add it again '
+    'from this screen.'
+)
+
+
 def _code_error(request):
     """The message matching why the last code check failed."""
     reason = getattr(request, 'twofa_code_reason', twofa.CODE_INVALID)
@@ -314,10 +325,9 @@ class TwoFactorSetupView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        user, via_challenge = _resolve_actor(request)
-        if user is None:
-            return Response({'error': 'Authentication required.'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+        user, via_challenge, refused = _resolve_actor(request)
+        if refused is not None:
+            return refused
 
         if not twofa.requires_2fa(user):
             return Response(
@@ -350,20 +360,33 @@ class TwoFactorSetupView(APIView):
         # pending QR counts as abandoned (see PENDING_SECRET_MINUTES); and a
         # device that has ever accepted a code (last_used_step > 0) belongs to a
         # phone that was since voided, so it must not be handed back either.
+        #
+        # Two setup calls can land together: the screen loading twice, two tabs,
+        # a phone re-sending the request after switching apps. Both used to see
+        # "no device" and both INSERTed, and the loser hit the one-device-per-
+        # account constraint and answered 500 ("Setup unavailable"). The row is
+        # now created race-safely and then locked, so the second call waits and
+        # reuses the first call's secret instead of crashing or replacing it.
         reuse_after = timezone.now() - timedelta(minutes=twofa.PENDING_SECRET_MINUTES)
-        if (device is not None and not device.is_confirmed
-                and device.last_used_step == 0 and device.secret
-                and device.created_at >= reuse_after):
-            secret = device.secret
-        else:
-            secret = twofa.new_secret()
+        with transaction.atomic():
             if device is None:
-                device = TwoFactorDevice(user=user)
-            device.secret = secret
-            device.confirmed_at = None
-            device.last_used_step = 0
-            device.created_at = timezone.now()
-            device.save()
+                try:
+                    with transaction.atomic():
+                        TwoFactorDevice.objects.create(user=user, secret=twofa.new_secret())
+                except IntegrityError:
+                    pass   # the concurrent call created it; reuse that one
+            device = TwoFactorDevice.objects.select_for_update().get(user=user)
+
+            if (not device.is_confirmed and device.last_used_step == 0
+                    and device.secret and device.created_at >= reuse_after):
+                secret = device.secret
+            else:
+                secret = twofa.new_secret()
+                device.secret = secret
+                device.confirmed_at = None
+                device.last_used_step = 0
+                device.created_at = timezone.now()
+                device.save()
 
         uri = twofa.provisioning_uri(user, secret)
         return Response({
@@ -386,10 +409,9 @@ class TwoFactorConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        user, via_challenge = _resolve_actor(request)
-        if user is None:
-            return Response({'error': 'Authentication required.'},
-                            status=status.HTTP_401_UNAUTHORIZED)
+        user, via_challenge, refused = _resolve_actor(request)
+        if refused is not None:
+            return refused
 
         device = TwoFactorDevice.objects.filter(user=user).first()
         if device is None:
@@ -403,8 +425,10 @@ class TwoFactorConfirmView(APIView):
         if ok is None:
             return _lockout_response()
         if not ok:
-            return Response({'error': _code_error(request)},
-                            status=status.HTTP_400_BAD_REQUEST)
+            message = _code_error(request)
+            if request.twofa_code_reason == twofa.CODE_INVALID:
+                message += SETUP_WRONG_CODE_HINT
+            return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             device.confirmed_at = timezone.now()
@@ -684,19 +708,37 @@ class TwoFactorResetView(APIView):
 def _resolve_actor(request):
     """Identify the account behind an enrollment call.
 
-    Returns (user, via_challenge). A challenge token wins over a session: it is
-    the first-login path, where the bearer token in the header may belong to
-    nobody yet.
+    Returns (user, via_challenge, error_response). A challenge token wins over
+    a session: it is the first-login path, where the bearer token in the header
+    may belong to nobody yet.
+
+    A bad or expired challenge is answered with a 400 carrying the reason, not
+    the bare 401 it used to fall through to. A 401 makes the frontend think a
+    session expired: it tried a token refresh, logged the person out, and the
+    setup screen reported "That code is not correct" for the code their app
+    was showing. The real problem was that the sign-in step had run out.
     """
     challenge = request.data.get('challenge') or ''
     if challenge:
         try:
             user, _purpose = twofa.read_challenge(challenge)
-            return user, True
-        except twofa.TwoFactorError:
-            return None, False
+            return user, True, None
+        except twofa.TwoFactorError as exc:
+            # An expired setup step outlived the pending key too (both last
+            # SETUP_CHALLENGE_MINUTES), so the next sign-in shows a NEW key and
+            # the entry already in the app will never work.
+            message = str(exc)
+            if 'expired' in message:
+                message = ('This sign-in step has expired. Sign in again to continue. '
+                           'You will be shown a new key, so delete the entry for this '
+                           'account from your authenticator app and add the new one.')
+            return None, False, Response(
+                {'error': message, 'challenge_expired': True},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     user = getattr(request, 'user', None)
     if user is not None and user.is_authenticated:
-        return user, False
-    return None, False
+        return user, False, None
+    return None, False, Response({'error': 'Authentication required.'},
+                                 status=status.HTTP_401_UNAUTHORIZED)

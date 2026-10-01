@@ -8,6 +8,20 @@ import CodeField from './CodeField'
 import notify from '../Feedback/notify'
 import './twofactor.css'
 
+/* What to tell someone whose code did not go through. "That code is not
+   correct" used to be the fallback for EVERY failure, including a dropped
+   connection, a server error and an expired sign-in step. On a phone that meant
+   people re-typing a perfectly good code until they were locked out. The
+   server's own message wins; the fallback only claims a wrong code when the
+   server actually answered the request. */
+function failureMessage(err) {
+  const data = err?.response?.data
+  if (data?.error || data?.detail) return data.error || data.detail
+  if (!err?.response) return 'Could not reach the server. Check your connection and try again.'
+  if (err.response.status >= 500) return 'The server could not check the code just now. Please try again in a moment.'
+  return 'That code is not correct. Please try again.'
+}
+
 /**
  * The second half of a login the server paused.
  *
@@ -150,16 +164,20 @@ export default function TwoFactorChallenge({
         }
       }
     } catch (err) {
-      const msg = err.response?.data?.error
-        || err.response?.data?.detail
-        || 'That code is not correct. Please try again.'
-      setError(msg)
+      setError(failureMessage(err))
       setCode('')
-      notify.error(msg, { title: 'Verification failed', confirmLabel: 'Try Again' })
+      if (err.response?.data?.challenge_expired) {
+        // The sign-in step ran out (often while installing the app). Retrying
+        // here cannot work, so say why and go back to the password form.
+        await notify.error(failureMessage(err), { title: 'Please sign in again' })
+        onCancel?.()
+        return
+      }
+      notify.error(failureMessage(err), { title: 'Verification failed', confirmLabel: 'Try Again' })
     } finally {
       setBusy(false)
     }
-  }, [busy, code, useBackup, backupCode, isSetup, activeChallenge, onComplete])
+  }, [busy, code, useBackup, backupCode, isSetup, activeChallenge, onComplete, onCancel])
 
   const copyCodes = () => {
     navigator.clipboard?.writeText(backupCodes.join('\n')).then(() => {
