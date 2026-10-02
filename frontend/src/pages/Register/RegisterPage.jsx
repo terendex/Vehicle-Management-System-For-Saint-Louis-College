@@ -144,8 +144,8 @@ const REGISTRATION_TYPES = [
   {
     id: 'fetcher',
     icon: <Users size={22} />,
-    label: 'Fetcher / Drop & Go',
-    description: 'Parent or guardian fetching a student',
+    label: 'Fetcher / Drop & Go / Parent',
+    description: 'Parent or guardian fetching, or staying with, a student',
   },
 ]
 import { COLLEGES, composeProgramYear, findProgram, yearsFor } from '../../utils/collegePrograms'
@@ -837,7 +837,7 @@ export default function RegisterPage() {
 
     if (registrantType === 'fetcher') {
       if (!fetcherType) {
-        problems.push('Choose your fetcher classification: Fetcher/Drop & Go or Standby.')
+        problems.push('Choose your classification: Fetcher / Drop & Go or Parent (Whole Day).')
       }
       fetcherStudents.forEach((st, i) => {
         if (!st.full_name.trim() || !st.student_level) {
@@ -1227,8 +1227,18 @@ export default function RegisterPage() {
   const TYPE_OPTIONS = [
     { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'Registered SLC student' },
     { id: 'employee', icon: <Car size={24} />,  label: 'Employee',          desc: 'SLC faculty or staff' },
-    { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go', desc: 'Parent or guardian' },
+    { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go / Parent', desc: 'Parent or guardian' },
   ]
+
+  /* A parent who stays on campus the whole day is not a student registration:
+     they belong under Fetcher, classified Parent (Whole Day) — stored as
+     'standby' — so they are counted apart from the students. Offered from the
+     student form's guardian-driver section, where such parents land first. */
+  const switchToWholeDayParent = () => {
+    setRegistrantType('fetcher')
+    setFetcherType('standby')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   /* ─── Form ─── */
   return (
@@ -1247,13 +1257,13 @@ export default function RegisterPage() {
                   ? "STUDENT'S PERSONAL INFORMATION"
                   : isEmployee
                     ? "EMPLOYEE'S PERSONAL INFORMATION"
-                    : "FETCHER / DROP & GO PERSONAL INFORMATION"}
+                    : "FETCHER / DROP & GO / PARENT PERSONAL INFORMATION"}
             </p>
             {registrantType && (
               <span className="registrant-badge">
                 {isStudent ? 'Student — Vehicle Registration'
                   : isEmployee ? 'Employee Registration'
-                    : 'Fetcher / Drop & Go Registration'}
+                    : 'Fetcher / Drop & Go / Parent Registration'}
               </span>
             )}
           </div>
@@ -1338,7 +1348,7 @@ export default function RegisterPage() {
                       <p className="campus-day-anyday-note fetcher-note">
                         <Info size={13} />
                         {fetcherType === 'standby'
-                          ? <>Standby fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to park inside the campus while waiting.</>
+                          ? <>Parents (Whole Day) may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to stay and park inside the campus the whole day.</>
                           : <>Fetchers / Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
                       </p>
                     )}
@@ -1904,6 +1914,19 @@ export default function RegisterPage() {
 
               {guardianDriven ? (
                 <>
+                  <div className="form-group col-span-2">
+                    <div className="schedule-note whole-day-parent-note">
+                      <Info size={13} />
+                      <span>
+                        Will the parent or guardian <strong>stay on campus the whole day</strong>?
+                        Register under <strong>Fetcher / Drop &amp; Go / Parent → Parent (Whole Day)</strong> instead.
+                        This form is for a vehicle on the student's own campus schedule.
+                        <button type="button" className="whole-day-parent-switch" onClick={switchToWholeDayParent}>
+                          Register as Parent (Whole Day)
+                        </button>
+                      </span>
+                    </div>
+                  </div>
                   <div className="form-group">
                     <label>Driver's Full Name <span className="required">*</span></label>
                     <input
@@ -1979,8 +2002,8 @@ export default function RegisterPage() {
                     onClick={() => setFetcherType('standby')}
                   >
                     <span className="reg-type-inline-icon"><Car size={24} /></span>
-                    <span className="reg-type-inline-label">Standby</span>
-                    <span className="reg-type-inline-desc">Allowed to park inside the campus while waiting</span>
+                    <span className="reg-type-inline-label">Parent (Whole Day)</span>
+                    <span className="reg-type-inline-desc">Stays on campus the whole day; allowed to park inside</span>
                   </button>
                 </div>
 
@@ -2160,7 +2183,7 @@ export default function RegisterPage() {
                 too, but they are long and mostly skimmed. Not shown to exempt
                 staff, who have nothing to file. */}
             {!feeExempt && (
-              <div className="pay-deadline" role="note">
+              <div className="pay-deadline pay-deadline--form" role="note">
                 <Clock size={16} />
                 <div className="pay-deadline-body">
                   <p className="pay-deadline-when">

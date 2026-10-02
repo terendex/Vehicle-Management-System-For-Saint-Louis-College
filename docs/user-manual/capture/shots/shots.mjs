@@ -105,7 +105,7 @@ export const SHOTS = [
     },
     marks: [
       m(1, 'Registration window', 'Shows whether applications are being accepted, and the dates of the current window.', card(text('Registration is currently open', 'body', false))),
-      m(2, 'Registrant type', 'Choose Student — Vehicle, Employee, or Fetcher / Drop & Go. The form that follows asks only for what that type needs.', union(card(text('Student — Vehicle', 'body')), card(text('Fetcher / Drop & Go', 'body')))),
+      m(2, 'Registrant type', 'Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Parent. The form that follows asks only for what that type needs.', union(card(text('Student — Vehicle', 'body')), card(text('Fetcher / Drop & Go', 'body')))),
       m(3, 'Back to Login', 'Leave the application without submitting.', (p) => p.getByRole('button', { name: /Back to Login/ }).last()),
     ],
   }),

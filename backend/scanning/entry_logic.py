@@ -430,7 +430,7 @@ def _decide_entry(vehicle) -> dict:
             return _result('denied', False,
                 f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name, waivable=True)
-        label = 'Fetcher (Standby)' if is_standby else 'Fetcher'   # say which kind, so the guard sees why waiting is allowed
+        label = 'Parent (Whole Day)' if is_standby else 'Fetcher'   # say which kind, so the guard sees why waiting is allowed
         return _result('authorized', True, f'{label} — {user.full_name}. Entry granted.', rule.name if rule else None)
 
     # Reached only when the account has a type this function has no rules for,

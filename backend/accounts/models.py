@@ -114,7 +114,7 @@ class User(AbstractUser):
     # rules applied at the gate (see scanning/entry_logic.py).
     class OwnerType(models.TextChoices):
         STUDENT  = 'student',  'Student'
-        FETCHER  = 'fetcher',  'Fetcher/Dropper'                 # drops off or collects a student
+        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Parent'    # drops off, collects, or waits for a student
         EMPLOYEE = 'employee', 'Employee'
         VISITOR  = 'visitor',  'Visitor'                         # enters on a gate-issued pass
 

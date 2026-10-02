@@ -157,12 +157,12 @@ def _qr_public_url(registration, png):
 REGISTRANT_TYPE_LABELS = {
     'student':  'Student',
     'employee': 'Employee',
-    'fetcher':  'Fetcher / Drop & Go',
+    'fetcher':  'Fetcher / Drop & Go / Parent',
 }
 
 
 def registrant_type_label(registration):
-    """'Fetcher / Drop & Go', not the raw 'fetcher' the column stores."""
+    """'Fetcher / Drop & Go / Parent', not the raw 'fetcher' the column stores."""
     kind = registration.registrant_type or ''
     return REGISTRANT_TYPE_LABELS.get(kind, kind.capitalize())
 
@@ -466,6 +466,63 @@ def _plate_label(registration):
     return plate_label(registration.plate_number)
 
 
+# ── Terms and Conditions ──
+# The applicant agreed to these on the form; the mails hand them a copy to
+# keep. Wording lives in pass_terms.py, shared by the HTML and text parts.
+
+def _terms_inline(text):
+    """Escape a term, then turn its **bold** markers into <strong>."""
+    import re
+    return re.sub(r'\*\*(.+?)\*\*', rf'<strong style="color:{INK};">\1</strong>', esc(text))
+
+
+def _terms_plain(text):
+    return text.replace('**', '')
+
+
+def _terms_args(registration):
+    return registration.pass_fee(), registration.PAYMENT_WINDOW.days
+
+
+def _terms_section(registration, *, lead):
+    """The full terms as an email section. `lead` says why they are here."""
+    from . import pass_terms
+    general = pass_terms.general_terms(*_terms_args(registration))
+    promises = ''.join(f'<li style="margin:0 0 4px;">{_terms_inline(p)}</li>'
+                       for p in pass_terms.PROMISES)
+    # Plain lines rather than _kv(): its 14px bold values outweighed the terms
+    # they belong to, and on a phone each sanction became a heading.
+    sanctions = ''.join(
+        f'<div style="margin:0 0 4px;padding-left:34px;">'
+        f'<strong style="color:{INK};">{esc(label)}:</strong> {esc(text)}</div>'
+        for label, text in pass_terms.SANCTIONS)
+    base_url = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    link = (f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:10px;">'
+            f'Also on the website: <a href="{base_url}/policy" style="color:{BRAND};">'
+            f'{base_url}/policy</a></div>') if base_url else ''
+    return _section('Terms and Conditions', (
+        f'<div style="color:{MUTED};font-size:13px;line-height:1.6;margin-bottom:10px;">{lead}</div>'
+        f'<div style="background:{PANEL_BG};border:1px solid {BORDER};border-radius:10px;'
+        f'padding:14px 16px;color:{MUTED};font-size:12.5px;line-height:1.65;">'
+        f'<p style="margin:0 0 8px;color:{INK};font-weight:700;">{esc(pass_terms.INTRO)}</p>'
+        f'<ul style="margin:0 0 6px;padding-left:18px;">'
+        + ''.join(f'<li style="margin:0 0 4px;">{_terms_inline(t)}</li>' for t in general)
+        + f'</ul><ol type="a" style="margin:0 0 8px;padding-left:34px;">{promises}</ol>'
+        + sanctions
+        + f'</div>{link}'))
+
+
+def _terms_text(registration):
+    """The same terms for the plain-text part of a mail."""
+    from . import pass_terms
+    general = pass_terms.general_terms(*_terms_args(registration))
+    lines = ['TERMS AND CONDITIONS', '', _terms_plain(pass_terms.INTRO), '']
+    lines += [f'- {_terms_plain(t)}' for t in general]
+    lines += [f'  {chr(ord("a") + i)}. {_terms_plain(p)}' for i, p in enumerate(pass_terms.PROMISES)]
+    lines += [f'     {label}: {text}' for label, text in pass_terms.SANCTIONS]
+    return '\n'.join(lines) + '\n\n'
+
+
 def send_acceptance_email(registration, temp_password, user_code=None):
     # Generate QR code. The payload must stay exactly this shape — the guard
     # scanner parses `VEHICLE:{identifier}|ID:{n}` (see SecurityEntryManagement.jsx).
@@ -575,6 +632,9 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                 ('Color',          color_val),
                 ('Conduction No.', conduction_val),
             ]))
+            + _terms_section(registration, lead=(
+                'Your vehicle pass is held under the terms you agreed to when you applied. '
+                'Keep this copy for reference.'))
         ),
     )
 
@@ -598,6 +658,7 @@ def send_acceptance_email(registration, temp_password, user_code=None):
                if _fee_settled(registration) else
                "Your registration form will be emailed to you as a PDF once "
                "your Official Receipt has been uploaded.")
+            + "\n\n" + _terms_text(registration)
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[registration.email],
@@ -808,6 +869,9 @@ def send_pending_email(registration):
                 ('Color',          color_val),
                 ('Conduction No.', conduction_val),
             ]))
+            + _terms_section(registration, lead=(
+                'These are the terms you agreed to when you submitted this application. '
+                'Keep this copy for reference.'))
         ),
     )
 
@@ -836,6 +900,7 @@ def send_pending_email(registration):
             f"You can correct your own details for as long as this application is\n"
             f"still awaiting review:\n{edit_link}\n\n"
             f"You will be notified by email once a decision has been made.\n\n"
+            f"{_terms_text(registration)}"
             f"Saint Louis College Smart Parking and Vehicle Verification System"
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,

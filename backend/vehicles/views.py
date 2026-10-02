@@ -34,7 +34,7 @@ import uuid
 from decimal import Decimal, InvalidOperation   # money values, and the error raised by a bad one
 
 import cv2                                      # only for the camera preview endpoints further down
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q, Value    # Q builds "this OR that" conditions
 from django.db.models.functions import Lower, Replace, Upper   # for case/spacing-insensitive matching in the database
 from django.http import StreamingHttpResponse, HttpResponse    # StreamingHttpResponse feeds the MJPEG preview
@@ -1830,6 +1830,67 @@ class RegistrationPdfView(APIView):
         return resp
 
 
+# ──────────────────────────────────────────────
+# One Official Receipt, one registration
+# ──────────────────────────────────────────────
+#
+# An OR number is proof that one Vehicle Pass fee was paid, so it may stand
+# behind one registration only. The rule is enforced here rather than by a
+# unique index because the live table already held duplicates when it was
+# introduced (two accepted rows sharing one receipt, three rejected test rows
+# sharing another); an index would have failed the migration on deploy. Those
+# rows are left as they are; nothing new may join them.
+#
+# Every row counts, whatever its status: a receipt filed on a rejected or
+# expired application was still spent on that application.
+
+# The first key of the two-int advisory lock, so these locks cannot collide with
+# any other pg_advisory lock taken elsewhere. Arbitrary, but must never change.
+_OR_NUMBER_LOCK_NAMESPACE = 0x0F0A
+
+
+def _or_number_owner(or_number, exclude_pk=None):
+    """The registration already holding this OR number, or None.
+
+    Leading zeros are ignored, so "0012345" and "12345" are the same receipt — a
+    dropped zero is the commonest way the same slip gets keyed in twice. Callers
+    have already checked the number is all digits, which is what makes it safe
+    to build the regex from.
+    """
+    digits = or_number.strip().lstrip('0') or '0'
+    qs = VehicleRegistration.objects.filter(or_number__regex=rf'^\s*0*{digits}\s*$')
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)               # a registration re-filing its own number is not a duplicate
+    return qs.only('id', 'status', *NAME_FIELDS).first()
+
+
+def _lock_or_number(or_number):
+    """Serialise every write of this OR number until the transaction ends.
+
+    The duplicate check and the save are two statements, so on a slow
+    connection two submissions of the same receipt can both pass the check
+    before either has saved. Taking this lock first, then checking, closes that
+    gap: the second request waits here and then sees the first one's row. Must
+    be called inside transaction.atomic(); it releases on commit or rollback.
+    """
+    if connection.vendor != 'postgresql':            # advisory locks are Postgres-only
+        return
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT pg_advisory_xact_lock(%s, %s)',
+                       [_OR_NUMBER_LOCK_NAMESPACE, int(or_number.strip() or 0)])
+
+
+def _or_number_taken_error(owner, or_number, *, public=False):
+    """The refusal for a receipt already on file. The public payment page is
+    told only that it is in use; naming the other applicant there would hand a
+    stranger's name to whoever guessed a receipt number."""
+    if public:
+        return ("This Official Receipt number has already been used for another application. "
+                "Check the number printed on your receipt, or contact the CDSO Office.")
+    return (f"OR No. {or_number} is already recorded on REG-{owner.id:06d} ({owner.full_name}, "
+            f"{owner.get_status_display().lower()}). Each Official Receipt can only be used once.")
+
+
 # =============================================================================
 # APPROVING AN APPLICATION
 #
@@ -1918,6 +1979,13 @@ class AcceptRegistrationView(APIView):
         elif or_number and (not or_number.isdigit() or len(or_number) > 7):
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Checked here so the reviewer hears about it before the plate-flag
+        # prompt, and again under a lock inside the transaction below.
+        if or_number:
+            owner = _or_number_owner(or_number, exclude_pk=registration.pk)
+            if owner:
+                return Response({"error": _or_number_taken_error(owner, or_number)}, status=status.HTTP_400_BAD_REQUEST)
+
         # An outstanding fee is a HARD block on approval.
         #
         # This used to be permitted as long as CDSO typed a justification into
@@ -1992,6 +2060,20 @@ class AcceptRegistrationView(APIView):
         # tied to an existing account". The acceptance email is deliberately sent
         # after this block commits, never inside it.
         with transaction.atomic():                   # everything inside either all happens, or none of it does
+            # The pending check at the top ran before this transaction. On a
+            # slow connection a click that seemed to do nothing gets clicked
+            # again, and both requests can be past that check at once; locking
+            # the row and asking again makes the second one wait, then refuse.
+            if not (VehicleRegistration.objects.select_for_update()
+                    .filter(pk=registration.pk, status=VehicleRegistration.Status.PENDING).exists()):
+                return Response({"error": "This registration has already been processed. Refresh the list to see it."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if or_number:
+                _lock_or_number(or_number)           # held until commit: a second save of this receipt waits here
+                owner = _or_number_owner(or_number, exclude_pk=registration.pk)
+                if owner:
+                    return Response({"error": _or_number_taken_error(owner, or_number)}, status=status.HTTP_400_BAD_REQUEST)
+
             # Create user with a secure temporary password
             temp_password = _generate_temp_password()   # emailed once; the owner must change it at first login
             owner_type  = {                          # the registrant type becomes the account's owner type,
@@ -2220,6 +2302,9 @@ class CdsoDirectRegisterView(APIView):
                 return Response({"error": "Official Receipt (OR) number is required."}, status=status.HTTP_400_BAD_REQUEST)
             if not or_number.isdigit() or len(or_number) > 7:
                 return Response({"error": "Official Receipt (OR) number must be at most 7 digits."}, status=status.HTTP_400_BAD_REQUEST)
+            owner = _or_number_owner(or_number)
+            if owner:
+                return Response({"error": _or_number_taken_error(owner, or_number)}, status=status.HTTP_400_BAD_REQUEST)
 
         # E-bikes get a system-issued control number, never a typed identifier.
         ebike = is_ebike(request.data.get('vehicle_type'))
@@ -2281,6 +2366,15 @@ class CdsoDirectRegisterView(APIView):
         # the account and the vehicle are created together or not at all, so a
         # failure half-way cannot strand an account holding the walk-in's email.
         with transaction.atomic():
+            # Asked again under the lock: a resubmitted walk-in (the first
+            # request saved, but its answer never made it back) would otherwise
+            # race the original past the check above.
+            if or_number:
+                _lock_or_number(or_number)
+                owner = _or_number_owner(or_number)
+                if owner:
+                    return Response({"error": _or_number_taken_error(owner, or_number)}, status=status.HTTP_400_BAD_REQUEST)
+
             # The control number is allocated inside the transaction, so a
             # failure later does not burn a number. It is stored IN plate_number
             # so the gate and QR code keep working unchanged.
@@ -2740,11 +2834,11 @@ class PublicOpenRegistrationView(APIView):
         # left to CDSO to chase up later.
         if registrant_type == 'fetcher':
             # Classification is required: drop_and_go (allotted times only) or
-            # standby (allowed to park inside campus while waiting).
+            # standby, shown as "Parent (Whole Day)" (may stay and park all day).
             fetcher_type = (data.get('fetcher_type') or '').strip()
             if fetcher_type not in ('drop_and_go', 'standby'):   # no default: the two grant different access
                 return Response(
-                    {"error": "Please choose a fetcher classification: Fetcher/Drop & Go or Standby."},
+                    {"error": "Please choose a fetcher classification: Fetcher / Drop & Go or Parent (Whole Day)."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             # At least one student must be listed
@@ -3138,6 +3232,11 @@ class RegistrationPaymentView(APIView):
         if not or_number.isdigit() or len(or_number) > 7:
             return Response({"error": "Official Receipt (OR) number must be at most 7 digits."},
                             status=status.HTTP_400_BAD_REQUEST)
+        # Before the photo checks, so an applicant who mistyped a number that
+        # happens to be taken hears about the number, not about the photo.
+        if _or_number_owner(or_number, exclude_pk=registration.pk):
+            return Response({"error": _or_number_taken_error(None, or_number, public=True)},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         # The photo is required, because the number alone is exactly what this
         # is meant to stop being sufficient. Already having one on file counts:
@@ -3180,6 +3279,12 @@ class RegistrationPaymentView(APIView):
                                     status=VehicleRegistration.Status.PENDING).first())
             if registration is None or registration.payment_overdue():
                 return _payment_link_dead(token, self.DEAD_LINK_MESSAGE)   # nothing written yet; the next sweep expires it
+            # Asked again under the receipt lock: a slow upload can take long
+            # enough for somebody else to file the same number meanwhile.
+            _lock_or_number(or_number)
+            if _or_number_owner(or_number, exclude_pk=registration.pk):
+                return Response({"error": _or_number_taken_error(None, or_number, public=True)},
+                                status=status.HTTP_400_BAD_REQUEST)
 
             # Four fields together record the payment; written in one save so a
             # row can never be left half-paid.

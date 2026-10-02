@@ -120,7 +120,7 @@ class OverstayCardTests(APITestCase):
         self.assertEqual(_overstaying_now(), [])
 
     def test_a_standby_fetcher_is_allowed_to_wait(self):
-        """Standby fetchers may sit on campus — that is what the type means."""
+        """Standby fetchers — Parent (Whole Day) — may sit on campus; that is what the type means."""
         owner = self._owner('os6@slc.edu.ph', 'fetcher')
         VehicleRegistration.objects.create(
             user=owner, **name_kwargs(owner.full_name), email=owner.email,

@@ -474,6 +474,219 @@
   line-height: 1.6;
 }
 
+/* ── Rendered policy text (PolicyMarkdown.jsx) ── */
+/* The global reset strips list markers, and the lists above are flex columns
+   (for their gap), where an item is no longer a list-item. Put the bullets
+   back, and leave room before whatever follows a list. */
+.policy-content ul {
+  list-style: disc;
+}
+
+.policy-content ul li {
+  display: list-item;
+}
+
+.policy-content ul li::marker {
+  color: #03396C;
+}
+
+.policy-content ul:not(:last-child),
+.policy-content .policy-lettered-list:not(:last-child),
+.policy-content .policy-sanctions:not(:last-child) {
+  margin-bottom: 14px;
+}
+
+/* ── Card head: tab badge, last-updated line, and the CDSO's Edit button ── */
+.policy-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 28px 40px 0;
+}
+
+.policy-card-head .policy-section-badge {
+  margin-bottom: 0;
+}
+
+.policy-card-head + .policy-content,
+.policy-card-head + .policy-editor {
+  padding-top: 18px;
+}
+
+.policy-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-left: auto;
+}
+
+.policy-updated {
+  font-size: 12.5px;
+  color: #64839C;
+}
+
+.policy-edit-btn,
+.policy-editor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: #FFFFFF;
+  color: #03396C;
+  border: 1px solid #BDD4E5;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.policy-edit-btn:hover:not(:disabled),
+.policy-editor-btn:hover:not(:disabled) {
+  background: #EAF2F8;
+  border-color: #03396C;
+}
+
+.policy-edit-btn:disabled,
+.policy-editor-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.policy-editor-btn.primary {
+  background: #03396C;
+  border-color: #03396C;
+  color: #FFFFFF;
+}
+
+.policy-editor-btn.primary:hover:not(:disabled) {
+  background: #032C55;
+  border-color: #032C55;
+}
+
+.policy-editor-btn.danger {
+  color: #B42318;
+  border-color: #F2C4BF;
+}
+
+.policy-editor-btn.danger:hover:not(:disabled) {
+  background: #FDF1F0;
+  border-color: #B42318;
+}
+
+/* ── Editor ── */
+.policy-editor {
+  padding: 32px 40px 32px;
+}
+
+.policy-editor-modes {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  background: #EEF4F9;
+  border-radius: 10px;
+}
+
+.policy-editor-modes button {
+  padding: 6px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #4A6680;
+  cursor: pointer;
+}
+
+.policy-editor-modes button.active {
+  background: #FFFFFF;
+  color: #03396C;
+  box-shadow: 0 1px 3px rgba(3, 57, 108, 0.12);
+}
+
+.policy-editor-input {
+  display: block;
+  width: 100%;
+  min-height: 60vh;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border: 1px solid #BDD4E5;
+  border-radius: 10px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #0B2340;
+  resize: vertical;
+}
+
+.policy-editor-input:focus {
+  outline: none;
+  border-color: #03396C;
+  box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.12);
+}
+
+.policy-editor-preview {
+  min-height: 60vh;
+  padding: 24px 28px;
+  border: 1px dashed #BDD4E5;
+  border-radius: 10px;
+}
+
+.policy-editor-help {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: #4A6680;
+}
+
+.policy-editor-help summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #03396C;
+}
+
+.policy-editor-help dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 20px;
+  margin: 10px 0 0;
+}
+
+.policy-editor-help dl div {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.policy-editor-help dt code {
+  padding: 1px 6px;
+  background: #EEF4F9;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre;
+}
+
+.policy-editor-help dd {
+  margin: 0;
+}
+
+.policy-editor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.policy-editor-spacer {
+  flex: 1;
+}
+
 /* ── Footer ── */
 .policy-footer {
   display: flex;
@@ -542,6 +755,14 @@
     padding: 24px 24px 28px;
   }
 
+  .policy-card-head {
+    padding: 22px 24px 0;
+  }
+
+  .policy-editor {
+    padding: 24px 24px 28px;
+  }
+
   .policy-doc-title {
     font-size: 19px;
   }
@@ -576,6 +797,18 @@
 
   .policy-content {
     padding: 18px 16px 22px;
+  }
+
+  .policy-card-head {
+    padding: 18px 16px 0;
+  }
+
+  .policy-editor {
+    padding: 18px 16px 22px;
+  }
+
+  .policy-editor-preview {
+    padding: 16px;
   }
 
   .policy-doc-title {

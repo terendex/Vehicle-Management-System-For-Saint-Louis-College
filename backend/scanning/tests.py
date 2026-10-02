@@ -190,6 +190,24 @@ class EntryLogicTests(TestCase):
         self.assertTrue(result['allowed'])
         self.assertIn('Fetcher', result['message'])
 
+    def test_whole_day_parent_allowed_outside_fetcher_hours(self):
+        """A Parent (Whole Day) — stored as fetcher_type 'standby' — stays on
+        campus all day, so the drop-off/pick-up window does not bind them, and
+        the guard is told which kind of fetcher this is. Monday 21:00 is past
+        the seeded 06:00–19:00 fetcher rule."""
+        from vehicles.models import VehicleRegistration
+        owner, vehicle = _make_owner('parent@slc.edu.ph', 'PRNT01', User.OwnerType.FETCHER, schedule='ANY')
+        VehicleRegistration.objects.create(
+            user=owner, last_name='Owner', first_name='Test', email=owner.email,
+            status='accepted', registrant_type='fetcher', fetcher_type='standby')
+        monday_9pm = timezone.make_aware(datetime(2026, 7, 6, 21, 0))
+        with patch('scanning.entry_logic.timezone') as mock_tz:
+            mock_tz.localdate.return_value = date(2026, 7, 6)
+            mock_tz.localtime.return_value = monday_9pm
+            result = check_entry(vehicle)
+        self.assertTrue(result['allowed'])
+        self.assertIn('Parent (Whole Day)', result['message'])
+
 
 class RuleConstraintDayCeilingTests(TestCase):
     """The rule's Allowed Days is a campus-wide ceiling: an owner needs the day

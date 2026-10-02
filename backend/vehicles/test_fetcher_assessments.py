@@ -133,7 +133,7 @@ class FetcherEmailTests(TestCase):
     def test_pending_email_lists_classification_and_students(self):
         send_pending_email(self.reg)
         body = mail.outbox[-1].alternatives[0][0]
-        self.assertIn('Standby', body)
+        self.assertIn('Parent (Whole Day)', body)   # 'standby' as the applicant knows it
         self.assertIn('DELA CRUZ, JUAN', body)
         self.assertIn('DELA CRUZ, MARIA', body)
 

@@ -1095,6 +1095,27 @@
   margin-bottom: 0;
 }
 
+/* Guardian-driven student — points whole-day parents to Fetcher → Parent */
+.whole-day-parent-note {
+  margin-bottom: 0;
+}
+
+.whole-day-parent-switch {
+  display: flex;               /* own line under the sentence it acts on */
+  width: fit-content;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #03396C;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.whole-day-parent-switch:hover { background: #F7FAFC; border-color: #03396C; }
+
 /* Chosen-schedule summary */
 .campus-day-summary {
   margin-top: 10px;
@@ -2268,4 +2289,30 @@
 @media (max-width: 520px) {
   .consent-section--granted { flex-wrap: wrap; }
   .consent-review-btn { width: 100%; }
+}
+
+/* --- The 3-day deadline note above Submit ---
+   The shared banner (PaymentDeadline.css) carries no top margin, which left it
+   flush against the consent receipt above. Here it takes the same spacing,
+   padding and radius as the consent boxes so the three read as one stack. */
+.pay-deadline.pay-deadline--form {
+  margin-top: 18px;
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-radius: 12px;
+  gap: 12px;
+}
+.pay-deadline.pay-deadline--form .pay-deadline-when {
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+  .pay-deadline.pay-deadline--form { padding: 14px 16px; gap: 10px; }
+  .pay-deadline.pay-deadline--form .pay-deadline-when { font-size: 13px; }
+}
+
+@media (max-width: 400px) {
+  .pay-deadline.pay-deadline--form { padding: 12px 13px; gap: 8px; }
+  .pay-deadline.pay-deadline--form .pay-deadline-when { font-size: 12.5px; }
 }

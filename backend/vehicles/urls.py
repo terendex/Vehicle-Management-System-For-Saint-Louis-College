@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from . import views
+from . import views, policy_views
 
 router = DefaultRouter()
 router.register('rules',           views.RuleConstraintViewSet, basename='rule-constraint')
@@ -61,6 +61,10 @@ urlpatterns = [
 
     # System-wide settings (admin / CDSO)
     path('system-settings/', views.SystemSettingsView.as_view(), name='system-settings'),
+
+    # The Policies page: public read, CDSO edit
+    path('policies/',            policy_views.PolicyListView.as_view(),   name='policy-list'),
+    path('policies/<str:key>/',  policy_views.PolicyDetailView.as_view(), name='policy-detail'),
 
     # Events (admin / CDSO)
     path('events/',           views.EventListCreateView.as_view(), name='event-list'),

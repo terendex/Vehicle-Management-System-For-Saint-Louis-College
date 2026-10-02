@@ -18,6 +18,7 @@
 #   ParkingNotice            a broadcast message to all owners
 #   Supplier / SupplierPlate / ScheduledVisit   expected non-owner traffic
 #   Camera                   a physical camera and how to reach its video stream
+#   PolicyDocument           the CDSO's edited wording of a page on /policy
 #
 # Recurring ideas worth knowing before reading:
 #   * A vehicle carries EITHER a plate OR a conduction sticker (a brand-new car
@@ -193,7 +194,7 @@ class VehicleRegistration(models.Model):
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
-        FETCHER  = 'fetcher',  'Fetcher/Drop&Go'
+        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Parent'
 
     # The legacy day-pattern codes, kept in step with accounts.User.Schedule.
     class Schedule(models.TextChoices):
@@ -242,9 +243,12 @@ class VehicleRegistration(models.Model):
         AUTHORIZED_DRIVER = 'authorized_driver', 'Authorized Driver'
 
     # Two kinds of fetcher, which differ in whether they may stay parked.
+    # 'standby' is shown as "Parent (Whole Day)": the parent who stays on
+    # campus all day is filed here, apart from the students. The stored value
+    # keeps its old name so existing registrations and the gate checks carry over.
     class FetcherType(models.TextChoices):
         DROP_AND_GO = 'drop_and_go', 'Fetcher / Drop & Go'
-        STANDBY     = 'standby',     'Standby'
+        STANDBY     = 'standby',     'Parent (Whole Day)'
 
     id = models.BigAutoField(primary_key=True, db_column='vehicle_registration_id')
     user = models.ForeignKey(                        # the portal account created on acceptance
@@ -310,7 +314,7 @@ class VehicleRegistration(models.Model):
 
     # Fetcher-specific — classification plus the students being fetched.
     # drop_and_go: entry only during the allotted drop-off/pick-up windows.
-    # standby:     allowed to park inside campus while waiting.
+    # standby:     "Parent (Whole Day)" — stays on campus and may park all day.
     fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
     # [{full_name, student_id, student_level, program_year}, ...] — at least one
     # entry is required for fetcher registrations (validated in the views).
@@ -754,7 +758,7 @@ class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
         EMPLOYEE        = 'employee',         'Employee'
-        FETCHER         = 'fetcher',          'Fetcher / Drop & Go'
+        FETCHER         = 'fetcher',          'Fetcher / Drop & Go / Parent'
         SUPPLIER        = 'supplier',         'Supplier'
 
     id              = models.BigAutoField(primary_key=True, db_column='rule_constraint_id')
@@ -1582,3 +1586,34 @@ class Camera(models.Model):
     def __str__(self):
         gate = f' — {self.gate_label}' if self.gate_id else ''
         return f"{self.name} ({self.get_assignment_display()}{gate})"
+
+
+class PolicyDocument(models.Model):
+    """The CDSO's edited wording of one tab on the Policies page (/policy).
+
+    A row exists only once a policy has been edited: with no row, the page
+    shows the wording built into the frontend (src/pages/Policy/policyDefaults.js),
+    and "Restore default" simply deletes the row. That keeps the original text
+    in one place and lets the page render even when this table is unreachable.
+
+    `content` is the small Markdown dialect PolicyMarkdown.jsx renders.
+    """
+
+    class Key(models.TextChoices):
+        PRIVACY = 'privacy', 'Privacy Policy'
+        TERMS   = 'terms',   'Vehicle Pass Terms'
+
+    id         = models.BigAutoField(primary_key=True, db_column='policy_document_id')
+    key        = models.CharField(max_length=20, choices=Key.choices, unique=True)   # which tab
+    content    = models.TextField()
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(                  # who saved it last; kept if the account goes
+        'accounts.User', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+
+    class Meta:
+        db_table = 'tbl_policy_document'
+
+    def __str__(self):
+        return self.get_key_display()

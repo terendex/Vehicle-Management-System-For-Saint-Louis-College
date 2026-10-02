@@ -82,8 +82,10 @@ const ENTRY_TYPES = [
   },
   {
     key: 'fetcher',
-    title: 'Fetcher / Drop & Go',
-    desc: 'Parent or guardian fetching a student',
+    title: 'Fetcher / Drop & Go / Parent',
+    // Hours and max stay bind Drop & Go only; a Parent (Whole Day) is held to
+    // the days alone (scanning/entry_logic.py, the 'standby' fetcher_type).
+    desc: 'Parent or guardian. Parents (Whole Day) skip the hours and max stay',
     Icon: Users,
     hasStayLimit: true,
     hasOwnDays: true,
@@ -201,6 +203,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                 />
                 <span style={{ fontSize: 11.5, color: '#64839C', marginTop: 4, display: 'block' }}>
                   Exceeding this on exit auto-issues a time-exceed violation. Leave blank for no limit.
+                  {entryType.key === 'fetcher' && ' Not applied to Parents (Whole Day).'}
                 </span>
               </div>
             )}

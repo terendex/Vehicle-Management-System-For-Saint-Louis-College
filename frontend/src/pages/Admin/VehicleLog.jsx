@@ -45,7 +45,7 @@ const STATUS_FILTERS = [
 ]
 
 const CLASSIFICATION_LABELS = {
-  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher',
+  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher / Parent',
   visitor: 'Visitor', supplier: 'Supplier', event: 'Event Organizer', unknown: 'Unregistered',
 }
 

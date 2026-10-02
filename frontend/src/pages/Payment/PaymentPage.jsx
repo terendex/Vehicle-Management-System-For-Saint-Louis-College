@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { CheckCircle, AlertTriangle, Receipt, ArrowLeft, Clock } from 'lucide-react'
 
@@ -28,7 +28,7 @@ import BrandLogos from '../../components/BrandLogos'
 const TYPE_LABEL = {
   student:  'Student',
   employee: 'Employee',
-  fetcher:  'Fetcher / Drop & Go',
+  fetcher:  'Fetcher / Drop & Go / Parent',
 }
 
 function SlcHeader() {
@@ -68,6 +68,9 @@ export default function PaymentPage() {
   const [receiptFile, setReceiptFile] = useState(null)
 
   const [submitting, setSubmitting] = useState(false)
+  // Set synchronously: Enter pressed twice on a slow connection must not send
+  // the receipt twice before the re-render disables the button.
+  const inFlight = useRef(false)
   const [progress, setProgress]     = useState(null)   // upload %, while the receipt is on its way
   const [submitted, setSubmitted]   = useState(false)
 
@@ -116,6 +119,8 @@ export default function PaymentPage() {
     if (needsPhoto) problems.push('Attach a photo of the Official Receipt.')
     if (await notify.validation(problems, { title: 'Receipt not submitted' })) return
 
+    if (inFlight.current) return
+    inFlight.current = true
     setSubmitting(true)
     setProgress(0)
     try {
@@ -142,6 +147,7 @@ export default function PaymentPage() {
         notify.error(err.response?.data?.error || err.message || 'Failed to submit the receipt. Please try again.', { title: 'Receipt not submitted' })
       }
     } finally {
+      inFlight.current = false
       setSubmitting(false)
       setProgress(null)
     }

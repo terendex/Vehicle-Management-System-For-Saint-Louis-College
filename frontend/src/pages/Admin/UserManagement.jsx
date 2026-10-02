@@ -218,7 +218,7 @@ export default function UserManagement() {
     { key: 'security',       label: 'Security Personnel',      role: 'security',      registrantType: '' },
     { key: 'owner_employee', label: 'Vehicle Owner — Employee', role: 'vehicle_owner', registrantType: 'employee' },
     { key: 'owner_student',  label: 'Vehicle Owner — Student',  role: 'vehicle_owner', registrantType: 'student' },
-    { key: 'owner_fetcher',  label: 'Fetcher / Drop & Go',      role: 'vehicle_owner', registrantType: 'fetcher' },
+    { key: 'owner_fetcher',  label: 'Fetcher / Drop & Go / Parent', role: 'vehicle_owner', registrantType: 'fetcher' },
   ]
 
   /* ── fetch users ── */

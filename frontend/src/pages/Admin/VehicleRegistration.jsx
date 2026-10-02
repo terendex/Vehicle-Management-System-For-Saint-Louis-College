@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { registrationApi } from '../../api/registration'
 import notify from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -46,7 +46,7 @@ const REG_STATUS_LABELS = {
 const REG_TYPE_LABELS = {
   student:  'Student',
   employee: 'Employee',
-  fetcher:  'Fetcher / Drop & Go',
+  fetcher:  'Fetcher / Drop & Go / Parent',
 }
 
 function formatSchedule(entity) {
@@ -153,6 +153,9 @@ export default function VehicleRegistration() {
   const [resultModal, setResultModal] = useState(null)
   const [showAcceptConfirm, setShowAcceptConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // Set synchronously, unlike `submitting`: a second click landing before the
+  // re-render that disables the button must not send a second approval.
+  const acceptInFlight = useRef(false)
   const [isQRModalOpen, setIsQRModalOpen] = useState(false)
   const [qrDisplayData, setQrDisplayData] = useState(null)
   const [qrViewerCopied, setQrViewerCopied] = useState(false)
@@ -234,6 +237,8 @@ export default function VehicleRegistration() {
     if (!selectedReg) return
     // Up to 3 campus days is the normal allowance; more than 3 is a special case
     const tooManyDays = daysOverride.length > 3
+    if (acceptInFlight.current) return
+    acceptInFlight.current = true
     setSubmitting(true)
     try {
       const result = await registrationApi.acceptRegistration(
@@ -255,11 +260,22 @@ export default function VehicleRegistration() {
       if (error.response?.status === 409 && error.response?.data?.error === 'registration_blocked') {
         // Plate is flagged — ask CDSO to confirm additional review before proceeding
         setBlockPrompt(error.response.data)
+      } else if (!error.response) {
+        // No answer at all: on a slow connection the approval may still have
+        // gone through. Reload the lists so the reviewer sees which it was,
+        // rather than accepting again on a guess.
+        setBlockPrompt(null)
+        setIsViewModalOpen(false)
+        refreshAll()
+        showResult('The connection dropped before the server answered, so the approval may or may not '
+          + 'have gone through. The list has been refreshed: if the registration is now under Accepted, '
+          + 'it is done. If it is still pending, open it and accept it again.', 'error')
       } else {
         console.error('Failed to accept registration:', error)
         showResult(error.response?.data?.error || 'Failed to accept registration.', 'error')
       }
     } finally {
+      acceptInFlight.current = false
       setSubmitting(false)
     }
   }
@@ -552,7 +568,7 @@ export default function VehicleRegistration() {
                 <option value="all">All Types</option>
                 <option value="student">Student</option>
                 <option value="employee">Employee</option>
-                <option value="fetcher">Fetcher / Drop &amp; Go</option>
+                <option value="fetcher">Fetcher / Drop &amp; Go / Parent</option>
               </select>
               {/* Same rule as the tiles above — one axis, shown in one place or
                   neither, so the toolbar never offers a filter the counts strip
@@ -724,7 +740,7 @@ export default function VehicleRegistration() {
                     <div className="detail-label">Fetcher Classification</div>
                     <div className="detail-value">
                       {selectedReg.fetcher_type === 'standby'
-                        ? 'Standby — may park inside campus'
+                        ? 'Parent (Whole Day) — may stay and park inside campus'
                         : selectedReg.fetcher_type === 'drop_and_go'
                           ? 'Fetcher / Drop & Go — allotted times only'
                           : '—'}
