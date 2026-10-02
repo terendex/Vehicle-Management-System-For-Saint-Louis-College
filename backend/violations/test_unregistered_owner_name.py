@@ -10,6 +10,7 @@ unrecognized-entry row the gate wrote, rather than on a User.
 """
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from scanning.models import AccessLog, VisitorPass
 from vehicles.models import Vehicle
@@ -54,6 +55,18 @@ class UnregisteredOwnerNameTests(TestCase):
                                    visitor_name='OLD NAME', allowed_duration=15)
         VisitorPass.objects.create(vehicle=vehicle, plate_number='VIS0002',
                                    visitor_name='CURRENT DRIVER', allowed_duration=15)
+        self.assertEqual(self._violation(vehicle).owner_name, 'CURRENT DRIVER')
+
+    def test_the_newest_pass_wins_a_timestamp_tie(self):
+        """entered_at only moves every ~1ms on Windows: two passes issued back
+        to back can share it, and the later one must still win."""
+        vehicle = Vehicle.objects.create(
+            plate_number='VIS0003', vehicle_type=Vehicle.Type.CAR)
+        VisitorPass.objects.create(vehicle=vehicle, plate_number='VIS0003',
+                                   visitor_name='OLD NAME', allowed_duration=15)
+        VisitorPass.objects.create(vehicle=vehicle, plate_number='VIS0003',
+                                   visitor_name='CURRENT DRIVER', allowed_duration=15)
+        VisitorPass.objects.filter(vehicle=vehicle).update(entered_at=timezone.now())
         self.assertEqual(self._violation(vehicle).owner_name, 'CURRENT DRIVER')
 
     def test_a_hand_recorded_driver_is_named_from_their_entry(self):

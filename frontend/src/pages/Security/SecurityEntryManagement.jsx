@@ -385,6 +385,10 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
     setMinutes(String(durationNum % 60))
   }
 
+  // The allowed time only changes while the visitor is inside — once they
+  // left, the overstay was already measured against it at the exit.
+  const inside = (pass.status ?? 'active') === 'active'
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (submitting.current) return
@@ -400,7 +404,7 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
       if (!(await notify.confirm({
         title: 'Record visitor slip?',
         message: `Save ${visitorName.trim()}'s details for ${plate}?`,
-        description: durationNum !== total
+        description: inside && durationNum !== total
           ? `The allowed time changes to ${fmtMinutes(durationNum)}, counted from when they entered.` : '',
         confirmLabel: 'Record',
       }))) return
@@ -408,7 +412,8 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
       try {
         const { data } = await recordVisitorDetails(pass.id, {
           visitor_name: visitorName.trim(), conduction_number: conduction.trim(),
-          office: officeId || null, purpose, allowed_duration: durationNum,
+          office: officeId || null, purpose,
+          ...(inside ? { allowed_duration: durationNum } : {}),
         })
         // Matched to a penalty on the name or conduction number — something
         // the gate could not check with only the plate. They are already in.
@@ -436,6 +441,7 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
           <div className="em-modal-body">
             <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
               Copy in what the visitor wrote on their slip.
+              {!inside && <> They already left{pass.exited_at ? ` at ${fmtClock(pass.exited_at)}` : ''} — the allowed time stays as it was.</>}
             </p>
             <div className="em-field">
               <label className="em-label">License Plate</label>
@@ -465,6 +471,7 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
               <textarea className="em-textarea" placeholder="e.g. Enrollment inquiry…" value={purpose}
                 onChange={(e) => setPurpose(e.target.value)} required />
             </div>
+            {inside && (
             <div className="em-field">
               <label className="em-label">Allowed Duration</label>
               <div className="em-duration">
@@ -487,6 +494,7 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
                 Counted from when the visitor entered, up to 24 hours.
               </span>
             </div>
+            )}
           </div>
           <div className="em-modal-foot">
             <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
@@ -873,12 +881,17 @@ function OwnerLookupModal({ data, onPick, onClose }) {
 
 
 // ─── Record Slip Picker ────────────────────────────────────────────────────────
-// The toolbar's way to Record Visitor Slip: today's visitors still inside, the
-// ones let in on a blank slip first. Picking one opens the record form — the
-// same one the Active Visitors row and the slip dialog open.
+// The toolbar's way to Record Visitor Slip: today's visitor slips, inside or
+// already gone, plus any from earlier days never recorded — the unrecorded
+// ones first. A slip can be recorded at any time. Picking one opens the record
+// form — the same one the Active Visitors row and the slip dialog open.
 function RecordSlipPickerModal({ passes, onPick, onClose }) {
   const sorted = [...passes].sort((a, b) => (!!a.visitor_name - !!b.visitor_name)
-    || new Date(a.entered_at) - new Date(b.entered_at))
+    || new Date(b.entered_at) - new Date(a.entered_at))
+  const day = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const where = (p) => p.status === 'active'
+    ? `Inside · ${passTimeInfo(p).label}`
+    : p.exited_at ? `Exited ${fmtClock(p.exited_at)}` : `Pass ${p.status}`
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="em-modal">
@@ -889,10 +902,10 @@ function RecordSlipPickerModal({ passes, onPick, onClose }) {
         <div className="em-modal-body">
           <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
             Pick the visitor whose slip you are holding — match the plate printed on it.
+            Visitors who already left can still be recorded.
           </p>
           <div className="em-lookup-list">
             {sorted.map(p => {
-              const t = passTimeInfo(p)
               return (
                 <button type="button" key={p.id} className="em-lookup-row" onClick={() => onPick(p)}>
                   <div className="em-lookup-main">
@@ -903,7 +916,7 @@ function RecordSlipPickerModal({ passes, onPick, onClose }) {
                   </div>
                   <div className="em-lookup-sub">
                     {p.visitor_name ? `${p.visitor_name} · ` : ''}
-                    Entered {p.entered_at ? fmtClock(p.entered_at) : '—'} · {t.label}
+                    Entered {p.entered_at ? `${p.is_today === false ? `${day(p.entered_at)}, ` : ''}${fmtClock(p.entered_at)}` : '—'} · {where(p)}
                   </div>
                 </button>
               )
@@ -1112,19 +1125,11 @@ function SlipStatusModal({ slip: initialSlip, gateId, offices = [], onClose, onC
     : `Exited ${when(slip.exited_at)} after ${slip.minutes_inside} min` +
       (slip.overstay_minutes ? ` · overstayed ${slip.overstay_minutes} min` : '')
 
-  // A walk-in let in on a blank slip whose details were never typed in.
-  const unrecorded = inside && slip.kind === 'visitor' && slip.recorded === false
+  // A walk-in let in on a blank slip whose details were never typed in. They
+  // can be recorded at any time — before the exit or after it.
+  const unrecorded = slip.kind === 'visitor' && slip.recorded === false
 
   const recordExit = async () => {
-    // Exiting closes the pass, and a closed pass can no longer be recorded —
-    // so leaving without the details is a choice, never an accident.
-    if (unrecorded && !(await notify.confirm({
-      title: 'Visitor slip not recorded',
-      message: `The details ${slip.headline}'s visitor wrote on the slip are not in the system yet. Record the exit anyway?`,
-      description: 'Press Cancel, then Record Visitor Slip, to copy them in first. They cannot be added after the exit.',
-      confirmLabel: 'Exit Anyway',
-      danger: true,
-    }))) return
     setBusy('exit')
     try {
       const { data } = await exitSlip(slip.code, gateId)
@@ -1188,7 +1193,7 @@ function SlipStatusModal({ slip: initialSlip, gateId, offices = [], onClose, onC
             ))}
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexDirection: 'column' }}>
-            {inside && slip.kind === 'visitor' && (
+            {slip.kind === 'visitor' && (
               <button className={`em-btn ${unrecorded ? 'em-btn-primary' : 'em-btn-secondary'}`}
                 style={{ width: '100%', justifyContent: 'center' }}
                 disabled={!!busy} onClick={() => setRecording(true)}>
@@ -1216,7 +1221,8 @@ function SlipStatusModal({ slip: initialSlip, gateId, offices = [], onClose, onC
       </div>
       {recording && (
         <RecordVisitorSlipModal
-          pass={{ id: slip.id, plate_number: slip.plate_number, ...slip.details }}
+          pass={{ id: slip.id, plate_number: slip.plate_number, ...slip.details,
+                  status: slip.state === 'inside' ? 'active' : slip.state, exited_at: slip.exited_at }}
           offices={offices}
           onClose={() => setRecording(false)}
           onSaved={(data) => { setSlip(data.slip); onChanged?.() }} />
@@ -1613,6 +1619,9 @@ export default function SecurityEntryManagement() {
   const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
   const [recordingPass, setRecordingPass] = useState(null)  // the active pass whose slip is being recorded
   const [pickingSlip, setPickingSlip]     = useState(false) // the toolbar's Record Slip list is open
+  // Every pass whose slip can still be recorded or edited: today's, inside or
+  // not, plus earlier ones never recorded. A slip is recorded at any time.
+  const [recordable, setRecordable]       = useState([])
   const [overstaying, setOverstaying] = useState([])    // still inside, past their rule
   const [ackBusy, setAckBusy]         = useState(null)  // plate currently being acknowledged
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
@@ -1785,8 +1794,10 @@ export default function SecurityEntryManagement() {
 
   // Active visitor passes — alert once per pass when it crosses into overstay
   const refreshPasses = () =>
-    getVisitorPasses().then(r => {
-      const list = (r.data?.results ?? r.data ?? []).filter(p => p.status === 'active')
+    getVisitorPasses({ scope: 'recordable' }).then(r => {
+      const all  = r.data?.results ?? r.data ?? []
+      setRecordable(all)
+      const list = all.filter(p => p.status === 'active' && p.is_today !== false)
       setPasses(list)
       saveCachedPasses(list)
       list.forEach(p => {
@@ -1863,10 +1874,10 @@ export default function SecurityEntryManagement() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Walk-ins inside whose slip has not been typed in yet.
-  const unrecordedCount = passes.filter(p => !p.visitor_name).length
+  const unrecordedCount = recordable.filter(p => !p.visitor_name).length
   const openRecordSlip = async () => {
-    if (passes.length === 0) {
-      await notify.info('No visitors are inside right now. A slip is recorded for a visitor let in with Allow Entry as Visitor, while they are still inside.',
+    if (recordable.length === 0) {
+      await notify.info('There are no visitor slips today, and none waiting from earlier days. A slip is recorded for a visitor let in with Allow Entry as Visitor.',
         { title: 'No visitor slips to record' })
       return
     }
@@ -1893,6 +1904,14 @@ export default function SecurityEntryManagement() {
       addToQueue({ slip: data, plate_number: data.headline, status: 'slip' })
       return data
     } catch (err) {
+      // A used visitor slip still opens — it says Already Exited and offers
+      // no exit or reprint, but the guard can record what the visitor wrote
+      // on it, which can be done at any time.
+      const used = err?.response?.data
+      if (used?.reason === 'slip_used' && used.slip?.kind === 'visitor') {
+        addToQueue({ slip: used.slip, plate_number: used.slip.headline, status: 'slip' })
+        return used.slip
+      }
       // A visitor slip is good for one visit, and only its newest printed copy
       // works (qr_payload carries that copy's serial).
       const title = { slip_used: 'Slip already used', slip_replaced: 'Old slip copy' }[err?.response?.data?.reason]
@@ -2772,7 +2791,7 @@ export default function SecurityEntryManagement() {
 
         {pickingSlip && (
           <RecordSlipPickerModal
-            passes={passes}
+            passes={recordable}
             onPick={(p) => { setPickingSlip(false); setRecordingPass(p) }}
             onClose={() => setPickingSlip(false)}
           />

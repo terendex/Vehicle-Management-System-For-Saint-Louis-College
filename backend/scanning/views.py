@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -586,7 +586,7 @@ def _active_visitor_pass(plate_number: str):
         plate_number=plate_number,
         valid_date=timezone.localdate(),         # a pass is good for one day only
         status=VisitorPass.Status.ACTIVE,        # not one already exited or expired
-    ).order_by('-entered_at').first()            # the newest, for a visitor who came twice in a day
+    ).order_by('-entered_at', '-pk').first()            # the newest, for a visitor who came twice in a day
 
 
 # The exit half: closes the pass and reports how long they overstayed. Called
@@ -606,7 +606,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
         plate_number=plate_number,
         valid_date=timezone.localdate(),
         status=VisitorPass.Status.ACTIVE,
-    ).order_by('-entered_at').first()
+    ).order_by('-entered_at', '-pk').first()
     if not pass_:
         return 0                                 # no open pass: this exit is not a visitor's, and 0 means "nothing to report"
     # Closed FIRST, before any overstay work. A failure while issuing the
@@ -1177,6 +1177,13 @@ class ScanView(APIView):
 # A visitor's paper is reprintable, and every print draws a NEW serial that
 # retires the older copies — so an old slip someone kept cannot be used to
 # walk a second car out. _slip_from_request is where that is enforced.
+# The first day a walk-in could be let in on a blank slip (Allow Entry as
+# Visitor). A nameless pass before it is a legacy one from before the name was
+# required — its slip had no form to copy from, so it is not offered for
+# recording and does not count as waiting.
+WALK_IN_SLIPS_SINCE = date(2026, 10, 2)
+
+
 class VisitorPassView(APIView):
     """Guard issues a visitor pass at the gate."""
     permission_classes = [permissions.IsAuthenticated]
@@ -1306,10 +1313,21 @@ class VisitorPassView(APIView):
         # Today only — a pass is a one-day thing, and the guard screen is about
         # who is here now, not a history. The three relations are all rendered
         # per row, so they are joined rather than fetched one query at a time.
-        passes = VisitorPass.objects.filter(
-            valid_date=timezone.localdate()
-        ).select_related('vehicle', 'office', 'issued_by')
-        return Response(VisitorPassSerializer(passes, many=True).data)
+        today = timezone.localdate()
+        passes = VisitorPass.objects.filter(valid_date=today)
+        # ?scope=recordable — the guard's Record Slip list. A walk-in's slip can
+        # be recorded at any time, inside or not, so it also carries every
+        # earlier pass still waiting for its details (newest first, capped).
+        if request.query_params.get('scope') == 'recordable':
+            older = (VisitorPass.objects.filter(visitor_name='', valid_date__lt=today,
+                                                valid_date__gte=WALK_IN_SLIPS_SINCE)
+                     .order_by('-entered_at').values_list('pk', flat=True)[:200])
+            passes = VisitorPass.objects.filter(Q(valid_date=today) | Q(pk__in=list(older)))
+        passes = passes.select_related('vehicle', 'office', 'issued_by')
+        data = VisitorPassSerializer(passes, many=True).data
+        for row in data:
+            row['is_today'] = row['valid_date'] == today.isoformat()
+        return Response(data)
 
 
 # Every slip endpoint starts here: turn a scanned QR into the row it names, or
@@ -2776,15 +2794,14 @@ class ExtendVisitorPassView(APIView):
 # A walk-in visitor is let in on a blank slip ("Allow Entry as Visitor") so the
 # car is not held at the barrier filling in a form; the visitor writes their
 # details on the slip while on campus. This is where the guard types them in —
-# usually when the slip comes back at the exit.
+# at any time: while the visitor is inside, at the exit, or after they left.
 class RecordVisitorDetailsView(APIView):
     """Guard records the details a visitor wrote on their slip."""
     permission_classes = [permissions.IsAuthenticated]
 
     def patch(self, request, pk):
-        pass_ = get_object_or_404(VisitorPass.objects.select_related('office'), pk=pk)
-        if pass_.status != VisitorPass.Status.ACTIVE:
-            return Response({'error': f'Cannot record — pass is already {pass_.status}.'}, status=400)
+        pass_ = get_object_or_404(VisitorPass.objects.select_related('office', 'vehicle'), pk=pk)
+        is_active = pass_.status == VisitorPass.Status.ACTIVE
 
         # Normalised exactly as VisitorPassView.post does at the gate.
         visitor_name = ' '.join((request.data.get('visitor_name') or '').split()).upper()[:150]
@@ -2807,7 +2824,10 @@ class RecordVisitorDetailsView(APIView):
         fields = ['visitor_name', 'purpose', 'conduction_number', 'office']
         pass_.visitor_name, pass_.purpose = visitor_name, purpose
         pass_.conduction_number, pass_.office = conduction_number, office
-        if request.data.get('allowed_duration') not in (None, ''):
+        # The allowance only moves while the visit is running. Once it ended,
+        # the overstay was already measured against it at the exit — changing
+        # it now would rewrite that after the fact — so it is left as it was.
+        if is_active and request.data.get('allowed_duration') not in (None, ''):
             try:
                 allowed_duration = min(24 * 60, max(1, int(request.data['allowed_duration'])))
             except (TypeError, ValueError):
@@ -2819,10 +2839,26 @@ class RecordVisitorDetailsView(APIView):
             fields += ['allowed_duration', 'expires_at']
         pass_.save(update_fields=fields)
 
+        # A violation from this visit — an overstay at the exit — copied the
+        # visitor's name when it was issued, and there was none yet. Fill it in
+        # now, so the penalty can follow the person and not only the plate.
+        # Only this visit's rows, and only blanks: nothing already named moves.
+        if pass_.vehicle_id and pass_.entered_at:
+            from violations.models import Violation
+            visit_rows = Violation.objects.filter(vehicle_id=pass_.vehicle_id, owner__isnull=True,
+                                                  owner_email='', issued_at__gte=pass_.entered_at)
+            if pass_.exited_at:
+                visit_rows = visit_rows.filter(issued_at__lte=pass_.exited_at + timedelta(minutes=5))
+            visit_rows.filter(owner_name='').update(owner_name=visitor_name)
+            if conduction_number:
+                visit_rows.filter(conduction_number='').update(conduction_number=conduction_number)
+
         _audit(
             request,
             AuditLog.Action.VISITOR_ISSUED,
-            f"Visitor slip recorded | Plate: {pass_.plate_number} | Visitor: {visitor_name} | "
+            f"Visitor slip recorded | Plate: {pass_.plate_number} | "
+            + ("" if is_active else f"After exit ({pass_.status}) | ")
+            + f"Visitor: {visitor_name} | "
             + (f"Conduction: {conduction_number} | " if conduction_number else "")
             + f"Office: {office.name if office else 'N/A'} | Purpose: {purpose} | "
             f"Duration: {pass_.allowed_duration} min | Guard: {request.user.full_name}",
@@ -2834,15 +2870,16 @@ class RecordVisitorDetailsView(APIView):
 
         # The gate had only the plate when it let this visitor in, so a penalty
         # matched on the name or conduction number could not be caught there.
-        # The visitor is already inside — the guard is told, to refer them to
-        # the CDSO on the way out; the details are kept either way.
+        # The visitor is already in (or gone) — the guard is told, to refer them
+        # to the CDSO; the details are kept either way.
         from violations.penalty import visitor_confiscation
         penalty = visitor_confiscation(pass_.plate_number, conduction_number, visitor_name)
         if penalty:
             data['confiscation'] = {**penalty, 'until': penalty['until'].isoformat() if penalty['until'] else None}
             data['detail'] = (f"This visitor's entry is confiscated (offence {penalty['level']} of 3, matched on "
                               f"{' and '.join(penalty['matched_on']) or 'a previous offence'}). "
-                              f"Refer them to the CDSO office before they leave.")
+                              + ("Refer them to the CDSO office before they leave." if is_active
+                                 else "They have already left — inform the CDSO office."))
         return Response(data)
 
 

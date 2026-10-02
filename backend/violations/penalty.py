@@ -229,7 +229,7 @@ def visitor_identity(vehicle) -> tuple:
         return '', '', ''
     from scanning.models import VisitorPass     # scanning imports violations; see _gate_recorded_name
     pass_ = (VisitorPass.objects.filter(vehicle=vehicle)
-             .order_by('-entered_at')
+             .order_by('-entered_at', '-pk')
              .values('visitor_name', 'conduction_number')
              .first()) or {}
     return (vehicle.plate_number or '',

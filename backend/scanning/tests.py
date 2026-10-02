@@ -543,12 +543,83 @@ class VisitorPassAPITests(TestCase):
         self.assertEqual(self.client.patch(url, {'purpose': 'Visit'}, format='json').status_code, 400)
         self.assertEqual(self.client.patch(url, {'visitor_name': 'ANA'}, format='json').status_code, 400)
 
-    def test_record_visitor_slip_refused_after_exit(self):
+    def test_record_visitor_slip_after_exit(self):
+        """A slip can be recorded at any time — after the visitor left too.
+        The allowed time is not rewritten once the visit is over."""
+        from accounts.models import AuditLog
+        from scanning.models import VisitorPass
         pass_id = self._walk_in('VIS034').data['id']
         self.client.post(f'/api/scan/visitor-pass/{pass_id}/exit/')
+        before = VisitorPass.objects.get(pk=pass_id)
         resp = self.client.patch(f'/api/scan/visitor-pass/{pass_id}/details/',
-                                 {'visitor_name': 'ANA', 'purpose': 'Visit'}, format='json')
-        self.assertEqual(resp.status_code, 400)
+                                 {'visitor_name': 'ana', 'purpose': 'Visit', 'allowed_duration': 240},
+                                 format='json')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        after = VisitorPass.objects.get(pk=pass_id)
+        self.assertEqual(after.visitor_name, 'ANA')
+        self.assertEqual(after.status, 'exited')
+        self.assertEqual((after.allowed_duration, after.expires_at), (before.allowed_duration, before.expires_at))
+        self.assertTrue(resp.data['slip']['recorded'])
+        self.assertTrue(AuditLog.objects.filter(
+            details__startswith='Visitor slip recorded | Plate: VIS034 | After exit').exists())
+
+    def test_recording_after_an_overstay_names_its_violation(self):
+        """The overstay violation issued at the exit had no name to copy yet;
+        recording the slip afterwards fills it in."""
+        from scanning.models import VisitorPass
+        pass_id = self._walk_in('VIS036').data['id']
+        VisitorPass.objects.filter(pk=pass_id).update(
+            expires_at=timezone.now() - timedelta(minutes=20))
+        self.client.post(f'/api/scan/visitor-pass/{pass_id}/exit/')
+        v = Violation.objects.get(plate_number='VIS036', violation_type='time_exceed')
+        self.assertEqual(v.owner_name, '')
+        self.client.patch(f'/api/scan/visitor-pass/{pass_id}/details/',
+                          {'visitor_name': 'pedro penduko', 'purpose': 'Visit',
+                           'conduction_number': 'CS55555'}, format='json')
+        v.refresh_from_db()
+        self.assertEqual((v.owner_name, v.conduction_number), ('PEDRO PENDUKO', 'CS55555'))
+
+    def test_unrecorded_walk_in_violation_does_not_borrow_an_earlier_visitors_name(self):
+        """Same car, an earlier visitor with a name, then a walk-in on a blank
+        slip who overstays: the violation must not carry the earlier name."""
+        from scanning.models import VisitorPass
+        first = self.client.post('/api/scan/visitor-pass/',
+                                 {'plate_number': 'VIS037', 'visitor_name': 'EARLIER PERSON', 'purpose': 'Visit'},
+                                 format='json').data['id']
+        self.client.post(f'/api/scan/visitor-pass/{first}/exit/')
+        pass_id = self._walk_in('VIS037').data['id']
+        VisitorPass.objects.filter(pk=pass_id).update(
+            expires_at=timezone.now() - timedelta(minutes=20))
+        self.client.post(f'/api/scan/visitor-pass/{pass_id}/exit/')
+        v = Violation.objects.get(plate_number='VIS037', violation_type='time_exceed')
+        self.assertEqual(v.owner_name, '')
+
+    def test_recordable_scope_lists_exited_and_older_unrecorded_passes(self):
+        from scanning.models import VisitorPass
+        today = timezone.localdate()
+        exited = self._walk_in('VIS038').data['id']
+        self.client.post(f'/api/scan/visitor-pass/{exited}/exit/')
+        old = self._walk_in('VIS039').data['id']
+        VisitorPass.objects.filter(pk=old).update(valid_date=today - timedelta(days=3))
+        named_old = self.client.post('/api/scan/visitor-pass/',
+                                     {'plate_number': 'VIS040', 'visitor_name': 'ANA', 'purpose': 'V'},
+                                     format='json').data['id']
+        VisitorPass.objects.filter(pk=named_old).update(valid_date=today - timedelta(days=3))
+        legacy = self._walk_in('VIS041').data['id']       # nameless, from before blank slips existed
+        VisitorPass.objects.filter(pk=legacy).update(valid_date=today - timedelta(days=30))
+
+        default = {p['id'] for p in self.client.get('/api/scan/visitor-pass/').data}
+        self.assertIn(exited, default)
+        self.assertNotIn(old, default)                    # the default list is today's only
+        with patch('scanning.views.WALK_IN_SLIPS_SINCE', today - timedelta(days=10)):
+            rows = {p['id']: p for p in
+                    self.client.get('/api/scan/visitor-pass/', {'scope': 'recordable'}).data}
+        self.assertIn(exited, rows)
+        self.assertTrue(rows[exited]['is_today'])
+        self.assertIn(old, rows)                          # earlier day, still unrecorded
+        self.assertFalse(rows[old]['is_today'])
+        self.assertNotIn(named_old, rows)                 # earlier day, already recorded
+        self.assertNotIn(legacy, rows)                    # before blank slips: nothing to copy from
 
     def test_form_slip_renders_longer(self):
         from scanning.models import VisitorPass

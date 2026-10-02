@@ -207,7 +207,7 @@ class Violation(models.Model):
             self.conduction_number = (VisitorPass.objects
                                       .filter(vehicle=vehicle)
                                       .exclude(conduction_number='')
-                                      .order_by('-entered_at')
+                                      .order_by('-entered_at', '-pk')
                                       .values_list('conduction_number', flat=True)
                                       .first()) or ''
 
@@ -221,10 +221,15 @@ class Violation(models.Model):
         from scanning.models import AccessLog, VisitorPass
 
         plate = self.plate_number or ''
+        # The NEWEST pass only. A walk-in let in on a blank slip has no name
+        # until the guard records it — reaching back to an older pass would
+        # put an earlier visitor in the same car on this violation. Left blank,
+        # it is filled in when the slip is recorded (RecordVisitorDetailsView).
+        # '-pk' breaks a tie: entered_at only moves every ~1ms on Windows, so
+        # two passes issued back to back can share it.
         pass_ = (VisitorPass.objects
                  .filter(vehicle=self.vehicle)
-                 .exclude(visitor_name='')
-                 .order_by('-entered_at')
+                 .order_by('-entered_at', '-pk')
                  .values_list('visitor_name', flat=True)
                  .first())
         if pass_:

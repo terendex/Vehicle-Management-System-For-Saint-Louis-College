@@ -42,7 +42,8 @@ export const exportVehicleLogPdf = (params) =>
 export const getOffices = () => api.get('/scan/offices/')
 
 // Get today's visitor passes
-export const getVisitorPasses = () => api.get('/scan/visitor-pass/')
+// `{ scope: 'recordable' }` adds earlier passes whose slip is still unrecorded.
+export const getVisitorPasses = (params) => api.get('/scan/visitor-pass/', { params })
 
 // Create a visitor pass
 export const createVisitorPass = (data) => api.post('/scan/visitor-pass/', data)
