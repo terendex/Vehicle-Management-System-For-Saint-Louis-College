@@ -889,7 +889,7 @@ class ScanLiveConsumer(AsyncJsonWebsocketConsumer):
             duration_minutes = int(delta.total_seconds() / 60)   # how long they were inside, whole minutes
             # Closing any visitor pass may itself reveal an overstay.
             overstay_minutes = _close_active_pass(plate_number, gate_id)
-            # Drop-and-go fetchers have a maximum stay; standby fetchers are
+            # Fetcher and Drop & Go have a maximum stay; standby fetchers are
             # allowed to wait, so they are excluded from the check.
             if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(   # keep whichever overstay is larger

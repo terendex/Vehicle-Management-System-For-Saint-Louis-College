@@ -83,7 +83,7 @@ const ENTRY_TYPES = [
   {
     key: 'fetcher',
     title: 'Fetcher / Drop & Go / Parent',
-    // Hours and max stay bind Drop & Go only; a Parent (Whole Day) is held to
+    // Hours and max stay bind Fetcher and Drop & Go; a Parent (Whole Day) is held to
     // the days alone (scanning/entry_logic.py, the 'standby' fetcher_type).
     desc: 'Parent or guardian. Parents (Whole Day) skip the hours and max stay',
     Icon: Users,

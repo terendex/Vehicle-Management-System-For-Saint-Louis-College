@@ -837,7 +837,7 @@ export default function RegisterPage() {
 
     if (registrantType === 'fetcher') {
       if (!fetcherType) {
-        problems.push('Choose your classification: Fetcher / Drop & Go or Parent (Whole Day).')
+        problems.push('Choose your classification: Fetcher, Drop & Go, or Parent (Whole Day).')
       }
       fetcherStudents.forEach((st, i) => {
         if (!st.full_name.trim() || !st.student_level) {
@@ -1349,7 +1349,9 @@ export default function RegisterPage() {
                         <Info size={13} />
                         {fetcherType === 'standby'
                           ? <>Parents (Whole Day) may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to stay and park inside the campus the whole day.</>
-                          : <>Fetchers / Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
+                          : fetcherType === 'drop_and_go'
+                            ? <>Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>
+                            : <>Fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
                       </p>
                     )}
                   </div>
@@ -1985,16 +1987,28 @@ export default function RegisterPage() {
             {isFetcher && (
               <>
                 <hr className="divider" />
-                <h3 className="section-heading">Fetcher Classification <span className="required">*</span></h3>
+                <h3 className="section-heading">Classification <span className="required">*</span></h3>
+                {/* Fetcher and Drop & Go share the drop-off/pick-up hours; they
+                    are separate so CDSO can tell who picks up from who drops
+                    off. Only Parent (Whole Day) may stay. */}
                 <div className="reg-type-inline">
+                  <button
+                    type="button"
+                    className={`reg-type-inline-btn${fetcherType === 'fetcher' ? ' selected' : ''}`}
+                    onClick={() => setFetcherType('fetcher')}
+                  >
+                    <span className="reg-type-inline-icon"><Users size={24} /></span>
+                    <span className="reg-type-inline-label">Fetcher</span>
+                    <span className="reg-type-inline-desc">Picks up a student during the allotted pick-up times</span>
+                  </button>
                   <button
                     type="button"
                     className={`reg-type-inline-btn${fetcherType === 'drop_and_go' ? ' selected' : ''}`}
                     onClick={() => setFetcherType('drop_and_go')}
                   >
                     <span className="reg-type-inline-icon"><Clock size={24} /></span>
-                    <span className="reg-type-inline-label">Fetcher / Drop &amp; Go</span>
-                    <span className="reg-type-inline-desc">Entry only during the allotted drop-off &amp; pick-up times</span>
+                    <span className="reg-type-inline-label">Drop &amp; Go</span>
+                    <span className="reg-type-inline-desc">Drops off a student during the allotted drop-off times</span>
                   </button>
                   <button
                     type="button"

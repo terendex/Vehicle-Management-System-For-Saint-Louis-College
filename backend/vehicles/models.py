@@ -242,12 +242,16 @@ class VehicleRegistration(models.Model):
         GUARDIAN          = 'guardian',          'Guardian'
         AUTHORIZED_DRIVER = 'authorized_driver', 'Authorized Driver'
 
-    # Two kinds of fetcher, which differ in whether they may stay parked.
+    # Three kinds of fetcher. Fetcher (picks a student up) and Drop & Go
+    # (drops one off) are held to the same drop-off/pick-up hours and max stay;
+    # they are told apart so CDSO and the reports can see who does which.
     # 'standby' is shown as "Parent (Whole Day)": the parent who stays on
-    # campus all day is filed here, apart from the students. The stored value
-    # keeps its old name so existing registrations and the gate checks carry over.
+    # campus all day is filed here, apart from the students, and is the only
+    # kind not held to the hours. Stored values keep their old names so
+    # existing registrations (all drop_and_go or standby) carry over unchanged.
     class FetcherType(models.TextChoices):
-        DROP_AND_GO = 'drop_and_go', 'Fetcher / Drop & Go'
+        FETCHER     = 'fetcher',     'Fetcher'
+        DROP_AND_GO = 'drop_and_go', 'Drop & Go'
         STANDBY     = 'standby',     'Parent (Whole Day)'
 
     id = models.BigAutoField(primary_key=True, db_column='vehicle_registration_id')
@@ -313,8 +317,8 @@ class VehicleRegistration(models.Model):
     )
 
     # Fetcher-specific — classification plus the students being fetched.
-    # drop_and_go: entry only during the allotted drop-off/pick-up windows.
-    # standby:     "Parent (Whole Day)" — stays on campus and may park all day.
+    # fetcher / drop_and_go: entry only during the allotted drop-off/pick-up hours.
+    # standby:              "Parent (Whole Day)" — stays on campus and may park all day.
     fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
     # [{full_name, student_id, student_level, program_year}, ...] — at least one
     # entry is required for fetcher registrations (validated in the views).

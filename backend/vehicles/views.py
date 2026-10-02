@@ -2833,12 +2833,13 @@ class PublicOpenRegistrationView(APIView):
         # fetching has to be on record, so both are required here rather than
         # left to CDSO to chase up later.
         if registrant_type == 'fetcher':
-            # Classification is required: drop_and_go (allotted times only) or
-            # standby, shown as "Parent (Whole Day)" (may stay and park all day).
+            # Classification is required: fetcher or drop_and_go (allotted
+            # times only), or standby, shown as "Parent (Whole Day)" (may stay
+            # and park all day).
             fetcher_type = (data.get('fetcher_type') or '').strip()
-            if fetcher_type not in ('drop_and_go', 'standby'):   # no default: the two grant different access
+            if fetcher_type not in VehicleRegistration.FetcherType.values:   # no default: they grant different access
                 return Response(
-                    {"error": "Please choose a fetcher classification: Fetcher / Drop & Go or Parent (Whole Day)."},
+                    {"error": "Please choose a classification: Fetcher, Drop & Go, or Parent (Whole Day)."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             # At least one student must be listed

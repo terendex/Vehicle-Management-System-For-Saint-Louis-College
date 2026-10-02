@@ -136,6 +136,15 @@ class OverstayCardTests(APITestCase):
         self._enter('DROPGO1', owner, 45)
         self.assertEqual(self._plates(), {'DROPGO1'})
 
+    def test_a_fetcher_is_not_either(self):
+        """Fetcher shares Drop & Go's max stay — only Parent (Whole Day) may wait."""
+        owner = self._owner('os7b@slc.edu.ph', 'fetcher')
+        VehicleRegistration.objects.create(
+            user=owner, **name_kwargs(owner.full_name), email=owner.email,
+            status='accepted', registrant_type='fetcher', fetcher_type='fetcher')
+        self._enter('FETCH01', owner, 45)
+        self.assertEqual(self._plates(), {'FETCH01'})
+
     def test_worst_offender_is_first(self):
         self._enter('MILD001', self._owner('os8@slc.edu.ph', 'student'), 70)
         self._enter('BAD0001', self._owner('os9@slc.edu.ph', 'student'), 400)

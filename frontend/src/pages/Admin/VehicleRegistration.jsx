@@ -742,8 +742,10 @@ export default function VehicleRegistration() {
                       {selectedReg.fetcher_type === 'standby'
                         ? 'Parent (Whole Day) — may stay and park inside campus'
                         : selectedReg.fetcher_type === 'drop_and_go'
-                          ? 'Fetcher / Drop & Go — allotted times only'
-                          : '—'}
+                          ? 'Drop & Go — allotted times only'
+                          : selectedReg.fetcher_type === 'fetcher'
+                            ? 'Fetcher — allotted times only'
+                            : '—'}
                     </div>
                   </div>
                   {(selectedReg.fetcher_students || []).length > 0 && (

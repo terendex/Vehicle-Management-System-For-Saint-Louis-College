@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='vehicleregistration',
             name='fetcher_type',
-            field=models.CharField(blank=True, choices=[('drop_and_go', 'Fetcher / Drop & Go'), ('standby', 'Parent (Whole Day)')], max_length=20),
+            field=models.CharField(blank=True, choices=[('fetcher', 'Fetcher'), ('drop_and_go', 'Drop & Go'), ('standby', 'Parent (Whole Day)')], max_length=20),
         ),
         migrations.AlterField(
             model_name='vehicleregistration',

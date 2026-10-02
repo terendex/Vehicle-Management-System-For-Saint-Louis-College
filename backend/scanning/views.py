@@ -522,8 +522,9 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
 
 
 def _is_standby_fetcher(user) -> bool:
-    """Standby fetchers are allowed to park inside campus while waiting, so the
-    fetcher max-stay limit does not apply to them (only to Drop & Go)."""
+    """Standby fetchers ("Parent (Whole Day)") are allowed to park inside campus
+    while waiting, so the fetcher max-stay limit does not apply to them (only
+    to Fetcher and Drop & Go)."""
     # bool(user) first, so an unregistered plate (no account at all) answers
     # False without a query. Only an ACCEPTED registration counts — a pending
     # application claiming standby must not lift the limit.
@@ -2556,7 +2557,7 @@ class ExitLogView(APIView):
         if duration_minutes is not None:
             # Reached only when a duration is known — with no paired entry
             # there is no length of stay to measure. Standby fetchers are
-            # allowed to wait inside, so only Drop & Go is held to the limit.
+            # allowed to wait inside, so only Fetcher and Drop & Go are held to the limit.
             if vehicle and vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(
                     plate_number, vehicle, 'fetcher', duration_minutes, gate_id))
@@ -3290,7 +3291,7 @@ class ManualEntryView(APIView):
             # pass-closing is not what keeps visitor passes correct; the
             # interception is. Recorded, not changed: this pass comments code.
             overstay_minutes = _close_active_pass(plate_number, gate_id)
-            # Drop & Go fetchers only — standby fetchers are allowed to wait
+            # Fetcher and Drop & Go only — standby fetchers are allowed to wait
             # inside, so the max-stay rule does not apply to them.
             if vehicle.user and vehicle.user.owner_type == 'fetcher' and not _is_standby_fetcher(vehicle.user):
                 overstay_minutes = max(overstay_minutes, _check_stay_limit(

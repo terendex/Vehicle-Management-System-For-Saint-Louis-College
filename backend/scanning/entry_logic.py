@@ -421,16 +421,20 @@ def _decide_entry(vehicle) -> dict:
         denial = _day_denial(rule, user, today_weekday)     # same two day checks as students
         if denial:
             return _result('wrong_day', False, denial, rule.name if rule else None, waivable=True)
-        # Standby fetchers are allowed to park inside campus while waiting, so
-        # the drop-off/pick-up time window only restricts Drop & Go fetchers.
-        is_standby = user.registrations.filter(
-            status='accepted', registrant_type='fetcher', fetcher_type='standby',
-        ).exists()                                      # true when an approved standby registration exists
+        # Standby fetchers ("Parent (Whole Day)") may stay parked all day, so the
+        # drop-off/pick-up time window only restricts Fetcher and Drop & Go.
+        kinds = set(user.registrations.filter(
+            status='accepted', registrant_type='fetcher',
+        ).values_list('fetcher_type', flat=True))      # the approved classification(s)
+        is_standby = 'standby' in kinds
+        # Name the kind, so the guard sees why waiting is (or is not) allowed.
+        label = ('Parent (Whole Day)' if is_standby
+                 else 'Drop & Go' if kinds == {'drop_and_go'}
+                 else 'Fetcher')
         if rule and not is_standby and not _is_within_window(rule, now):
             return _result('denied', False,
-                f'Fetcher access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
+                f'{label} access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name, waivable=True)
-        label = 'Parent (Whole Day)' if is_standby else 'Fetcher'   # say which kind, so the guard sees why waiting is allowed
         return _result('authorized', True, f'{label} — {user.full_name}. Entry granted.', rule.name if rule else None)
 
     # Reached only when the account has a type this function has no rules for,

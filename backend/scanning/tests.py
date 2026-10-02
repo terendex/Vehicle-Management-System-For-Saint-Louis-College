@@ -208,6 +208,33 @@ class EntryLogicTests(TestCase):
         self.assertTrue(result['allowed'])
         self.assertIn('Parent (Whole Day)', result['message'])
 
+    def _fetcher_of_kind(self, kind, n):
+        from vehicles.models import VehicleRegistration
+        owner, vehicle = _make_owner(f'kind{n}@slc.edu.ph', f'KIND0{n}', User.OwnerType.FETCHER, schedule='ANY')
+        VehicleRegistration.objects.create(
+            user=owner, last_name='Owner', first_name='Test', email=owner.email,
+            status='accepted', registrant_type='fetcher', fetcher_type=kind)
+        return vehicle
+
+    def _check_at(self, vehicle, hour):
+        moment = timezone.make_aware(datetime(2026, 7, 6, hour, 0))   # a Monday
+        with patch('scanning.entry_logic.timezone') as mock_tz:
+            mock_tz.localdate.return_value = date(2026, 7, 6)
+            mock_tz.localtime.return_value = moment
+            return check_entry(vehicle)
+
+    def test_fetcher_and_drop_and_go_are_named_and_held_to_the_hours(self):
+        """Fetcher and Drop & Go share the seeded 06:00–19:00 rule; only the
+        name the guard reads differs."""
+        for n, (kind, label) in enumerate((('fetcher', 'Fetcher'), ('drop_and_go', 'Drop & Go')), 1):
+            vehicle = self._fetcher_of_kind(kind, n)
+            inside = self._check_at(vehicle, 10)
+            self.assertTrue(inside['allowed'], kind)
+            self.assertTrue(inside['message'].startswith(f'{label} — '), inside['message'])
+            after = self._check_at(vehicle, 21)
+            self.assertFalse(after['allowed'], kind)
+            self.assertIn(f'{label} access restricted', after['message'])
+
 
 class RuleConstraintDayCeilingTests(TestCase):
     """The rule's Allowed Days is a campus-wide ceiling: an owner needs the day
