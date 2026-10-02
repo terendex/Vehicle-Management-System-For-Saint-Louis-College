@@ -24,16 +24,36 @@ import './RuleConstraints.css'
    no help at all when you are looking down the archived list a year later.
    The window is opened once per school year, not once per term, so the label
    carries the year alone — a term in it only invited a second window that the
-   registration rules never actually recognised. */
-function periodLabelOptions(today = new Date()) {
-  // The school year rolls over in June: register in April and you are still
-  // finishing the year that began the previous June, so the label has to be
-  // that year's, not the calendar year's.
-  const startYear = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear() - 1
-  return [-1, 0, 1, 2].map((offset) => {
-    const from = startYear + offset
-    return `S.Y. ${from}–${from + 1}`
-  })
+   registration rules never actually recognised. The admin picks the month and
+   year each end of the school year falls on, and the label is built from
+   them — "S.Y. June 2026 – May 2027" — so it still always reads the same way. */
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+// A rolling handful of years around today, so last year's window can still be
+// relabelled and next year's opened early.
+function periodYearOptions(today = new Date()) {
+  const year = today.getFullYear()
+  return [-1, 0, 1, 2, 3].map((offset) => String(year + offset))
+}
+
+function formatPeriodLabel({ start_month, start_year, end_month, end_year }) {
+  return `S.Y. ${start_month} ${start_year} – ${end_month} ${end_year}`
+}
+
+/* Reads a stored label back into its four parts for the edit form. An older
+   "S.Y. 2026–2027" label only yields its years; the months are left blank for
+   the admin to pick, which rewrites it in the current format. */
+function parsePeriodLabel(label = '') {
+  const full = label.match(/^S\.Y\.\s+(\w+)\s+(\d{4})\s*[–-]\s*(\w+)\s+(\d{4})$/)
+  if (full && MONTHS.includes(full[1]) && MONTHS.includes(full[3])) {
+    return { start_month: full[1], start_year: full[2], end_month: full[3], end_year: full[4] }
+  }
+  const years = label.match(/(\d{4})\s*[–-]\s*(\d{4})/)
+  if (years) return { start_month: '', start_year: years[1], end_month: '', end_year: years[2] }
+  return { start_month: '', start_year: '', end_month: '', end_year: '' }
 }
 
 const DAY_LABELS = [
@@ -270,7 +290,10 @@ export default function RuleConstraints() {
   const [periodsLoading, setPeriodsLoading] = useState(true)
   // null when closed, { mode: 'add' } or { mode: 'edit', id } while open
   const [periodEditor,   setPeriodEditor]   = useState(null)
-  const EMPTY_PERIOD = { label: '', start_date: '', end_date: '' }
+  const EMPTY_PERIOD = {
+    start_month: '', start_year: '', end_month: '', end_year: '',
+    start_date: '', end_date: '',
+  }
   const [periodForm,     setPeriodForm]     = useState(EMPTY_PERIOD)
   const [periodErrors,   setPeriodErrors]   = useState({})
   const [savingPeriod,   setSavingPeriod]   = useState(false)
@@ -377,7 +400,7 @@ export default function RuleConstraints() {
 
   const openEditPeriod = (p) => {
     setPeriodEditor({ mode: 'edit', id: p.id })
-    setPeriodForm({ label: p.label, start_date: p.start_date, end_date: p.end_date })
+    setPeriodForm({ ...parsePeriodLabel(p.label), start_date: p.start_date, end_date: p.end_date })
     setPeriodErrors({})
   }
 
@@ -390,22 +413,36 @@ export default function RuleConstraints() {
   const handleSavePeriod = async () => {
     const editing = periodEditor?.mode === 'edit'
     const errors = {}
-    if (!periodForm.label.trim())      errors.label      = 'Select a school year.'
-    if (!periodForm.start_date)        errors.start_date = 'Start date is required.'
+    const { start_month, start_year, end_month, end_year } = periodForm
+    if (!start_month || !start_year || !end_month || !end_year) {
+      errors.label = 'Select the month and year the school year starts and ends.'
+    } else {
+      // Counted inclusively: June 2026 – May 2027 is 12 months.
+      const span = (Number(end_year) * 12 + MONTHS.indexOf(end_month))
+                 - (Number(start_year) * 12 + MONTHS.indexOf(start_month)) + 1
+      if (span < 2)       errors.label = 'The school year must end after it starts.'
+      else if (span > 12) errors.label = 'A school year cannot run longer than 12 months.'
+    }
+    if (!periodForm.start_date)      errors.start_date = 'Start date is required.'
     if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
       errors.end_date = 'End date must be on or after start date.'
     setPeriodErrors(errors)
     if (await notify.validation(errors)) return
 
+    const payload = {
+      label:      formatPeriodLabel(periodForm),
+      start_date: periodForm.start_date,
+      end_date:   periodForm.end_date,
+    }
     setSavingPeriod(true)
     try {
       if (editing) {
-        const { data } = await updateRegistrationPeriod(periodEditor.id, periodForm)
+        const { data } = await updateRegistrationPeriod(periodEditor.id, payload)
         setPeriods(prev => prev.map(p => (p.id === data.id ? data : p)))
         toast.success('Registration period updated.')
       } else {
-        const { data } = await createRegistrationPeriod(periodForm)
+        const { data } = await createRegistrationPeriod(payload)
         setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
         toast.success('Registration period created and set as active.')
       }
@@ -599,14 +636,21 @@ export default function RuleConstraints() {
               {/* Add / edit form */}
               {periodEditor && (() => {
                 const editing = periodEditor.mode === 'edit'
-                /* An older window's label is no longer in the rolling option list,
+                /* An older window's years may have left the rolling option list,
                    and a running window's start date is in the past — neither may
                    be dropped just because the form was reopened to extend the end
                    date, so both are carried into the inputs as they stand. */
-                const rolling = periodLabelOptions()
-                const labelOptions = periodForm.label && !rolling.includes(periodForm.label)
-                  ? [periodForm.label, ...rolling]
-                  : rolling
+                const rolling = periodYearOptions()
+                const yearOptions = [...new Set(
+                  [periodForm.start_year, ...rolling, periodForm.end_year].filter(Boolean),
+                )].sort()
+                const labelParts = [
+                  ['start_month', 'start_year', 'Starts'],
+                  ['end_month',   'end_year',   'Ends'],
+                ]
+                // A missing part flags only the empty boxes; a bad range flags all four.
+                const allParts = labelParts.flat().filter(k => k.includes('_')).every(k => periodForm[k])
+                const labelBad = (key) => periodErrors.label && (allParts || !periodForm[key])
                 return (
                   <div className="rc-period-form">
                     <p className="rc-period-form-title">
@@ -615,19 +659,33 @@ export default function RuleConstraints() {
                         : <><Plus size={13} /> New registration period</>}
                     </p>
                     <div className="rc-period-form-fields">
-                      <div className="rc-reg-field" style={{ flex: 2 }}>
-                        <label className="rc-field-label">Label <span style={{ color: '#D93B3B' }}>*</span></label>
-                        <select
-                          className={`rc-field-select ${periodErrors.label ? 'rc-input-error' : ''}`}
-                          value={periodForm.label}
-                          onChange={e => setPeriodForm(f => ({ ...f, label: e.target.value }))}
-                        >
-                          <option value="">Select a school year…</option>
-                          {labelOptions.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                          ))}
-                        </select>
-                      </div>
+                      {labelParts.map(([monthKey, yearKey, caption]) => (
+                        <div className="rc-reg-field" key={monthKey}>
+                          <label className="rc-field-label">
+                            School year {caption.toLowerCase()} <span style={{ color: '#D93B3B' }}>*</span>
+                          </label>
+                          <div style={{ display: 'flex', gap: '6px' }}>
+                            <select
+                              className={`rc-field-select ${labelBad(monthKey) ? 'rc-input-error' : ''}`}
+                              aria-label={`School year ${caption.toLowerCase()} — month`}
+                              value={periodForm[monthKey]}
+                              onChange={e => setPeriodForm(f => ({ ...f, [monthKey]: e.target.value }))}
+                            >
+                              <option value="">Month…</option>
+                              {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            <select
+                              className={`rc-field-select ${labelBad(yearKey) ? 'rc-input-error' : ''}`}
+                              aria-label={`School year ${caption.toLowerCase()} — year`}
+                              value={periodForm[yearKey]}
+                              onChange={e => setPeriodForm(f => ({ ...f, [yearKey]: e.target.value }))}
+                            >
+                              <option value="">Year…</option>
+                              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      ))}
                       <div className="rc-reg-field">
                         <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
                         <input
@@ -649,6 +707,11 @@ export default function RuleConstraints() {
                         />
                       </div>
                     </div>
+                    {periodForm.start_month && periodForm.start_year && periodForm.end_month && periodForm.end_year && (
+                      <p className="rc-field-hint" style={{ marginTop: '-4px', marginBottom: '12px' }}>
+                        Label: <strong>{formatPeriodLabel(periodForm)}</strong>
+                      </p>
+                    )}
                     <div className="rc-period-form-actions">
                       <button className="rc-btn rc-btn-secondary" onClick={closePeriodEditor}>Cancel</button>
                       <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
