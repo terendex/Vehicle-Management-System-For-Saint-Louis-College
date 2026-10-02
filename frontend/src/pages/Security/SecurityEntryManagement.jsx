@@ -872,6 +872,53 @@ function OwnerLookupModal({ data, onPick, onClose }) {
 }
 
 
+// ─── Record Slip Picker ────────────────────────────────────────────────────────
+// The toolbar's way to Record Visitor Slip: today's visitors still inside, the
+// ones let in on a blank slip first. Picking one opens the record form — the
+// same one the Active Visitors row and the slip dialog open.
+function RecordSlipPickerModal({ passes, onPick, onClose }) {
+  const sorted = [...passes].sort((a, b) => (!!a.visitor_name - !!b.visitor_name)
+    || new Date(a.entered_at) - new Date(b.entered_at))
+  return (
+    <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="em-modal">
+        <div className="em-modal-head">
+          <span className="em-modal-title"><ClipboardList size={17} /> Record Visitor Slip</span>
+          <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
+        </div>
+        <div className="em-modal-body">
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
+            Pick the visitor whose slip you are holding — match the plate printed on it.
+          </p>
+          <div className="em-lookup-list">
+            {sorted.map(p => {
+              const t = passTimeInfo(p)
+              return (
+                <button type="button" key={p.id} className="em-lookup-row" onClick={() => onPick(p)}>
+                  <div className="em-lookup-main">
+                    <span className="em-lookup-plate">{formatPlateNumber(p.plate_number)}</span>
+                    {p.visitor_name
+                      ? <span className="em-class-tag cls-visitor">Recorded</span>
+                      : <span className="em-class-tag em-tag-unrecorded"><AlertTriangle size={9} style={{ verticalAlign: -1 }} /> Not recorded</span>}
+                  </div>
+                  <div className="em-lookup-sub">
+                    {p.visitor_name ? `${p.visitor_name} · ` : ''}
+                    Entered {p.entered_at ? fmtClock(p.entered_at) : '—'} · {t.label}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <div className="em-modal-foot">
+          <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 // ─── Unrecognized Vehicle Modal ────────────────────────────────────────────────
 // A vehicle with no plate and no conduction sticker still drives onto campus.
 // Before this it left a bare "unreadable" row with nothing on it — no
@@ -1565,6 +1612,7 @@ export default function SecurityEntryManagement() {
   const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
   const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
   const [recordingPass, setRecordingPass] = useState(null)  // the active pass whose slip is being recorded
+  const [pickingSlip, setPickingSlip]     = useState(false) // the toolbar's Record Slip list is open
   const [overstaying, setOverstaying] = useState([])    // still inside, past their rule
   const [ackBusy, setAckBusy]         = useState(null)  // plate currently being acknowledged
   const overstayToasted = useRef(new Set()) // pass ids already alerted for overstay
@@ -1813,6 +1861,17 @@ export default function SecurityEntryManagement() {
     const t = setInterval(() => { refreshPasses(); refreshOverstaying() }, 30000)
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Walk-ins inside whose slip has not been typed in yet.
+  const unrecordedCount = passes.filter(p => !p.visitor_name).length
+  const openRecordSlip = async () => {
+    if (passes.length === 0) {
+      await notify.info('No visitors are inside right now. A slip is recorded for a visitor let in with Allow Entry as Visitor, while they are still inside.',
+        { title: 'No visitor slips to record' })
+      return
+    }
+    setPickingSlip(true)
+  }
 
   const handleExtendPass = (p) => {
     extendVisitorPass(p.id, 30)
@@ -2317,6 +2376,17 @@ export default function SecurityEntryManagement() {
                   >
                     <FileQuestion size={15} /> No Plate?
                   </button>
+                  {/* Copy in what a walk-in wrote on their slip. Always here, so
+                      the guard is not hunting for it when the slip comes back. */}
+                  <button
+                    type="button"
+                    className="em-btn em-btn-secondary"
+                    onClick={openRecordSlip}
+                    title="Record Visitor Slip — type in what a visitor wrote on their slip"
+                  >
+                    <ClipboardList size={15} /> Record Slip
+                    {unrecordedCount > 0 && <span className="em-lookup-badge">{unrecordedCount}</span>}
+                  </button>
                 </div>
               </form>
               <p className="em-lookup-hint">
@@ -2697,6 +2767,14 @@ export default function SecurityEntryManagement() {
             onDeny={refreshAll}
             onDismiss={() => removeFromQueue(scanQueue[0].id)}
             queued={scanQueue.length - 1}
+          />
+        )}
+
+        {pickingSlip && (
+          <RecordSlipPickerModal
+            passes={passes}
+            onPick={(p) => { setPickingSlip(false); setRecordingPass(p) }}
+            onClose={() => setPickingSlip(false)}
           />
         )}
 
