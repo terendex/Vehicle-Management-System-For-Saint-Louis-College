@@ -181,6 +181,100 @@ def check_scheduled_dir(folder: str) -> str:
     return path
 
 
+# ── Browsing for a folder ──
+# The "Save to folder" setting names a folder on the SERVER, which a browser's
+# own file picker cannot show (and would never hand back a full path anyway).
+# So the settings page asks the server, one level at a time. Folder names
+# only: nothing here opens, reads or lists a file.
+
+BROWSE_LIMIT = 1000                  # a folder with more subfolders than this is shown cut short
+
+# GetDriveTypeW codes worth naming; anything else is just "Drive".
+_DRIVE_KINDS = {2: 'USB / removable drive', 3: 'Local disk', 4: 'Network drive',
+                5: 'CD / DVD drive', 6: 'RAM disk'}
+
+
+def _windows_drives() -> list[dict]:
+    """The drive letters Windows has mounted, without touching any of them.
+
+    GetLogicalDrives reads a bitmask, so a disconnected network drive or an
+    empty card reader cannot stall the page the way probing each letter would.
+    """
+    import ctypes
+    import string
+    kernel32 = ctypes.windll.kernel32
+    mask = kernel32.GetLogicalDrives()
+    drives = []
+    for i, letter in enumerate(string.ascii_uppercase):
+        if mask & (1 << i):
+            root = f'{letter}:\\'
+            kind = _DRIVE_KINDS.get(kernel32.GetDriveTypeW(root), 'Drive')
+            drives.append({'name': f'{letter}:', 'path': root, 'kind': kind})
+    return drives
+
+
+def _is_hidden(entry) -> bool:
+    """Dot-folders, and Windows hidden/system ones ($Recycle.Bin, System Volume
+    Information, the old "Documents and Settings" junction) — never a sensible
+    place to keep backups, and clutter in a picker."""
+    if entry.name.startswith(('.', '$')):
+        return True
+    attrs = getattr(entry.stat(follow_symlinks=False), 'st_file_attributes', 0)
+    return bool(attrs & 0x6)         # FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
+
+
+def browse_folders(path: str | None = None) -> dict:
+    """One level of the server's folders, for the backup-folder picker.
+
+    With no path: the starting points (the drives on Windows, / elsewhere).
+    With a path: its subfolders, and the folder above it — None once at the
+    top of a drive, which the page treats as "back to the drive list".
+    Raises BackupFolderError with a sentence fit to show an admin.
+    """
+    path = (path or '').strip()
+    if not path:
+        roots = (_windows_drives() if os.name == 'nt'
+                 else [{'name': '/', 'path': '/', 'kind': 'Server root'}])
+        return {'path': '', 'parent': None, 'folders': roots, 'truncated': False}
+
+    if os.name == 'nt' and re.fullmatch(r'[A-Za-z]:', path):
+        path += '\\'                  # "D:" alone means "current folder on D", not its top
+    if not os.path.isabs(path):
+        raise BackupFolderError(f'"{path}" is not a full folder path on this server.')
+    path = os.path.normpath(path)
+    if not os.path.isdir(path):
+        raise BackupFolderError(
+            f'The folder "{path}" does not exist on this server. '
+            'If it is on a USB or external drive, check that it is plugged in.')
+
+    folders = []
+    truncated = False
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                try:
+                    if not entry.is_dir() or _is_hidden(entry):
+                        continue
+                except OSError:
+                    continue          # unreadable entry: leave it out rather than fail the listing
+                if len(folders) >= BROWSE_LIMIT:
+                    truncated = True
+                    break
+                folders.append({'name': entry.name, 'path': entry.path})
+    except OSError as exc:
+        raise BackupFolderError(
+            f'The server cannot open "{path}" ({exc.strerror or exc}).') from exc
+
+    folders.sort(key=lambda f: f['name'].lower())
+    parent = os.path.dirname(path)
+    return {
+        'path': path,
+        'parent': None if parent == path else parent,   # at a drive's top, dirname is the drive itself
+        'folders': folders,
+        'truncated': truncated,
+    }
+
+
 def _custom_scheduled_dir() -> str | None:
     """The configured folder when it is a usable folder other than the backups
     directory; None otherwise. Never creates anything — listing must not."""

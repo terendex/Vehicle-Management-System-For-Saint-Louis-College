@@ -141,7 +141,11 @@
   border: 1px solid #D3E1EC;
   border-radius: 16px;
   box-shadow: 0 2px 12px rgba(3, 57, 108, 0.06);
-  overflow: hidden;
+  /* clip, not hidden: hidden would make the card a scroll container and pin
+     the editor's sticky toolbar to it rather than to the window */
+  overflow: clip;
+  --policy-pad: 40px;
+  --pe-sticky-top: 115px;   /* under the sticky header (64px) and tabs bar */
 }
 
 /* ── Content inside card ── */
@@ -169,7 +173,22 @@
   color: #0F7A5A;
 }
 
-.policy-doc-title {
+/* ── The policy document ──────────────────────────────────────────────
+   Plain HTML from the rich-text editor (PolicyEditor.jsx). The same rules
+   style the public page and the editor's writing surface, so the CDSO edits
+   exactly what readers see. Inline styles the toolbar sets (alignment, colour,
+   size) win over these defaults. */
+.policy-doc {
+  color: #2E4C63;
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+.policy-doc > :first-child {
+  margin-top: 0;
+}
+
+.policy-doc h1 {
   font-size: 22px;
   font-weight: 800;
   color: #0B2340;
@@ -178,322 +197,184 @@
   letter-spacing: -0.2px;
 }
 
-.policy-effective {
+/* The line under the title reads as its subtitle */
+.policy-doc h1 + p {
   font-size: 12.5px;
   color: #64839C;
   font-style: italic;
   margin: 0 0 28px;
+  text-align: left;   /* a wrapped subtitle justified opens wide gaps */
 }
 
-/* ── Sections ── */
-.policy-section {
-  margin-bottom: 28px;
-  padding-bottom: 28px;
-  border-bottom: 1px solid #EAF2F8;
-}
-
-.policy-section:last-of-type {
-  border-bottom: none;
-  margin-bottom: 20px;
-}
-
-.policy-section h3 {
+/* A Heading opens a new section: a rule above, the navy bar before it */
+.policy-doc h2 {
   font-size: 15px;
   font-weight: 700;
   color: #03396C;
-  margin: 0 0 12px;
-  padding-bottom: 8px;
+  line-height: 1.4;
+  margin: 28px 0 12px;
+  padding: 28px 0 8px;
+  border-top: 1px solid #EAF2F8;
   border-bottom: 2px solid #EAF2F8;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.policy-section h3::before {
+.policy-doc h2::before {
   content: '';
   display: inline-block;
   width: 4px;
   height: 16px;
+  margin-right: 8px;
   background: #03396C;
   border-radius: 2px;
-  flex-shrink: 0;
+  vertical-align: -2px;
 }
 
-.policy-section p {
+.policy-doc > h2:first-child,
+.policy-doc h1 + p + h2 {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.policy-doc h3 {
   font-size: 13.5px;
-  color: #2E4C63;
-  line-height: 1.75;
-  margin: 0 0 12px;
-}
-
-.policy-section p:last-child {
-  margin-bottom: 0;
-}
-
-.policy-section ul {
-  margin: 10px 0 0;
-  padding-left: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.policy-section ul li {
-  font-size: 13.5px;
-  color: #2E4C63;
-  line-height: 1.7;
-}
-
-/* ── Sub-sections ── */
-.policy-sub-section {
-  margin: 16px 0 0;
-  padding: 16px 18px;
-  background: #F7FAFC;
-  border: 1px solid #D3E1EC;
-  border-left: 3px solid #03396C;
-  border-radius: 0 10px 10px 0;
-}
-
-.policy-sub-section h4 {
-  font-size: 13px;
   font-weight: 700;
   color: #03396C;
-  margin: 0 0 8px;
+  line-height: 1.5;
+  margin: 20px 0 8px;
 }
 
-.policy-sub-section p {
-  font-size: 13px;
-  color: #4A6B85;
-  line-height: 1.7;
-  margin: 0 0 10px;
+/* Body text is justified, like the printed policy. Hyphenation narrows the
+   gaps a justified line opens up, which matters most at phone width. */
+.policy-doc p {
+  margin: 0 0 12px;
+  text-align: justify;
+  hyphens: auto;
 }
 
-.policy-sub-section p:last-child {
-  margin-bottom: 0;
+/* The global reset strips list markers; put them back. Lettered and roman
+   numbering comes from an inline list-style-type the editor writes. */
+.policy-doc ul,
+.policy-doc ol {
+  margin: 10px 0 14px;
+  padding-left: 24px;
 }
 
-.policy-sub-section ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  gap: 6px;
+.policy-doc ul {
+  list-style-type: disc;
 }
 
-.policy-sub-section ul li {
-  font-size: 13px;
-  color: #4A6B85;
+.policy-doc ul ul {
+  list-style-type: circle;
 }
 
-/* ── Email link ── */
-.policy-email-link {
+.policy-doc ol {
+  list-style-type: decimal;
+}
+
+.policy-doc li {
+  margin-bottom: 6px;
+}
+
+.policy-doc li::marker {
+  color: #03396C;
+  font-weight: 700;
+}
+
+.policy-doc li p {
+  margin: 0;
+}
+
+.policy-doc a {
   color: #03396C;
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
-/* ── Consent Box ── */
-.policy-consent-box {
+.policy-doc mark {
+  color: inherit;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.policy-doc hr {
+  border: none;
+  border-top: 1px solid #D3E1EC;
+  margin: 24px 0;
+}
+
+/* Highlighted box — the acknowledgement at the end of each policy */
+.policy-doc blockquote {
   background: linear-gradient(135deg, #EAF2F8, #DCE9F2);
   border: 1px solid #BDD4E5;
   border-radius: 12px;
   padding: 22px 24px;
-  margin-top: 24px;
+  margin: 24px 0;
 }
 
-.policy-consent-box h3 {
+.policy-doc blockquote h2,
+.policy-doc blockquote h3 {
   font-size: 14px;
-  font-weight: 700;
-  color: #03396C;
   margin: 0 0 12px;
-  border: none;
   padding: 0;
+  border: none;
 }
 
-.policy-consent-box h3::before {
+.policy-doc blockquote h2::before {
   display: none;
 }
 
-.policy-consent-box p {
+.policy-doc blockquote p,
+.policy-doc blockquote li {
   font-size: 13px;
-  color: #2E4C63;
-  line-height: 1.7;
-  margin: 0 0 10px;
 }
 
-.policy-consent-box ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.policy-doc blockquote > :last-child {
+  margin-bottom: 0;
 }
 
-.policy-consent-box ul li {
-  font-size: 13px;
-  color: #2E4C63;
-  line-height: 1.7;
-}
-
-/* ── Terms-specific styles ── */
-.policy-agreement-intro {
-  background: #EEF4F9;
-  border: 1px solid #BDD4E5;
-  border-left: 4px solid #03396C;
-  border-radius: 0 8px 8px 0;
-  padding: 12px 16px;
-  font-size: 13.5px;
-  color: #03396C;
-  line-height: 1.6;
-  margin-bottom: 16px !important;
-}
-
-.policy-terms-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.policy-term-item {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.policy-term-bullet {
-  font-size: 18px;
-  color: #03396C;
-  line-height: 1.4;
-  flex-shrink: 0;
-  margin-top: -1px;
-}
-
-.policy-term-item p {
-  margin: 0 !important;
-  font-size: 13.5px;
-  color: #2E4C63;
-  line-height: 1.7;
-}
-
-.policy-subheading {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: #03396C;
-  margin: 4px 0 12px !important;
-}
-
-.policy-lettered-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-left: 4px;
-}
-
-.policy-lettered-item {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-
-.policy-letter {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #03396C;
-  min-width: 20px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.policy-lettered-item p {
-  margin: 0 !important;
-  font-size: 13.5px;
-  color: #2E4C63;
-  line-height: 1.7;
-}
-
-/* ── Sanctions ── */
-.policy-sanctions {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+/* Tables — the sanctions grid, or any the CDSO inserts */
+.policy-doc table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
   border: 1px solid #D3E1EC;
   border-radius: 12px;
   overflow: hidden;
-  margin-top: 12px;
+  margin: 12px 0 16px;
 }
 
-.policy-sanction-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 16px 20px;
+.policy-doc td,
+.policy-doc th {
+  padding: 14px 18px;
+  vertical-align: top;
   border-bottom: 1px solid #D3E1EC;
-}
-
-.policy-sanction-row:last-child {
-  border-bottom: none;
-}
-
-.policy-sanction-row.first {
-  background: #FDF0BE;
-}
-
-.policy-sanction-row.second {
-  background: #FDF0BE;
-}
-
-.policy-sanction-row.third {
-  background: #FCEDED;
-}
-
-.policy-sanction-label {
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  min-width: 120px;
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-
-.policy-sanction-row.first .policy-sanction-label {
-  color: #7A5C00;
-}
-
-.policy-sanction-row.second .policy-sanction-label {
-  color: #7A5C00;
-}
-
-.policy-sanction-row.third .policy-sanction-label {
-  color: #9B1C1C;
-}
-
-.policy-sanction-desc {
-  font-size: 13.5px;
+  border-right: 1px solid #D3E1EC;
   color: #0B2340;
   line-height: 1.6;
 }
 
-/* ── Rendered policy text (PolicyMarkdown.jsx) ── */
-/* The global reset strips list markers, and the lists above are flex columns
-   (for their gap), where an item is no longer a list-item. Put the bullets
-   back, and leave room before whatever follows a list. */
-.policy-content ul {
-  list-style: disc;
+.policy-doc tr:last-child > td,
+.policy-doc tr:last-child > th {
+  border-bottom: none;
 }
 
-.policy-content ul li {
-  display: list-item;
+.policy-doc td:last-child,
+.policy-doc th:last-child {
+  border-right: none;
 }
 
-.policy-content ul li::marker {
-  color: #03396C;
+.policy-doc th {
+  background: #EAF2F8;
+  font-weight: 700;
+  text-align: left;
 }
 
-.policy-content ul:not(:last-child),
-.policy-content .policy-lettered-list:not(:last-child),
-.policy-content .policy-sanctions:not(:last-child) {
-  margin-bottom: 14px;
+.policy-doc td p,
+.policy-doc th p {
+  margin: 0;
+  text-align: left;
 }
 
 /* ── Card head: tab badge, last-updated line, and the CDSO's Edit button ── */
@@ -503,15 +384,14 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px 16px;
-  padding: 28px 40px 0;
+  padding: 28px var(--policy-pad) 0;
 }
 
 .policy-card-head .policy-section-badge {
   margin-bottom: 0;
 }
 
-.policy-card-head + .policy-content,
-.policy-card-head + .policy-editor {
+.policy-card-head + .policy-content {
   padding-top: 18px;
 }
 
@@ -580,99 +460,263 @@
 
 /* ── Editor ── */
 .policy-editor {
-  padding: 32px 40px 32px;
+  padding: 18px 0 28px;
 }
 
-.policy-editor-modes {
+.pe-toolbar {
+  position: sticky;
+  top: var(--pe-sticky-top);
+  z-index: 50;
+  background: #F7FAFC;
+  border-top: 1px solid #D3E1EC;
+  border-bottom: 1px solid #D3E1EC;
+  box-shadow: 0 2px 6px rgba(3, 57, 108, 0.06);
+}
+
+.pe-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 7px var(--policy-pad);
+}
+
+.pe-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  border-right: 1px solid #D3E1EC;
+}
+
+.pe-group:last-child {
+  border-right: none;
+  padding-right: 0;
+}
+
+.pe-btn {
+  position: relative;
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  margin-bottom: 12px;
-  background: #EEF4F9;
-  border-radius: 10px;
-}
-
-.policy-editor-modes button {
-  padding: 6px 16px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   background: transparent;
   border: none;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  color: #4A6680;
+  border-radius: 6px;
+  color: #2E4C63;
   cursor: pointer;
 }
 
-.policy-editor-modes button.active {
-  background: #FFFFFF;
+.pe-btn:hover:not(:disabled) {
+  background: #E3ECF4;
+}
+
+.pe-btn.is-active {
+  background: #D6E6F5;
   color: #03396C;
-  box-shadow: 0 1px 3px rgba(3, 57, 108, 0.12);
 }
 
-.policy-editor-input {
-  display: block;
-  width: 100%;
-  min-height: 60vh;
-  box-sizing: border-box;
-  padding: 14px 16px;
-  border: 1px solid #BDD4E5;
-  border-radius: 10px;
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+.pe-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pe-select {
+  height: 30px;
+  max-width: 150px;
+  padding: 0 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: inherit;
   font-size: 13px;
-  line-height: 1.6;
-  color: #0B2340;
-  resize: vertical;
+  color: #2E4C63;
+  cursor: pointer;
 }
 
-.policy-editor-input:focus {
+.pe-select:hover,
+.pe-select:focus {
+  background: #E3ECF4;
+  outline: none;
+}
+
+.pe-select-font {
+  max-width: 130px;
+}
+
+.pe-select-narrow {
+  max-width: 108px;
+}
+
+.pe-size-input {
+  width: 38px;
+  height: 26px;
+  box-sizing: border-box;
+  border: 1px solid #BDD4E5;
+  border-radius: 5px;
+  background: #FFFFFF;
+  font-family: inherit;
+  font-size: 13px;
+  text-align: center;
+  color: #0B2340;
+}
+
+.pe-color {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pe-color input[type='color'] {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pe-color-bar {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 1px;
+}
+
+.pe-color-clear {
+  margin-left: -2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #D3E1EC;
+  color: #2E4C63;
+  font-size: 12px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+/* The link field: its own row under the buttons */
+.pe-linkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px var(--policy-pad);
+  border-top: 1px solid #D3E1EC;
+  color: #4A6680;
+}
+
+.pe-linkbar-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid #BDD4E5;
+  border-radius: 7px;
+  background: #FFFFFF;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.pe-linkbar-input:focus {
   outline: none;
   border-color: #03396C;
   box-shadow: 0 0 0 3px rgba(3, 57, 108, 0.12);
 }
 
-.policy-editor-preview {
-  min-height: 60vh;
-  padding: 24px 28px;
-  border: 1px dashed #BDD4E5;
-  border-radius: 10px;
-}
-
-.policy-editor-help {
-  margin-top: 10px;
-  font-size: 12.5px;
-  color: #4A6680;
-}
-
-.policy-editor-help summary {
-  cursor: pointer;
+.pe-linkbar-btn {
+  height: 32px;
+  padding: 0 12px;
+  background: #FFFFFF;
+  border: 1px solid #BDD4E5;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 13px;
   font-weight: 600;
   color: #03396C;
+  cursor: pointer;
 }
 
-.policy-editor-help dl {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 6px 20px;
-  margin: 10px 0 0;
+.pe-linkbar-btn.primary {
+  background: #03396C;
+  border-color: #03396C;
+  color: #FFFFFF;
 }
 
-.policy-editor-help dl div {
+.pe-hint {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 10px var(--policy-pad) 0;
+  font-size: 12px;
+  color: #64839C;
 }
 
-.policy-editor-help dt code {
+.pe-hint code {
   padding: 1px 6px;
   background: #EEF4F9;
   border-radius: 4px;
-  font-size: 12px;
-  white-space: pre;
+  font-size: 11.5px;
 }
 
-.policy-editor-help dd {
+/* The writing surface: the page's own document styles, plus editing cues */
+.pe-surface {
+  min-height: 50vh;
+  outline: none;
+}
+
+.policy-card-head + .policy-editor .pe-surface {
+  padding-top: 20px;
+}
+
+.pe-surface .tableWrapper {
+  overflow-x: auto;
+  margin: 12px 0 16px;
+}
+
+.pe-surface .tableWrapper table {
   margin: 0;
+}
+
+.pe-surface td,
+.pe-surface th {
+  position: relative;
+}
+
+.pe-surface .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(3, 57, 108, 0.12);
+  pointer-events: none;
+}
+
+.pe-surface .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: 0;
+  width: 4px;
+  background: #03396C;
+  pointer-events: none;
+}
+
+.pe-surface.resize-cursor {
+  cursor: col-resize;
+}
+
+.pe-surface .ProseMirror-selectednode {
+  outline: 2px solid #8DB6DA;
+  outline-offset: 2px;
 }
 
 .policy-editor-actions {
@@ -681,6 +725,7 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 18px;
+  padding: 0 var(--policy-pad);
 }
 
 .policy-editor-spacer {
@@ -755,15 +800,15 @@
     padding: 24px 24px 28px;
   }
 
+  .policy-card {
+    --policy-pad: 24px;
+  }
+
   .policy-card-head {
-    padding: 22px 24px 0;
+    padding-top: 22px;
   }
 
-  .policy-editor {
-    padding: 24px 24px 28px;
-  }
-
-  .policy-doc-title {
+  .policy-doc h1 {
     font-size: 19px;
   }
 }
@@ -799,30 +844,32 @@
     padding: 18px 16px 22px;
   }
 
+  .policy-card {
+    --policy-pad: 16px;
+    --pe-sticky-top: 101px;   /* the header is 56px here */
+  }
+
   .policy-card-head {
-    padding: 18px 16px 0;
+    padding-top: 18px;
   }
 
-  .policy-editor {
-    padding: 18px 16px 22px;
-  }
-
-  .policy-editor-preview {
-    padding: 16px;
-  }
-
-  .policy-doc-title {
+  .policy-doc h1 {
     font-size: 17px;
   }
 
-  .policy-sanction-row {
-    flex-direction: column;
-    gap: 4px;
-    padding: 14px 16px;
+  .policy-doc td,
+  .policy-doc th {
+    padding: 12px;
   }
 
-  .policy-sanction-label {
-    min-width: auto;
+  .pe-toolbar-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .pe-group {
+    flex-shrink: 0;
   }
 
   .policy-footer {

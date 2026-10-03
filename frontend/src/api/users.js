@@ -93,6 +93,13 @@ export const usersApi = {
     return data
   },
 
+  /** One level of the SERVER's folders, for the scheduled-backup folder
+   *  picker (admin only). No path → the drive list. Folder names only. */
+  browseServerFolders: async (path = '') => {
+    const { data } = await api.get('/accounts/system/folders/', { params: path ? { path } : {} })
+    return data
+  },
+
   /** Download one backup already saved on the server (admin only). */
   downloadSavedBackup: async (name) => {
     const { data } = await api.get(`/accounts/system/backups/${encodeURIComponent(name)}/`, {

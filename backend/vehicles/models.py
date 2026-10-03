@@ -1600,7 +1600,8 @@ class PolicyDocument(models.Model):
     and "Restore default" simply deletes the row. That keeps the original text
     in one place and lets the page render even when this table is unreachable.
 
-    `content` is the small Markdown dialect PolicyMarkdown.jsx renders.
+    `content` is HTML from the rich-text editor, cleaned to an allowlist on
+    save (policy_html.py) and again by the page before it renders.
     """
 
     class Key(models.TextChoices):

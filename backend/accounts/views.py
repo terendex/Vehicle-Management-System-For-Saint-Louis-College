@@ -1040,6 +1040,25 @@ class SystemBackupListView(APIView):
         return status
 
 
+class SystemFolderBrowseView(APIView):
+    """The server's folders, one level at a time, for the "Save to folder"
+    picker — admin (CDSO) only.
+
+    ?path= the folder to open; omit it for the drive list. Folder names only,
+    never files or their contents, so admin without a step-up, like the backup
+    list beside it. Picking a folder changes nothing: the Save that follows
+    still runs check_scheduled_dir's write test.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from .backup_utils import BackupFolderError, browse_folders
+        try:
+            return Response(browse_folders(request.query_params.get('path', '')))
+        except BackupFolderError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class SystemBackupFileView(APIView):
     """Download or delete one saved backup file — admin (CDSO) only.
 

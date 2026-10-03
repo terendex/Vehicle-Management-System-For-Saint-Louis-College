@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw, UserCog, SquareParking, FileSignature } from 'lucide-react'
+import { Settings2, Trash2, Clock, Save, Loader2, ShieldAlert, Megaphone, Send, X, AlertTriangle, CheckCircle2, DoorOpen, Plus, Database, Download, Upload, Receipt, CalendarClock, Timer, History, RotateCcw, RefreshCw, UserCog, SquareParking, FileSignature, FolderOpen } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import { getSystemSettings, updateSystemSettings, getNotices, createNotice, deactivateNotice } from '../../api/vehicles'
@@ -9,6 +9,7 @@ import { usersApi } from '../../api/users'
 import useTwofaStore from '../../stores/twofaStore'
 import useAuthStore from '../../stores/authStore'
 import { pickSaveLocation, saveBlobTo, discardSaveLocation } from '../../utils/saveFile'
+import ServerFolderPicker from './ServerFolderPicker'
 import './SystemSettings.css'
 
 // Expiration cannot be switched off — only shortened or extended. The period
@@ -239,6 +240,7 @@ export default function SystemSettings() {
   // Pending confirmation — { label, file } for an upload, { label, name } for a
   // backup already on the server. One modal covers both.
   const [restoreTarget, setRestoreTarget] = useState(null)
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)   // the server-side "Browse" for the backup folder
   const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
   const [backups, setBackups]                 = useState([])
   const [backupsLoading, setBackupsLoading]   = useState(true)
@@ -1552,6 +1554,13 @@ export default function SystemSettings() {
                             onChange={handleChange}
                             className="ss-input ss-input--text ss-input--path"
                           />
+                          <button
+                            type="button"
+                            className="ss-browse-btn"
+                            onClick={() => setFolderPickerOpen(true)}
+                          >
+                            <FolderOpen size={15} /> Browse&hellip;
+                          </button>
                         </div>
                       </div>
 
@@ -1893,6 +1902,18 @@ export default function SystemSettings() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Browse the server for the scheduled-backup folder ─── */}
+      {folderPickerOpen && (
+        <ServerFolderPicker
+          initialPath={form.scheduled_backup_folder}
+          onClose={() => setFolderPickerOpen(false)}
+          onPick={(path) => {
+            setForm((prev) => ({ ...prev, scheduled_backup_folder: path }))
+            setFolderPickerOpen(false)
+          }}
+        />
       )}
 
       {/* ── Confirm Delete Saved Backup Modal ─── */}

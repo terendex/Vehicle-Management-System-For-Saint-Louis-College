@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import DOMPurify from 'dompurify'
 import { ArrowLeft, Shield, FileText, Pencil, Save, RotateCcw } from 'lucide-react'
 import { registrationApi } from '../../api/registration'
 import { policiesApi } from '../../api/policies'
 import useAuthStore from '../../stores/authStore'
 import notify from '../../components/Feedback/notify'
-import PolicyMarkdown from './PolicyMarkdown'
-import { POLICY_DEFAULTS, MARKDOWN_HELP } from './policyDefaults'
+import { POLICY_DEFAULTS } from './policyDefaults'
 import './PolicyPage.css'
 import BrandLogos from '../../components/BrandLogos'
 
@@ -14,6 +14,26 @@ const TABS = [
   { id: 'privacy', label: 'Privacy Policy', icon: Shield },
   { id: 'terms',   label: 'Vehicle Pass Terms', icon: FileText },
 ]
+
+// The editor is loaded only when the CDSO presses Edit, so the public page
+// does not download it.
+const PolicyEditor = lazy(() => import('./PolicyEditor'))
+
+// Policies are stored as HTML. A row saved by the first, Markdown version of
+// this page would be plain text; show it as paragraphs rather than one blob.
+const escapeHtml = (text) => text.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)
+const asHtml = (content) => (content == null || content.trimStart().startsWith('<')
+  ? content
+  : content.split(/\n\s*\n/).map(block => `<p>${escapeHtml(block.trim())}</p>`).join(''))
+
+// Exactly what the editor produces, as the server's allowlist keeps it
+// (backend vehicles/policy_html.py) — anything else is dropped here too.
+const PURIFY_CONFIG = {
+  ALLOWED_TAGS: ['p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'span', 'mark',
+    'a', 'ul', 'ol', 'li', 'blockquote', 'table', 'colgroup', 'col', 'thead', 'tbody', 'tr', 'td', 'th'],
+  ALLOWED_ATTR: ['style', 'href', 'target', 'rel', 'type', 'start', 'colspan', 'rowspan', 'colwidth',
+    'data-color', 'data-background-color'],
+}
 
 const formatDate = (iso) => new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
@@ -37,8 +57,10 @@ export default function PolicyPage() {
   const [loaded, setLoaded] = useState(false)
 
   const [editing, setEditing] = useState(false)
-  const [preview, setPreview] = useState(false)
   const [draft, setDraft] = useState('')
+  // The policy as the editor first normalised it; edits are measured against
+  // this, not the stored HTML, which the editor may re-serialise slightly.
+  const [baseline, setBaseline] = useState(null)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -61,8 +83,15 @@ export default function PolicyPage() {
   }
 
   const stored = policies[activeTab]
-  const source = stored?.content ?? POLICY_DEFAULTS[activeTab]
-  const dirty  = editing && draft !== source
+  const source = asHtml(stored?.content) ?? POLICY_DEFAULTS[activeTab]
+  const dirty  = editing && baseline !== null && draft !== baseline
+
+  // The policy as the public reads it: fees filled in, then cleaned again
+  // here (the server already cleaned it on save) before it reaches the page.
+  const rendered = DOMPurify.sanitize(
+    source.replace(/\{(\w+)\}/g, (whole, name) => (name in feeValues ? feeValues[name] : whole)),
+    PURIFY_CONFIG,
+  )
 
   // Leaving the page with unsaved wording asks the browser to confirm.
   useEffect(() => {
@@ -81,8 +110,13 @@ export default function PolicyPage() {
 
   const startEditing = () => {
     setDraft(source)
-    setPreview(false)
+    setBaseline(null)
     setEditing(true)
+  }
+
+  const editorReady = (html) => {
+    setBaseline(html)
+    setDraft(html)
   }
 
   const cancelEditing = async () => {
@@ -101,7 +135,7 @@ export default function PolicyPage() {
   }
 
   const save = async () => {
-    if (!draft.trim()) {
+    if (!draft.replace(/<[^>]*>/g, '').trim()) {
       notify.error('The policy cannot be empty.', { title: 'Policy not saved' })
       return
     }
@@ -220,38 +254,9 @@ export default function PolicyPage() {
 
           {editing ? (
             <div className="policy-editor">
-              <div className="policy-editor-modes" role="tablist">
-                <button role="tab" aria-selected={!preview} className={!preview ? 'active' : ''} onClick={() => setPreview(false)}>
-                  Write
-                </button>
-                <button role="tab" aria-selected={preview} className={preview ? 'active' : ''} onClick={() => setPreview(true)}>
-                  Preview
-                </button>
-              </div>
-
-              {preview ? (
-                <div className="policy-content policy-editor-preview">
-                  <PolicyMarkdown source={draft} values={feeValues} />
-                </div>
-              ) : (
-                <>
-                  <textarea
-                    className="policy-editor-input"
-                    value={draft}
-                    onChange={e => setDraft(e.target.value)}
-                    spellCheck
-                    aria-label={`${TABS.find(t => t.id === activeTab).label} text`}
-                  />
-                  <details className="policy-editor-help">
-                    <summary>Formatting</summary>
-                    <dl>
-                      {MARKDOWN_HELP.map(([code, meaning]) => (
-                        <div key={code}><dt><code>{code}</code></dt><dd>{meaning}</dd></div>
-                      ))}
-                    </dl>
-                  </details>
-                </>
-              )}
+              <Suspense fallback={<p className="policy-updated">Loading editor…</p>}>
+                <PolicyEditor initialHtml={source} onChange={setDraft} onReady={editorReady} />
+              </Suspense>
 
               <div className="policy-editor-actions">
                 {stored?.content != null && (
@@ -271,9 +276,7 @@ export default function PolicyPage() {
               </div>
             </div>
           ) : (
-            <div className="policy-content">
-              <PolicyMarkdown source={source} values={feeValues} />
-            </div>
+            <div className="policy-content policy-doc" dangerouslySetInnerHTML={{ __html: rendered }} />
           )}
         </div>
 

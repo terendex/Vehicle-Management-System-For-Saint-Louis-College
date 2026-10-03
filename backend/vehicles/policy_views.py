@@ -12,11 +12,12 @@ from accounts.models import AuditLog
 from accounts.twofa_api import HasRecentTwoFactor
 
 from .models import PolicyDocument
+from .policy_html import clean_policy_html, visible_text
 from .views import IsAdminOrCdso
 
-# Generous for a policy (the full privacy policy is about 14,000 characters),
-# small enough that a pasted mistake cannot bloat every page load.
-MAX_POLICY_LENGTH = 100_000
+# Generous for a policy (the full privacy policy is about 15,000 characters of
+# HTML), small enough that a pasted mistake cannot bloat every page load.
+MAX_POLICY_LENGTH = 200_000
 
 
 def _serialize(doc):
@@ -53,11 +54,14 @@ class PolicyDetailView(APIView):
         if key not in PolicyDocument.Key.values:
             return Response({'detail': 'Unknown policy.'}, status=status.HTTP_404_NOT_FOUND)
         content = request.data.get('content')
-        if not isinstance(content, str) or not content.strip():
+        if not isinstance(content, str):
             return Response({'content': 'The policy cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
         if len(content) > MAX_POLICY_LENGTH:
             return Response({'content': f'The policy is too long (over {MAX_POLICY_LENGTH:,} characters).'},
                             status=status.HTTP_400_BAD_REQUEST)
+        content = clean_policy_html(content)      # the editor's HTML, minus anything it cannot produce
+        if not visible_text(content):
+            return Response({'content': 'The policy cannot be empty.'}, status=status.HTTP_400_BAD_REQUEST)
 
         doc, created = PolicyDocument.objects.update_or_create(
             key=key, defaults={'content': content, 'updated_by': request.user},
