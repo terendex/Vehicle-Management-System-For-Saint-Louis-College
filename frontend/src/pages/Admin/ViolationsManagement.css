@@ -1051,3 +1051,49 @@
     flex: 1 1 100%;
   }
 }
+
+/* ── Grouped rows ────────────────────────────────────────────────── */
+/* One row per owner (or per plate with no account behind it); the
+   individual offences open beneath it. */
+.vm-table tbody tr.vm-group-row { cursor: pointer; }
+.vm-table tbody tr.vm-group-row.is-open { background: #F4F8FB; }
+.vm-table tbody tr.vm-group-row.is-open td { border-bottom-color: #D3E1EC; }
+
+.vm-group-plates {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vm-type-count {
+  margin-left: 4px;
+  font-weight: 800;
+}
+
+.vm-group-latest {
+  font-style: normal;
+  font-weight: 600;
+  color: #4A6B85;
+}
+
+.vm-btn-expand {
+  background: #F4F8FB;
+  border-color: #D3E1EC;
+  color: #03396C;
+  white-space: nowrap;
+}
+.vm-btn-expand:hover { background: #EAF2F8; }
+
+/* Offences under an open group: tinted and inset on the plate column so
+   they read as belonging to the row above. */
+.vm-table tbody tr.vm-subrow { background: #FAFCFE; }
+.vm-table tbody tr.vm-subrow td { border-bottom-color: #EEF4F9; }
+/* These backgrounds outrank the table's plain row hover, so they restate it. */
+.vm-table tbody tr.vm-group-row:hover,
+.vm-table tbody tr.vm-subrow:hover { background: #EEF4F9; }
+.vm-table tbody tr.vm-subrow .vm-cell-plate {
+  padding-left: 26px;
+  box-shadow: inset 3px 0 0 #BDD4E5;
+  font-weight: 600;
+  color: #4A6B85;
+}

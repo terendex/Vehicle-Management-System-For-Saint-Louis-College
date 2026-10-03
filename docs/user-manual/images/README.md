@@ -71,7 +71,7 @@ Every application starts with the Data Privacy Notice (RA 10173).
 The public application form, used by students, employees and fetchers.
 
 1. **Registration window**: Shows whether applications are being accepted, and the dates of the current window.
-2. **Registrant type**: Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Parent. The form that follows asks only for what that type needs.
+2. **Registrant type**: Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs.
 3. **Back to Login**: Leave the application without submitting.
 
 ### Applying for a vehicle pass: student form

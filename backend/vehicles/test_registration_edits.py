@@ -288,13 +288,20 @@ class PendingSelfEditTests(EditFlowTestCase):
         self.assertEqual(reg.department_type, 'non_teaching')
         self.assertEqual(reg.department.name, 'Non-Teaching')
 
-    def test_a_minor_cannot_have_their_authorized_driver_cleared(self):
+    def _legacy_guardian_row(self, **over):
+        """A registration filed before student registrations became
+        self-driven only, when a JHS student could name a parent driver."""
         reg = self.submit(student_payload(
-            email='minor@gmail.com', plate_number='MIN 0001',
-            student_level='jhs', program_year='JHS - Grade 7',
-            student_program='', student_year='',
-            driver_name='DELA CRUZ, PEDRO', driver_relationship='parent',
-            schedule='MWF', drivers_license='N01-20-800099'))
+            plate_number='MIN 0001', drivers_license='N01-20-800099'))
+        fields = dict(student_level='jhs', program_year='JHS - Grade 7',
+                      driver_name='DELA CRUZ, PEDRO', driver_relationship='parent')
+        fields.update(over)
+        VehicleRegistration.objects.filter(pk=reg.pk).update(**fields)
+        reg.refresh_from_db()
+        return reg
+
+    def test_a_minor_cannot_have_their_authorized_driver_cleared(self):
+        reg = self._legacy_guardian_row()
         res = self.self_edit(reg, driver_name='')
         self.assertEqual(res.status_code, 400, res.data)
         self.assertIn('driver_name', res.data['errors'])
@@ -302,10 +309,19 @@ class PendingSelfEditTests(EditFlowTestCase):
         self.assertEqual(reg.driver_name, 'DELA CRUZ, PEDRO')
 
     def test_a_named_driver_still_needs_a_relationship(self):
-        reg = self.submit()
-        res = self.self_edit(reg, driver_name='SANTOS, ANA')
+        reg = self._legacy_guardian_row()
+        res = self.self_edit(reg, driver_name='SANTOS, ANA', driver_relationship='')
         self.assertEqual(res.status_code, 400, res.data)
         self.assertIn('driver_relationship', res.data['errors'])
+
+    def test_a_self_driving_student_cannot_add_a_driver_afterwards(self):
+        """The form refuses a separate driver; an edit must not slip one in."""
+        reg = self.submit()
+        res = self.self_edit(reg, driver_name='SANTOS, ANA', driver_relationship='parent')
+        self.assertEqual(res.status_code, 400, res.data)
+        self.assertIn('driver_name', res.data['errors'])
+        reg.refresh_from_db()
+        self.assertEqual(reg.driver_name, '')
 
     def test_editing_stays_open_after_the_receipt_is_filed(self):
         """Paying is not the review, and no field on the whitelist changes the

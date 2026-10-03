@@ -353,6 +353,7 @@ class ConductionPlateTests(TestCase):
     def _post(self, **overrides):
         payload = dict(registrant_type='student', last_name='Car', first_name='New', email='newcar@x.com',
                        vehicle_type='car', student_id='30000001', campus_days=['Monday'],
+                       student_level='shs', program_year='SHS - STEM - Grade 12',
                        contact_number='+639171234567', address='X')
         payload.update(overrides)
         return APIClient().post('/api/vehicles/register/open/', payload, format='json')

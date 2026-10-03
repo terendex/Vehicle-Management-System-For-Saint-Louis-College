@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   AlertTriangle, CheckCircle, Filter,
   RotateCcw, Search, Bell, X,
-  ChevronLeft, ChevronRight, Loader2,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2,
   FileText, ShieldOff, ClipboardCheck, Timer,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
@@ -69,6 +69,14 @@ function getPeriodStart(period) {
   } else if (period === 'month') { d.setDate(1); d.setHours(0, 0, 0, 0) }
   else if (period === 'year')  { d.setMonth(0, 1); d.setHours(0, 0, 0, 0) }
   return d
+}
+
+// The table shows one entry per person rather than one per violation. A
+// registered owner is keyed by email, so offences on each of their vehicles
+// land together; anyone with no account behind the plate is keyed by the plate.
+function groupKey(v) {
+  const email = v.owner_email?.trim().toLowerCase()
+  return email ? `owner:${email}` : `plate:${v.plate_number || v.id}`
 }
 
 function timeAgo(ts) {
@@ -326,10 +334,32 @@ export default function ViolationsManagement() {
     return list
   }, [violations, filter, typeFilter, datePeriod, search, exportRange])
 
+  // Grouped after filtering, so a group holds only the offences that match
+  // the filters on screen. `filtered` is newest first and a Map keeps insertion
+  // order, so groups are ordered by their latest offence and items[0] is it.
+  const groups = useMemo(() => {
+    const map = new Map()
+    for (const v of filtered) {
+      const key = groupKey(v)
+      let g = map.get(key)
+      if (!g) { g = { key, items: [], plates: [] }; map.set(key, g) }
+      g.items.push(v)
+      if (v.plate_number && !g.plates.includes(v.plate_number)) g.plates.push(v.plate_number)
+    }
+    return [...map.values()]
+  }, [filtered])
+
+  const [expanded, setExpanded] = useState(() => new Set())
+  const toggleGroup = key => setExpanded(prev => {
+    const next = new Set(prev)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
+
   useEffect(() => { setPage(1) }, [filter, typeFilter, datePeriod, search, exportRange])
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(groups.length / PAGE_SIZE))
+  const paginated  = groups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   // The screen's filters, in the query-parameter names the report endpoint
   // reads. ReportExportBar drops anything that is 'all' or empty, and its own
@@ -513,6 +543,133 @@ export default function ViolationsManagement() {
     )
   }
 
+  // data-label names each cell in the stacked card layout, where the header
+  // row is hidden (see .vm-card's container query in the CSS).
+  //
+  // `sub` marks an offence listed under its person's group row: the owner and
+  // the confiscation are the group's, already shown on the row above.
+  //
+  // Plain render functions, not components: declared in here, a component
+  // would be a new type on every render and remount the whole table body.
+  function renderViolationRow(v, sub = false) {
+    return (
+      <tr key={v.id} className={`${rowClass(v)} ${sub ? 'vm-subrow' : ''}`}>
+        <td className="vm-plate vm-cell-plate" data-label="Plate">{v.plate_number}</td>
+        <td className="vm-cell-owner" data-label="Owner">
+          {!sub && (
+            <div className="vm-owner">
+              <span className="vm-owner-name">{v.owner_name || '—'}</span>
+              {v.owner_email && (
+                <span className="vm-owner-email">{v.owner_email}</span>
+              )}
+            </div>
+          )}
+        </td>
+        <td className="vm-cell-type" data-label="Type / Offense">
+          <div className="vm-type-cell">
+            <span className={`vm-type-pill vm-type-${v.violation_type}`}>
+              {TYPE_LABELS[v.violation_type] ?? v.violation_type}
+            </span>
+            <OffenseBadge num={v.offense_number} />
+          </div>
+        </td>
+        <td className="vm-cell-notes" data-label="Notes"><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
+        <td className="vm-time vm-cell-issued" data-label="Issued" title={fmtDate(v.issued_at)}>
+          {timeAgo(v.issued_at)}
+          {(v.on_duty_guard_name || v.issued_by_name) && (
+            <span className="vm-issued-guard">
+              {v.on_duty_guard_name
+                ? `On duty: ${v.on_duty_guard_name}`
+                : `By: ${v.issued_by_name}`}
+            </span>
+          )}
+        </td>
+        <td className="vm-cell-conf" data-label="Confiscation">
+          {!sub && <ConfiscationCell c={v.confiscation} />}
+        </td>
+        <td className="vm-cell-status" data-label="Status"><StatusBadge v={v} /></td>
+        <td className="vm-cell-actions" data-label="Actions"><ActionButtons v={v} /></td>
+      </tr>
+    )
+  }
+
+  // One person with several offences: a summary row, and the offences
+  // themselves beneath it when opened. Actions stay on the individual
+  // offences — clearing or lifting is always decided one violation at a time.
+  function renderGroup(g) {
+    const latest = g.items[0]
+    const oldest = g.items[g.items.length - 1]
+    const open   = g.items.filter(v => !isSettled(v))
+    const isOpen = expanded.has(g.key)
+
+    const typeCounts = {}
+    for (const v of g.items) typeCounts[v.violation_type] = (typeCounts[v.violation_type] || 0) + 1
+    // The highest offence still standing is where the person sits on the ladder.
+    const topOffense = Math.max(0, ...open.map(v => v.offense_number || 0))
+    // Penalty state is per person, so every row carries the same one; the
+    // newest row's is the freshest.
+    const confiscation = g.items.find(v => v.confiscation)?.confiscation ?? null
+
+    return (
+      <Fragment key={g.key}>
+        <tr
+          className={`vm-group-row ${open.length ? '' : 'vm-row-resolved'} ${isOpen ? 'is-open' : ''}`}
+          onClick={() => toggleGroup(g.key)}
+        >
+          <td className="vm-plate vm-cell-plate" data-label="Plate">
+            <div className="vm-group-plates">
+              {g.plates.map(p => <span key={p}>{p}</span>)}
+            </div>
+          </td>
+          <td className="vm-cell-owner" data-label="Owner">
+            <div className="vm-owner">
+              <span className="vm-owner-name">{latest.owner_name || '—'}</span>
+              {latest.owner_email && (
+                <span className="vm-owner-email">{latest.owner_email}</span>
+              )}
+            </div>
+          </td>
+          <td className="vm-cell-type" data-label="Type / Offense">
+            <div className="vm-type-cell">
+              {Object.entries(typeCounts).map(([type, n]) => (
+                <span key={type} className={`vm-type-pill vm-type-${type}`}>
+                  {TYPE_LABELS[type] ?? type}{n > 1 && <b className="vm-type-count">×{n}</b>}
+                </span>
+              ))}
+              {topOffense > 0 && <OffenseBadge num={topOffense} />}
+            </div>
+          </td>
+          <td className="vm-cell-notes" data-label="Notes">
+            <div className="vm-notes" title={latest.notes || ''}>
+              {latest.notes ? <><em className="vm-group-latest">Latest:</em> {latest.notes}</> : '—'}
+            </div>
+          </td>
+          <td className="vm-time vm-cell-issued" data-label="Issued" title={fmtDate(latest.issued_at)}>
+            {timeAgo(latest.issued_at)}
+            <span className="vm-issued-guard">First: {fmtDate(oldest.issued_at)}</span>
+          </td>
+          <td className="vm-cell-conf" data-label="Confiscation"><ConfiscationCell c={confiscation} /></td>
+          <td className="vm-cell-status" data-label="Status">
+            {open.length
+              ? <span className="vm-status vm-status-warning"><AlertTriangle size={12} /> {open.length} open</span>
+              : <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> All settled</span>}
+          </td>
+          <td className="vm-cell-actions" data-label="Actions">
+            <button
+              className="vm-btn vm-btn-expand"
+              aria-expanded={isOpen}
+              onClick={e => { e.stopPropagation(); toggleGroup(g.key) }}
+            >
+              {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {g.items.length} offences
+            </button>
+          </td>
+        </tr>
+        {isOpen && g.items.map(v => renderViolationRow(v, true))}
+      </Fragment>
+    )
+  }
+
   return (
     <>
       <div className="vm-page">
@@ -628,43 +785,8 @@ export default function ViolationsManagement() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.map((v) => (
-                  // data-label names each cell in the stacked card layout,
-                  // where the header row is hidden (see .vm-card's container
-                  // query in the CSS).
-                  <tr key={v.id} className={rowClass(v)}>
-                    <td className="vm-plate vm-cell-plate" data-label="Plate">{v.plate_number}</td>
-                    <td className="vm-cell-owner" data-label="Owner">
-                      <div className="vm-owner">
-                        <span className="vm-owner-name">{v.owner_name || '—'}</span>
-                        {v.owner_email && (
-                          <span className="vm-owner-email">{v.owner_email}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="vm-cell-type" data-label="Type / Offense">
-                      <div className="vm-type-cell">
-                        <span className={`vm-type-pill vm-type-${v.violation_type}`}>
-                          {TYPE_LABELS[v.violation_type] ?? v.violation_type}
-                        </span>
-                        <OffenseBadge num={v.offense_number} />
-                      </div>
-                    </td>
-                    <td className="vm-cell-notes" data-label="Notes"><div className="vm-notes" title={v.notes || ''}>{v.notes || '—'}</div></td>
-                    <td className="vm-time vm-cell-issued" data-label="Issued" title={fmtDate(v.issued_at)}>
-                      {timeAgo(v.issued_at)}
-                      {(v.on_duty_guard_name || v.issued_by_name) && (
-                        <span className="vm-issued-guard">
-                          {v.on_duty_guard_name
-                            ? `On duty: ${v.on_duty_guard_name}`
-                            : `By: ${v.issued_by_name}`}
-                        </span>
-                      )}
-                    </td>
-                    <td className="vm-cell-conf" data-label="Confiscation"><ConfiscationCell c={v.confiscation} /></td>
-                    <td className="vm-cell-status" data-label="Status"><StatusBadge v={v} /></td>
-                    <td className="vm-cell-actions" data-label="Actions"><ActionButtons v={v} /></td>
-                  </tr>
+                {paginated.map(g => (
+                  g.items.length === 1 ? renderViolationRow(g.items[0]) : renderGroup(g)
                 ))}
               </tbody>
             </table>
@@ -674,7 +796,8 @@ export default function ViolationsManagement() {
         {!loading && totalPages > 1 && (
           <div className="vm-pagination">
             <span className="vm-page-info">
-              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, groups.length)} of {groups.length} owners / plates
+              ({filtered.length} violations)
             </span>
             <div className="vm-page-controls">
               <button className="vm-page-btn" disabled={page === 1} onClick={() => setPage(p => p - 1)}>

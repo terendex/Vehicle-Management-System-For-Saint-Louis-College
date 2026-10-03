@@ -1037,15 +1037,6 @@
   cursor: not-allowed;
 }
 
-/* SpEd — assignment shown, nothing to choose */
-.schedule-group-card--sped {
-  border-color: #03396C;
-  background: #03396C;
-  color: #fff;
-  opacity: 0.72;
-  cursor: default;
-}
-
 .schedule-group-days {
   font-size: 16px;
   font-weight: 800;
@@ -1080,27 +1071,12 @@
   border-color: rgba(255, 255, 255, 0.28);
 }
 
-/* SpEd schedule note variant */
-.schedule-note--sped {
-  background: #EAF2F8;
-  border-color: #BDD4E5;
-  color: #03396C;
-}
-
-/* Minor student — locked to an authorized adult driver */
-.driver-minor-note {
-  background: #FEF9E4;
-  border-color: #F7E08A;
-  color: #7A5C00;
+/* Student form — sends parents, guardians and drivers to Fetcher */
+.fetcher-redirect-note {
   margin-bottom: 0;
 }
 
-/* Guardian-driven student — points whole-day parents to Fetcher → Parent */
-.whole-day-parent-note {
-  margin-bottom: 0;
-}
-
-.whole-day-parent-switch {
+.fetcher-redirect-switch {
   display: flex;               /* own line under the sentence it acts on */
   width: fit-content;
   margin-top: 8px;
@@ -1114,7 +1090,7 @@
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.whole-day-parent-switch:hover { background: #F7FAFC; border-color: #03396C; }
+.fetcher-redirect-switch:hover { background: #F7FAFC; border-color: #03396C; }
 
 /* Chosen-schedule summary */
 .campus-day-summary {

@@ -222,6 +222,13 @@ def _student_only(registration):
     return registration.registrant_type == VehicleRegistration.RegistrantType.STUDENT
 
 
+def _named_driver_only(registration):
+    # Student registrations are self-driven now; only an older row that was
+    # filed with a parent or hired driver still carries one to keep up to date.
+    # Without this a student could add a driver after the form refused one.
+    return _student_only(registration) and bool(registration.driver_name)
+
+
 def _employee_only(registration):
     return registration.registrant_type == VehicleRegistration.RegistrantType.EMPLOYEE
 
@@ -255,8 +262,8 @@ EDITABLE_FIELDS = {
         Field('drivers_license',     "Driver's License",         _clean_license),
         Field('program_year',        'Program & Year',           _clean_program_year, _student_only),
         Field('department',          'Department',               _clean_department,   _employee_only),
-        Field('driver_name',         'Authorized Driver',        _clean_driver_name,  _student_only),
-        Field('driver_relationship', "Driver's Relationship",    _clean_driver_relationship, _student_only),
+        Field('driver_name',         'Authorized Driver',        _clean_driver_name,  _named_driver_only),
+        Field('driver_relationship', "Driver's Relationship",    _clean_driver_relationship, _named_driver_only),
         Field('vehicle_type',        'Vehicle Type',             _clean_vehicle_type),
         Field('vehicle_color',       'Vehicle Colour',           _clean_vehicle_color),
         Field('body_number',         'Body Number',              _clean_body_number),

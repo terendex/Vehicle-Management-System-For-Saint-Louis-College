@@ -44,7 +44,7 @@ function getMeta(s) { return STATUS_META[s] ?? STATUS_META.unknown }
 // .cls-* rules come from Admin/EntryManagement.css, which this page's
 // stylesheet imports.
 const CLASSIFICATION_LABELS = {
-  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher / Parent',
+  student: 'Student', employee: 'Employee', fetcher: 'Drop & Go / Fetcher / Driver',
   supplier: 'Supplier', event: 'Event Organizer', visitor: 'Visitor', unknown: 'Unregistered',
 }
 const classLabel = (c) => CLASSIFICATION_LABELS[c] ?? CLASSIFICATION_LABELS.unknown

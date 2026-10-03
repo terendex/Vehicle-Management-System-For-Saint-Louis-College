@@ -82,10 +82,10 @@ const ENTRY_TYPES = [
   },
   {
     key: 'fetcher',
-    title: 'Fetcher / Drop & Go / Parent',
-    // Hours and max stay bind Fetcher and Drop & Go; a Parent (Whole Day) is held to
+    title: 'Fetcher / Drop & Go / Driver',
+    // Hours and max stay bind Fetcher and Drop & Go; a Driver (Whole Day) is held to
     // the days alone (scanning/entry_logic.py, the 'standby' fetcher_type).
-    desc: 'Parent or guardian. Parents (Whole Day) skip the hours and max stay',
+    desc: 'Parent, guardian or driver. Drivers (Whole Day) skip the hours and max stay',
     Icon: Users,
     hasStayLimit: true,
     hasOwnDays: true,
@@ -203,7 +203,7 @@ function EditModal({ entryType, rule, onSave, onClose }) {
                 />
                 <span style={{ fontSize: 11.5, color: '#64839C', marginTop: 4, display: 'block' }}>
                   Exceeding this on exit auto-issues a time-exceed violation. Leave blank for no limit.
-                  {entryType.key === 'fetcher' && ' Not applied to Parents (Whole Day).'}
+                  {entryType.key === 'fetcher' && ' Not applied to Drivers (Whole Day).'}
                 </span>
               </div>
             )}
@@ -418,7 +418,7 @@ export default function RuleConstraints() {
     const errors = {}
     const { start_month, start_year, end_month, end_year } = periodForm
     if (!start_month || !start_year || !end_month || !end_year) {
-      errors.label = 'Select the month and year the school year starts and ends.'
+      errors.label = 'Pick the month and year the school year runs from and to.'
     } else {
       // Counted inclusively: June 2026 – May 2027 is 12 months.
       const span = (Number(end_year) * 12 + MONTHS.indexOf(end_month))
@@ -426,10 +426,10 @@ export default function RuleConstraints() {
       if (span < 2)       errors.label = 'The school year must end after it starts.'
       else if (span > 12) errors.label = 'A school year cannot run longer than 12 months.'
     }
-    if (!periodForm.start_date)      errors.start_date = 'Start date is required.'
-    if (!periodForm.end_date)          errors.end_date   = 'End date is required.'
+    if (!periodForm.start_date)      errors.start_date = 'Pick the date registration opens.'
+    if (!periodForm.end_date)          errors.end_date   = 'Pick the date registration closes.'
     if (periodForm.start_date && periodForm.end_date && periodForm.end_date < periodForm.start_date)
-      errors.end_date = 'End date must be on or after start date.'
+      errors.end_date = 'Registration must close on or after the day it opens.'
     setPeriodErrors(errors)
     if (await notify.validation(errors)) return
 
@@ -648,12 +648,17 @@ export default function RuleConstraints() {
                   [periodForm.start_year, ...rolling, periodForm.end_year].filter(Boolean),
                 )].sort()
                 const labelParts = [
-                  ['start_month', 'start_year', 'Starts'],
-                  ['end_month',   'end_year',   'Ends'],
+                  ['start_month', 'start_year', 'From'],
+                  ['end_month',   'end_year',   'To'],
                 ]
                 // A missing part flags only the empty boxes; a bad range flags all four.
                 const allParts = labelParts.flat().filter(k => k.includes('_')).every(k => periodForm[k])
                 const labelBad = (key) => periodErrors.label && (allParts || !periodForm[key])
+                /* Two groups, each with its own heading, because the four boxes
+                   used to sit in one row and read as two pairs of dates. Only the
+                   second pair decides when students can register; the first only
+                   names the school year the window belongs to. */
+                const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
                 return (
                   <div className="rc-period-form">
                     <p className="rc-period-form-title">
@@ -661,58 +666,81 @@ export default function RuleConstraints() {
                         ? <><CalendarDays size={13} /> Extending period</>
                         : <><Plus size={13} /> New registration period</>}
                     </p>
-                    <div className="rc-period-form-fields">
-                      {labelParts.map(([monthKey, yearKey, caption]) => (
-                        <div className="rc-reg-field" key={monthKey}>
-                          <label className="rc-field-label">
-                            School year {caption.toLowerCase()} <span style={{ color: '#D93B3B' }}>*</span>
-                          </label>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            <select
-                              className={`rc-field-select ${labelBad(monthKey) ? 'rc-input-error' : ''}`}
-                              aria-label={`School year ${caption.toLowerCase()} — month`}
-                              value={periodForm[monthKey]}
-                              onChange={e => setPeriodForm(f => ({ ...f, [monthKey]: e.target.value }))}
-                            >
-                              <option value="">Month…</option>
-                              {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                            <select
-                              className={`rc-field-select ${labelBad(yearKey) ? 'rc-input-error' : ''}`}
-                              aria-label={`School year ${caption.toLowerCase()} — year`}
-                              value={periodForm[yearKey]}
-                              onChange={e => setPeriodForm(f => ({ ...f, [yearKey]: e.target.value }))}
-                            >
-                              <option value="">Year…</option>
-                              {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-                            </select>
+                    <div className="rc-period-groups">
+                      <fieldset className="rc-period-group">
+                        <legend className="rc-period-group-title">
+                          1. School year <span style={{ color: '#D93B3B' }}>*</span>
+                        </legend>
+                        <p className="rc-field-hint rc-period-group-hint">
+                          Names the school year this window is for. Shown as the label only — it does not open or close registration.
+                        </p>
+                        <div className="rc-period-form-fields">
+                          {labelParts.map(([monthKey, yearKey, caption]) => (
+                            <div className="rc-reg-field" key={monthKey}>
+                              <label className="rc-field-label">{caption}</label>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                <select
+                                  className={`rc-field-select ${labelBad(monthKey) ? 'rc-input-error' : ''}`}
+                                  aria-label={`School year ${caption.toLowerCase()} — month`}
+                                  value={periodForm[monthKey]}
+                                  onChange={e => setPeriodForm(f => ({ ...f, [monthKey]: e.target.value }))}
+                                >
+                                  <option value="">Month…</option>
+                                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+                                </select>
+                                <select
+                                  className={`rc-field-select ${labelBad(yearKey) ? 'rc-input-error' : ''}`}
+                                  aria-label={`School year ${caption.toLowerCase()} — year`}
+                                  value={periodForm[yearKey]}
+                                  onChange={e => setPeriodForm(f => ({ ...f, [yearKey]: e.target.value }))}
+                                >
+                                  <option value="">Year…</option>
+                                  {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </fieldset>
+                      <fieldset className="rc-period-group">
+                        <legend className="rc-period-group-title">
+                          2. Registration window <span style={{ color: '#D93B3B' }}>*</span>
+                        </legend>
+                        <p className="rc-field-hint rc-period-group-hint">
+                          Students can submit vehicle registrations only between these two dates.
+                        </p>
+                        <div className="rc-period-form-fields">
+                          <div className="rc-reg-field">
+                            <label className="rc-field-label">Opens on</label>
+                            <input
+                              type="date"
+                              className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
+                              value={periodForm.start_date}
+                              min={editing ? undefined : new Date().toLocaleDateString('en-CA')}
+                              onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
+                            />
+                          </div>
+                          <div className="rc-reg-field">
+                            <label className="rc-field-label">Closes on</label>
+                            <input
+                              type="date"
+                              className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
+                              value={periodForm.end_date}
+                              min={periodForm.start_date || undefined}
+                              onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
+                            />
                           </div>
                         </div>
-                      ))}
-                      <div className="rc-reg-field">
-                        <label className="rc-field-label">Start date <span style={{ color: '#D93B3B' }}>*</span></label>
-                        <input
-                          type="date"
-                          className={`rc-field-input ${periodErrors.start_date ? 'rc-input-error' : ''}`}
-                          value={periodForm.start_date}
-                          min={editing ? undefined : new Date().toISOString().slice(0, 10)}
-                          onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
-                        />
-                      </div>
-                      <div className="rc-reg-field">
-                        <label className="rc-field-label">End date <span style={{ color: '#D93B3B' }}>*</span></label>
-                        <input
-                          type="date"
-                          className={`rc-field-input ${periodErrors.end_date ? 'rc-input-error' : ''}`}
-                          value={periodForm.end_date}
-                          min={periodForm.start_date || undefined}
-                          onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
-                        />
-                      </div>
+                      </fieldset>
                     </div>
-                    {periodForm.start_month && periodForm.start_year && periodForm.end_month && periodForm.end_year && (
-                      <p className="rc-field-hint" style={{ marginTop: '-4px', marginBottom: '12px' }}>
-                        Label: <strong>{formatPeriodLabel(periodForm)}</strong>
+                    {(allParts || (periodForm.start_date && periodForm.end_date)) && (
+                      <p className="rc-period-summary">
+                        {allParts
+                          ? <strong>{formatPeriodLabel(periodForm)}</strong>
+                          : <em>School year not picked yet</em>}
+                        {periodForm.start_date && periodForm.end_date && (
+                          <> · registration open {fmtDate(periodForm.start_date)} to {fmtDate(periodForm.end_date)}</>
+                        )}
                       </p>
                     )}
                     <div className="rc-period-form-actions">
@@ -740,9 +768,9 @@ export default function RuleConstraints() {
                   <table className="rc-period-table">
                     <thead>
                       <tr>
-                        <th>Label</th>
-                        <th>Start</th>
-                        <th>End</th>
+                        <th>School Year</th>
+                        <th>Registration Opens</th>
+                        <th>Registration Closes</th>
                         <th>Status</th>
                         <th></th>
                       </tr>

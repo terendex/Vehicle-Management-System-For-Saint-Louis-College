@@ -175,10 +175,24 @@ class CampusDayValidationTests(RegistrationInputTestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn('one rotation', res.data['error'])
 
-    def test_sped_students_get_every_campus_day(self):
-        reg = self.submit_ok(student_level='sped', campus_days=list(ALL_DAYS),
-                             driver_name='Parent Name', driver_relationship='parent')
-        self.assertEqual(len(reg.campus_days), len(ALL_DAYS))
+    def test_only_college_and_shs_may_file_a_student_registration(self):
+        """Younger students come in on a parent's Fetcher registration; the
+        student form is for a student who drives themselves."""
+        for level in ('jhs', 'elementary', 'sped', ''):
+            res = self.submit(student_level=level, schedule='MWF', campus_days=[],
+                              driver_name='PARENT, NAME', driver_relationship='parent')
+            self.assertEqual(res.status_code, 400, (level, res.data))
+            self.assertIn('Fetcher', res.data['error'])
+        self.assertEqual(self.submit(student_level='shs', program_year='SHS - STEM - Grade 12',
+                                     schedule='MWF', campus_days=[]).status_code, 201)
+
+    def test_a_student_registration_cannot_name_another_driver(self):
+        for extra in ({'driver_name': 'DELA CRUZ, PEDRO', 'driver_relationship': 'parent'},
+                      {'driver_name': 'DELA CRUZ, PEDRO'},
+                      {'driver_relationship': 'authorized_driver'}):
+            res = self.submit(**extra)
+            self.assertEqual(res.status_code, 400, (extra, res.data))
+            self.assertIn('Fetcher', res.data['error'])
 
     def test_no_schedule_at_all_is_rejected(self):
         res = self.submit(campus_days=[])

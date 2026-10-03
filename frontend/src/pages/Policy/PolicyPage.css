@@ -244,12 +244,17 @@
   margin: 20px 0 8px;
 }
 
-/* Body text is justified, like the printed policy. Hyphenation narrows the
-   gaps a justified line opens up, which matters most at phone width. */
+/* Body text is justified the way Word does it: whole words only, with the
+   spaces between them stretched to fill the line. No hyphenation — words are
+   never split across lines. A single word longer than the whole line (a long
+   web address on a phone) is the one exception: it wraps rather than running
+   off the screen. */
 .policy-doc p {
   margin: 0 0 12px;
   text-align: justify;
-  hyphens: auto;
+  text-justify: inter-word;
+  hyphens: manual;
+  overflow-wrap: break-word;
 }
 
 /* The global reset strips list markers; put them back. Lettered and roman

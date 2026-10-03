@@ -28,11 +28,11 @@ import {
                 so theirs is checked all the way down to the ID.
      SCHOOL     Employees. They get named accounts instead, so the domain is
                 the whole rule and the local part is left alone.
-     PERSONAL   Fetchers, and students below college — SHS, JHS, Elementary and
-                SpEd. The school issues none of them an address: fetchers are
-                outsiders driving for someone enrolled, and the younger levels
-                get no account at all, so demanding a school domain would lock
-                out every parent and driver who registers. A working personal
+     PERSONAL   Fetchers / drivers, and SHS students. The school issues neither
+                a school email: fetchers are outsiders driving for someone
+                enrolled, and SHS students are not given one, so demanding a
+                school domain would lock out every parent, driver and SHS
+                student who registers. A working personal
                 address is what the CDSO's approval mail needs, and any provider
                 will do.
 
@@ -133,7 +133,7 @@ const REGISTRATION_TYPES = [
     id: 'student',
     icon: <User size={22} />,
     label: 'Student — Vehicle',
-    description: 'Registered SLC student with a car or motorcycle',
+    description: 'College or SHS student who drives their own car or motorcycle',
   },
   {
     id: 'employee',
@@ -144,15 +144,13 @@ const REGISTRATION_TYPES = [
   {
     id: 'fetcher',
     icon: <Users size={22} />,
-    label: 'Fetcher / Drop & Go / Parent',
-    description: 'Parent or guardian fetching, or staying with, a student',
+    label: 'Fetcher / Drop & Go / Driver',
+    description: 'Parent, guardian or driver fetching, or staying with, a student',
   },
 ]
 import { COLLEGES, composeProgramYear, findProgram, yearsFor } from '../../utils/collegePrograms'
 import { cleanInitial, namePayload } from '../../utils/names'
 import './RegisterPage.css'
-
-const ALL_CAMPUS_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 /* An applicant registers for a whole rotation, not for days of their own
    choosing — a pass issued as "MWF" has to mean all three of those days.
@@ -179,17 +177,15 @@ const SCHEDULE_GROUPS = [
 // students by name the same way the applicant themselves is identified.
 const EMPTY_FETCHER_STUDENT = { full_name: '', student_level: '', program_year: '' }
 
-/* Levels that can never be self-driven — the "who drives" choice is skipped and a
-   parent, guardian, or authorized driver is always registered as the driver.
-   JHS/Elementary because those students are minors; SpEd because those students
-   are accompanied regardless of age. */
-const GUARDIAN_ONLY_LEVELS = ['jhs', 'elementary', 'sped']
-
-const GUARDIAN_ONLY_REASON = {
-  jhs:        'Junior High School students are minors and are not allowed to drive.',
-  elementary: 'Elementary students are minors and are not allowed to drive.',
-  sped:       'Special Education students are always accompanied and do not drive themselves.',
-}
+/* A student registration is for a student who drives the vehicle themselves,
+   so only the levels old enough to hold a licence are offered. A parent,
+   guardian or hired driver bringing a younger student registers under
+   Fetcher / Drop & Go / Driver. Mirrors SELF_DRIVING_STUDENT_LEVELS in
+   backend/vehicles/views.py. */
+const STUDENT_LEVELS = [
+  { id: 'college', label: 'College' },
+  { id: 'shs',     label: 'Senior High School' },
+]
 
 const FETCHER_STUDENT_LEVELS = [
   { id: 'college',    label: 'College' },
@@ -448,9 +444,6 @@ export default function RegisterPage() {
     program_year: '',
     department: '',
     drivers_license: '',
-    who_drives: '',            // 'self' | 'guardian' — form-only, not sent to the API
-    driver_name: '',
-    driver_relationship: '',
     // schedule is the rotation the applicant picks (MWF / TTHF); campus_days is
     // the week it expands to. Both are sent — the backend re-derives one from
     // the other, so they can never disagree.
@@ -628,7 +621,7 @@ export default function RegisterPage() {
       else if (name === 'email') formatted = formatted.toLowerCase()
       // Stored as one letter: anything else typed into the box is dropped.
       else if (name === 'middle_initial') formatted = cleanInitial(formatted)
-      else if (['last_name', 'first_name', 'vehicle_color', 'driver_name'].includes(name))
+      else if (['last_name', 'first_name', 'vehicle_color'].includes(name))
         formatted = formatted.toUpperCase()
       setFormData((prev) => ({
         ...prev,
@@ -817,27 +810,18 @@ export default function RegisterPage() {
         problems.push('Select your program and year level.')
       } else if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
         problems.push('Select your track/strand and grade level.')
-      } else if (['jhs', 'elementary'].includes(formData.student_level) && !formData.student_grade) {
-        problems.push('Select your grade level.')
       }
-      // A guardian-driven registration always needs the driver’s details.
-      if (formData.who_drives === 'guardian') {
-        if (!formData.driver_name.trim()) problems.push("Enter the authorized driver's full name.")
-        if (!formData.driver_relationship) problems.push("Select the driver's relationship to the student.")
-      }
-      if (formData.student_level !== 'sped') {
-        const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
-        if (!chosen) {
-          problems.push('Choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
-        } else if (groupSlots(chosen)?.available === 0) {
-          problems.push(`The ${chosen.short} schedule is full — choose the other schedule.`)
-        }
+      const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
+      if (!chosen) {
+        problems.push('Choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
+      } else if (groupSlots(chosen)?.available === 0) {
+        problems.push(`The ${chosen.short} schedule is full — choose the other schedule.`)
       }
     }
 
     if (registrantType === 'fetcher') {
       if (!fetcherType) {
-        problems.push('Choose your classification: Fetcher, Drop & Go, or Parent (Whole Day).')
+        problems.push('Choose your classification: Fetcher, Drop & Go, or Driver (Whole Day).')
       }
       fetcherStudents.forEach((st, i) => {
         if (!st.full_name.trim() || !st.student_level) {
@@ -854,20 +838,11 @@ export default function RegisterPage() {
       let program_year = formData.program_year
       if (registrantType === 'student' && formData.student_level === 'college') {
         program_year = composeProgramYear(formData.student_program, formData.student_year)
-      } else if (registrantType === 'student' && formData.student_level !== 'college') {
+      } else if (registrantType === 'student' && formData.student_level === 'shs') {
         const grade = formData.student_grade ? `Grade ${formData.student_grade}` : ''
-        if (formData.student_level === 'shs') {
-          program_year = ['SHS', formData.student_strand, grade].filter(Boolean).join(' - ')
-        } else if (formData.student_level === 'jhs') {
-          program_year = ['JHS', grade].filter(Boolean).join(' - ')
-        } else if (formData.student_level === 'elementary') {
-          program_year = ['Elementary', grade].filter(Boolean).join(' - ')
-        } else if (formData.student_level === 'sped') {
-          program_year = formData.student_grade ? `SpEd - Grade ${formData.student_grade}` : 'SpEd'
-        }
+        program_year = ['SHS', formData.student_strand, grade].filter(Boolean).join(' - ')
       }
 
-      const guardian = registrantType === 'student' && formData.who_drives === 'guardian'
       const payload = {
         ...formData,
         // Either/or: send only the identifier that applies, never both. An
@@ -880,9 +855,6 @@ export default function RegisterPage() {
         program_year,
         registrant_type: registrantType,
         student_level: registrantType === 'student' ? formData.student_level : '',
-        // Driver fields only apply to guardian-driven student registrations
-        driver_name:         guardian ? formData.driver_name.trim() : '',
-        driver_relationship: guardian ? formData.driver_relationship : '',
         // Fetcher classification + students being fetched
         fetcher_type:     registrantType === 'fetcher' ? fetcherType : '',
         fetcher_students: registrantType === 'fetcher'
@@ -893,7 +865,6 @@ export default function RegisterPage() {
             }))
           : [],
       }
-      delete payload.who_drives
       // Form-only attestation — the backend has no column for it.
       delete payload.details_confirmed
       // UI-only helper for the colour dropdown — the backend stores vehicle_color.
@@ -981,7 +952,7 @@ export default function RegisterPage() {
   const TYPED_FIELDS = [
     'last_name', 'first_name', 'middle_initial', 'email',
     'plate_number', 'conduction_number',
-    'drivers_license', 'driver_name',
+    'drivers_license',
   ]
 
   const handleBackToLogin = async () => {
@@ -1215,28 +1186,21 @@ export default function RegisterPage() {
   const isEmployee = registrantType === 'employee'
   const regOpen = regStatus?.is_open ?? true
 
-  // JHS/Elementary/SpEd always register a parent, guardian, or authorized driver.
-  const isGuardianOnlyLevel = isStudent && GUARDIAN_ONLY_LEVELS.includes(formData.student_level)
-  const guardianDriven = isStudent && formData.who_drives === 'guardian'
-
   // The official program list (utils/collegePrograms) decides the year levels
   // on offer: 1–4, or 1–5 for BS Arch.
   const yearOptions = yearsFor(formData.student_program)
   const selectedProgram = findProgram(formData.student_program)
 
   const TYPE_OPTIONS = [
-    { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'Registered SLC student' },
+    { id: 'student',  icon: <User size={24} />, label: 'Student',           desc: 'College or SHS student who drives' },
     { id: 'employee', icon: <Car size={24} />,  label: 'Employee',          desc: 'SLC faculty or staff' },
-    { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go / Parent', desc: 'Parent or guardian' },
+    { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go / Driver', desc: 'Parent, guardian or driver' },
   ]
 
-  /* A parent who stays on campus the whole day is not a student registration:
-     they belong under Fetcher, classified Parent (Whole Day) — stored as
-     'standby' — so they are counted apart from the students. Offered from the
-     student form's guardian-driver section, where such parents land first. */
-  const switchToWholeDayParent = () => {
+  /* A parent, guardian or hired driver who opened the student form is sent to
+     Fetcher / Drop & Go / Driver, where they pick their own classification. */
+  const switchToFetcher = () => {
     setRegistrantType('fetcher')
-    setFetcherType('standby')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1263,7 +1227,7 @@ export default function RegisterPage() {
               <span className="registrant-badge">
                 {isStudent ? 'Student — Vehicle Registration'
                   : isEmployee ? 'Employee Registration'
-                    : 'Fetcher / Drop & Go / Parent Registration'}
+                    : 'Fetcher / Drop & Go / Driver Registration'}
               </span>
             )}
           </div>
@@ -1317,24 +1281,14 @@ export default function RegisterPage() {
                       Campus Schedule {isStudent && <span className="required">*</span>}
                     </label>
                     {isStudent ? (
-                      formData.student_level === 'sped' ? (
-                        <div className="schedule-note schedule-note--sped">
-                          <Info size={13} />
-                          <span>
-                            Special Education students are assigned <strong>all campus days
-                            (Monday to Saturday)</strong>.
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="schedule-note">
-                          <Info size={13} />
-                          <span>
-                            Choose <strong>one</strong> schedule — it covers all three of its days.
-                            Slots are <strong>first come, first serve</strong>; a schedule that is
-                            <strong> full</strong> cannot be selected.
-                          </span>
-                        </div>
-                      )
+                      <div className="schedule-note">
+                        <Info size={13} />
+                        <span>
+                          Choose <strong>one</strong> schedule — it covers all three of its days.
+                          Slots are <strong>first come, first serve</strong>; a schedule that is
+                          <strong> full</strong> cannot be selected.
+                        </span>
+                      </div>
                     ) : isEmployee ? (
                       /* Spelled out as Monday–Saturday: "any day" reads as Sunday
                          included, and the campus is closed then. */
@@ -1348,7 +1302,7 @@ export default function RegisterPage() {
                       <p className="campus-day-anyday-note fetcher-note">
                         <Info size={13} />
                         {fetcherType === 'standby'
-                          ? <>Parents (Whole Day) may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to stay and park inside the campus the whole day.</>
+                          ? <>Drivers (Whole Day) may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to stay and park inside the campus the whole day.</>
                           : fetcherType === 'drop_and_go'
                             ? <>Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>
                             : <>Fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
@@ -1612,13 +1566,7 @@ export default function RegisterPage() {
                   <div className="form-group col-span-2">
                     <label>Education Level <span className="required">*</span></label>
                     <div className="student-level-picker">
-                      {[
-                        { id: 'college',     label: 'College' },
-                        { id: 'shs',         label: 'Senior High School' },
-                        { id: 'jhs',         label: 'Junior High School' },
-                        { id: 'elementary',  label: 'Elementary' },
-                        { id: 'sped',        label: 'Special Education' },
-                      ].map(lvl => (
+                      {STUDENT_LEVELS.map(lvl => (
                         <button
                           key={lvl.id}
                           type="button"
@@ -1631,25 +1579,26 @@ export default function RegisterPage() {
                             student_program: '',
                             student_year: '',
                             program_year: '',
-                            // Minors and SpEd are locked to a guardian driver;
-                            // College/SHS default to self-driving.
-                            who_drives: GUARDIAN_ONLY_LEVELS.includes(lvl.id) ? 'guardian' : 'self',
-                            // SpEd students attend every campus day; leaving
-                            // that level clears the assignment so a rotation
-                            // has to be chosen deliberately.
-                            campus_days: lvl.id === 'sped'
-                              ? [...ALL_CAMPUS_DAYS]
-                              : prev.student_level === 'sped'
-                                ? []
-                                : prev.campus_days,
-                            schedule: lvl.id === 'sped' || prev.student_level === 'sped'
-                              ? ''
-                              : prev.schedule,
                           }))}
                         >
                           {lvl.label}
                         </button>
                       ))}
+                    </div>
+                  </div>
+
+                  <div className="form-group col-span-2">
+                    <div className="schedule-note fetcher-redirect-note">
+                      <Info size={13} />
+                      <span>
+                        This form is for a student who <strong>drives the vehicle themselves</strong>.
+                        A parent, guardian or driver bringing a student to campus — including
+                        Junior High, Elementary and SpEd students — registers under{' '}
+                        <strong>Fetcher / Drop &amp; Go / Driver</strong>.
+                        <button type="button" className="fetcher-redirect-switch" onClick={switchToFetcher}>
+                          Register as Fetcher / Driver
+                        </button>
+                      </span>
                     </div>
                   </div>
 
@@ -1729,62 +1678,6 @@ export default function RegisterPage() {
                       </select>
                     </div>
                   )}
-
-                  {/* JHS: grade level (7–10) */}
-                  {formData.student_level === 'jhs' && (
-                    <div className="form-group">
-                      <label>Grade Level <span className="required">*</span></label>
-                      <select name="student_grade" value={formData.student_grade} onChange={handleInputChange} required>
-                        <option value="">Select Grade</option>
-                        <option value="7">Grade 7</option>
-                        <option value="8">Grade 8</option>
-                        <option value="9">Grade 9</option>
-                        <option value="10">Grade 10</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Elementary: grade level (Kinder–6) */}
-                  {formData.student_level === 'elementary' && (
-                    <div className="form-group">
-                      <label>Grade Level <span className="required">*</span></label>
-                      <select name="student_grade" value={formData.student_grade} onChange={handleInputChange} required>
-                        <option value="">Select Grade</option>
-                        <option value="Kinder 1">Kinder 1</option>
-                        <option value="Kinder 2">Kinder 2</option>
-                        <option value="1">Grade 1</option>
-                        <option value="2">Grade 2</option>
-                        <option value="3">Grade 3</option>
-                        <option value="4">Grade 4</option>
-                        <option value="5">Grade 5</option>
-                        <option value="6">Grade 6</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {/* SpEd: optional grade level */}
-                  {formData.student_level === 'sped' && (
-                    <div className="form-group">
-                      <label>Grade Level <span style={{ color: '#6B8CA6', fontWeight: 400 }}>(optional)</span></label>
-                      <select name="student_grade" value={formData.student_grade} onChange={handleInputChange}>
-                        <option value="">Not specified</option>
-                        <option value="Kinder 1">Kinder 1</option>
-                        <option value="Kinder 2">Kinder 2</option>
-                        <option value="1">Grade 1</option>
-                        <option value="2">Grade 2</option>
-                        <option value="3">Grade 3</option>
-                        <option value="4">Grade 4</option>
-                        <option value="5">Grade 5</option>
-                        <option value="6">Grade 6</option>
-                        <option value="7">Grade 7</option>
-                        <option value="8">Grade 8</option>
-                        <option value="9">Grade 9</option>
-                        <option value="10">Grade 10</option>
-                        <option value="11">Grade 11</option>
-                        <option value="12">Grade 12</option>
-                      </select>
-                    </div>
-                  )}
                 </>
               )}
 
@@ -1809,177 +1702,72 @@ export default function RegisterPage() {
                 </>
               )}
 
-              {/* Who drives — students only. JHS/Elementary/SpEd skip the choice. */}
-              {isStudent && formData.student_level && (
-                <div className="form-group col-span-2">
-                  <label>Who will drive this vehicle? <span className="required">*</span></label>
-                  {isGuardianOnlyLevel ? (
-                    <div className="schedule-note driver-minor-note">
-                      <Info size={13} />
-                      <span>
-                        {GUARDIAN_ONLY_REASON[formData.student_level]} A{' '}
-                        <strong>parent, guardian, or authorized driver</strong> must
-                        be registered as this vehicle's driver.
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="student-level-picker">
-                        {[
-                          { id: 'self',     label: 'Student drives (self)' },
-                          { id: 'guardian', label: 'Parent / Guardian / Authorized driver' },
-                        ].map(opt => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            className={`student-level-btn${formData.who_drives === opt.id ? ' active' : ''}`}
-                            onClick={() => setFormData(prev => ({
-                              ...prev,
-                              who_drives: opt.id,
-                              ...(opt.id === 'self' ? { driver_name: '', driver_relationship: '' } : {}),
-                            }))}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                      {formData.student_level === 'sped' && (
-                        <span className="field-hint">Select “Student drives” only if the student holds a valid driver's license.</span>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
               {/* ── Campus Schedule picker ──
                   The first-come-first-serve notice sits at the top of the form;
-                  the rotation itself is claimed here, right after the driver is
-                  settled, so the whole student block reads in one pass. */}
+                  the rotation itself is claimed here, right after the education
+                  level, so the whole student block reads in one pass. */}
               {isStudent && (
                 <div className="form-group col-span-2">
                   <label className="days-label">
                     Select Your Campus Schedule <span className="required">*</span>
                   </label>
-                  {formData.student_level === 'sped' ? (
-                    <div className="schedule-group-picker">
-                      <div className="schedule-group-card schedule-group-card--sped">
-                        <span className="schedule-group-days">Monday – Saturday</span>
-                        <span className="schedule-group-caption">All campus days assigned</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="schedule-group-picker">
-                      {SCHEDULE_GROUPS.map(group => {
-                        const slot = groupSlots(group)
-                        const isFull = slot?.available === 0
-                        const isSelected = formData.schedule === group.code
-                        return (
-                          <button
-                            key={group.code}
-                            type="button"
-                            className={[
-                              'schedule-group-card',
-                              isSelected ? 'schedule-group-card--selected' : '',
-                              isFull ? 'schedule-group-card--full' : '',
-                            ].filter(Boolean).join(' ')}
-                            onClick={() => !isFull && selectSchedule(group)}
-                            disabled={isFull}
-                            aria-pressed={isSelected}
-                            title={isFull ? `The ${group.short} schedule is full` : group.caption}
-                          >
-                            <span className="schedule-group-days">{group.short}</span>
-                            <span className="schedule-group-caption">{group.caption}</span>
-                            <span className="schedule-group-slots">
-                              {loadingSlots
-                                ? '···'
-                                : slot
-                                  ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
-                                  : '—'}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
+                  <div className="schedule-group-picker">
+                    {SCHEDULE_GROUPS.map(group => {
+                      const slot = groupSlots(group)
+                      const isFull = slot?.available === 0
+                      const isSelected = formData.schedule === group.code
+                      return (
+                        <button
+                          key={group.code}
+                          type="button"
+                          className={[
+                            'schedule-group-card',
+                            isSelected ? 'schedule-group-card--selected' : '',
+                            isFull ? 'schedule-group-card--full' : '',
+                          ].filter(Boolean).join(' ')}
+                          onClick={() => !isFull && selectSchedule(group)}
+                          disabled={isFull}
+                          aria-pressed={isSelected}
+                          title={isFull ? `The ${group.short} schedule is full` : group.caption}
+                        >
+                          <span className="schedule-group-days">{group.short}</span>
+                          <span className="schedule-group-caption">{group.caption}</span>
+                          <span className="schedule-group-slots">
+                            {loadingSlots
+                              ? '···'
+                              : slot
+                                ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
+                                : '—'}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
 
                   <div className="campus-day-summary">
                     <span className="campus-day-counter">
-                      {formData.student_level === 'sped'
-                        ? 'Entry is allowed Monday to Saturday.'
-                        : formData.schedule
-                          ? `You may enter on ${formData.campus_days.join(', ')}.`
-                          : 'No schedule selected yet.'}
+                      {formData.schedule
+                        ? `You may enter on ${formData.campus_days.join(', ')}.`
+                        : 'No schedule selected yet.'}
                     </span>
                   </div>
                 </div>
               )}
 
-              {guardianDriven ? (
-                <>
-                  <div className="form-group col-span-2">
-                    <div className="schedule-note whole-day-parent-note">
-                      <Info size={13} />
-                      <span>
-                        Will the parent or guardian <strong>stay on campus the whole day</strong>?
-                        Register under <strong>Fetcher / Drop &amp; Go / Parent → Parent (Whole Day)</strong> instead.
-                        This form is for a vehicle on the student's own campus schedule.
-                        <button type="button" className="whole-day-parent-switch" onClick={switchToWholeDayParent}>
-                          Register as Parent (Whole Day)
-                        </button>
-                      </span>
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label>Driver's Full Name <span className="required">*</span></label>
-                    <input
-                      type="text"
-                      name="driver_name"
-                      value={formData.driver_name}
-                      onChange={handleInputChange}
-                      required
-                      placeholder="e.g. DELA CRUZ, JUAN"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Relationship to Student <span className="required">*</span></label>
-                    <select name="driver_relationship" value={formData.driver_relationship} onChange={handleInputChange} required>
-                      <option value="">Select Relationship</option>
-                      <option value="parent">Parent</option>
-                      <option value="guardian">Guardian</option>
-                      <option value="authorized_driver">Authorized Driver</option>
-                    </select>
-                  </div>
-                  <div className="form-group">
-                    <label>Driver's License Number <span className="required">*</span></label>
-                    <input
-                      type="text"
-                      name="drivers_license"
-                      value={formData.drivers_license}
-                      onChange={handleInputChange}
-                      required
-                      maxLength={13}
-                      placeholder={FIELD_PATTERNS.drivers_license.hint}
-                      className={formErrors.drivers_license ? 'input-error' : ''}
-                    />
-                    <span className="field-hint">The authorized driver's LTO license — {FIELD_PATTERNS.drivers_license.hint}</span>
-                  </div>
-                </>
-              ) : (
-                <div className="form-group col-span-2">
-                  <label>Driver's License Number <span className="required">*</span></label>
-                  <input
-                    type="text"
-                    name="drivers_license"
-                    value={formData.drivers_license}
-                    onChange={handleInputChange}
-                    required
-                    maxLength={13}
-                    placeholder={FIELD_PATTERNS.drivers_license.hint}
-                    className={formErrors.drivers_license ? 'input-error' : ''}
-                  />
-                  <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
-                </div>
-              )}
+              <div className="form-group col-span-2">
+                <label>Driver's License Number <span className="required">*</span></label>
+                <input
+                  type="text"
+                  name="drivers_license"
+                  value={formData.drivers_license}
+                  onChange={handleInputChange}
+                  required
+                  maxLength={13}
+                  placeholder={FIELD_PATTERNS.drivers_license.hint}
+                  className={formErrors.drivers_license ? 'input-error' : ''}
+                />
+                <span className="field-hint">{FIELD_PATTERNS.drivers_license.hint}</span>
+              </div>
 
             </div>
 
@@ -1990,7 +1778,7 @@ export default function RegisterPage() {
                 <h3 className="section-heading">Classification <span className="required">*</span></h3>
                 {/* Fetcher and Drop & Go share the drop-off/pick-up hours; they
                     are separate so CDSO can tell who picks up from who drops
-                    off. Only Parent (Whole Day) may stay. */}
+                    off. Only Driver (Whole Day) may stay. */}
                 <div className="reg-type-inline">
                   <button
                     type="button"
@@ -2016,7 +1804,7 @@ export default function RegisterPage() {
                     onClick={() => setFetcherType('standby')}
                   >
                     <span className="reg-type-inline-icon"><Car size={24} /></span>
-                    <span className="reg-type-inline-label">Parent (Whole Day)</span>
+                    <span className="reg-type-inline-label">Driver (Whole Day)</span>
                     <span className="reg-type-inline-desc">Stays on campus the whole day; allowed to park inside</span>
                   </button>
                 </div>

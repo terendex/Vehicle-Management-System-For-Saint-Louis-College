@@ -194,7 +194,7 @@ class VehicleRegistration(models.Model):
     class RegistrantType(models.TextChoices):
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
-        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Parent'
+        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Driver'
 
     # The legacy day-pattern codes, kept in step with accounts.User.Schedule.
     class Schedule(models.TextChoices):
@@ -245,14 +245,14 @@ class VehicleRegistration(models.Model):
     # Three kinds of fetcher. Fetcher (picks a student up) and Drop & Go
     # (drops one off) are held to the same drop-off/pick-up hours and max stay;
     # they are told apart so CDSO and the reports can see who does which.
-    # 'standby' is shown as "Parent (Whole Day)": the parent who stays on
-    # campus all day is filed here, apart from the students, and is the only
+    # 'standby' is shown as "Driver (Whole Day)": the parent or driver who
+    # stays on campus all day is filed here, apart from the students, and is the only
     # kind not held to the hours. Stored values keep their old names so
     # existing registrations (all drop_and_go or standby) carry over unchanged.
     class FetcherType(models.TextChoices):
         FETCHER     = 'fetcher',     'Fetcher'
         DROP_AND_GO = 'drop_and_go', 'Drop & Go'
-        STANDBY     = 'standby',     'Parent (Whole Day)'
+        STANDBY     = 'standby',     'Driver (Whole Day)'
 
     id = models.BigAutoField(primary_key=True, db_column='vehicle_registration_id')
     user = models.ForeignKey(                        # the portal account created on acceptance
@@ -301,9 +301,10 @@ class VehicleRegistration(models.Model):
     student_level = models.CharField(max_length=20, choices=StudentLevel.choices, blank=True)
     program_year  = models.CharField(max_length=100, blank=True)     # e.g. "BSIT - 3rd Year"
 
-    # Authorized driver — filled when the registrant is not the one driving
-    # (JHS/Elementary are always minors; some SpEd students cannot drive).
-    # When set, drivers_license holds THIS person's license, not the student's.
+    # Authorized driver — legacy. Student registrations used to allow a parent
+    # or hired driver (JHS/Elementary/SpEd); they are now self-driven College/SHS
+    # only and parents register as fetchers, so new rows leave these blank.
+    # Where an older row has one, drivers_license holds THAT person's license.
     driver_name         = models.CharField(max_length=255, blank=True)
     driver_relationship = models.CharField(
         max_length=30, choices=DriverRelationship.choices, blank=True,
@@ -318,7 +319,7 @@ class VehicleRegistration(models.Model):
 
     # Fetcher-specific — classification plus the students being fetched.
     # fetcher / drop_and_go: entry only during the allotted drop-off/pick-up hours.
-    # standby:              "Parent (Whole Day)" — stays on campus and may park all day.
+    # standby:              "Driver (Whole Day)" — stays on campus and may park all day.
     fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
     # [{full_name, student_id, student_level, program_year}, ...] — at least one
     # entry is required for fetcher registrations (validated in the views).
@@ -762,7 +763,7 @@ class RuleConstraint(models.Model):
     class ConstraintType(models.TextChoices):
         STUDENT_VEHICLE = 'student_vehicle', 'Student — Vehicle'
         EMPLOYEE        = 'employee',         'Employee'
-        FETCHER         = 'fetcher',          'Fetcher / Drop & Go / Parent'
+        FETCHER         = 'fetcher',          'Fetcher / Drop & Go / Driver'
         SUPPLIER        = 'supplier',         'Supplier'
 
     id              = models.BigAutoField(primary_key=True, db_column='rule_constraint_id')

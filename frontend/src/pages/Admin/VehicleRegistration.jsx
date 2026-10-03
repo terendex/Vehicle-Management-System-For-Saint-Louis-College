@@ -46,7 +46,7 @@ const REG_STATUS_LABELS = {
 const REG_TYPE_LABELS = {
   student:  'Student',
   employee: 'Employee',
-  fetcher:  'Fetcher / Drop & Go / Parent',
+  fetcher:  'Fetcher / Drop & Go / Driver',
 }
 
 function formatSchedule(entity) {
@@ -568,7 +568,7 @@ export default function VehicleRegistration() {
                 <option value="all">All Types</option>
                 <option value="student">Student</option>
                 <option value="employee">Employee</option>
-                <option value="fetcher">Fetcher / Drop &amp; Go / Parent</option>
+                <option value="fetcher">Fetcher / Drop &amp; Go / Driver</option>
               </select>
               {/* Same rule as the tiles above — one axis, shown in one place or
                   neither, so the toolbar never offers a filter the counts strip
@@ -740,7 +740,7 @@ export default function VehicleRegistration() {
                     <div className="detail-label">Fetcher Classification</div>
                     <div className="detail-value">
                       {selectedReg.fetcher_type === 'standby'
-                        ? 'Parent (Whole Day) — may stay and park inside campus'
+                        ? 'Driver (Whole Day) — may stay and park inside campus'
                         : selectedReg.fetcher_type === 'drop_and_go'
                           ? 'Drop & Go — allotted times only'
                           : selectedReg.fetcher_type === 'fetcher'

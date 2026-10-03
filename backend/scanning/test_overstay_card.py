@@ -120,7 +120,7 @@ class OverstayCardTests(APITestCase):
         self.assertEqual(_overstaying_now(), [])
 
     def test_a_standby_fetcher_is_allowed_to_wait(self):
-        """Standby fetchers — Parent (Whole Day) — may sit on campus; that is what the type means."""
+        """Standby fetchers — Driver (Whole Day) — may sit on campus; that is what the type means."""
         owner = self._owner('os6@slc.edu.ph', 'fetcher')
         VehicleRegistration.objects.create(
             user=owner, **name_kwargs(owner.full_name), email=owner.email,
@@ -137,7 +137,7 @@ class OverstayCardTests(APITestCase):
         self.assertEqual(self._plates(), {'DROPGO1'})
 
     def test_a_fetcher_is_not_either(self):
-        """Fetcher shares Drop & Go's max stay — only Parent (Whole Day) may wait."""
+        """Fetcher shares Drop & Go's max stay — only Driver (Whole Day) may wait."""
         owner = self._owner('os7b@slc.edu.ph', 'fetcher')
         VehicleRegistration.objects.create(
             user=owner, **name_kwargs(owner.full_name), email=owner.email,

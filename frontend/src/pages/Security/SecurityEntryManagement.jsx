@@ -70,7 +70,7 @@ function getMeta(status) { return STATUS_META[status] ?? STATUS_META.unknown }
 const CLASSIFICATION_META = {
   student:  { label: 'Student',              cls: 'cls-student'  },
   employee: { label: 'Employee',             cls: 'cls-employee' },
-  fetcher:  { label: 'Drop & Go / Fetcher / Parent', cls: 'cls-fetcher'  },
+  fetcher:  { label: 'Drop & Go / Fetcher / Driver', cls: 'cls-fetcher'  },
   supplier: { label: 'Supplier',             cls: 'cls-supplier' },
   event:    { label: 'Event Organizer',      cls: 'cls-event'    },
   visitor:  { label: 'Visitor',              cls: 'cls-visitor'  },

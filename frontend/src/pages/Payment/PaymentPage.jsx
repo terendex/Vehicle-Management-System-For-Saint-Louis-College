@@ -28,7 +28,7 @@ import BrandLogos from '../../components/BrandLogos'
 const TYPE_LABEL = {
   student:  'Student',
   employee: 'Employee',
-  fetcher:  'Fetcher / Drop & Go / Parent',
+  fetcher:  'Fetcher / Drop & Go / Driver',
 }
 
 function SlcHeader() {

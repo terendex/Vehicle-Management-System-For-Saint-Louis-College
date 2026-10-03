@@ -157,12 +157,12 @@ def _qr_public_url(registration, png):
 REGISTRANT_TYPE_LABELS = {
     'student':  'Student',
     'employee': 'Employee',
-    'fetcher':  'Fetcher / Drop & Go / Parent',
+    'fetcher':  'Fetcher / Drop & Go / Driver',
 }
 
 
 def registrant_type_label(registration):
-    """'Fetcher / Drop & Go / Parent', not the raw 'fetcher' the column stores."""
+    """'Fetcher / Drop & Go / Driver', not the raw 'fetcher' the column stores."""
     kind = registration.registrant_type or ''
     return REGISTRANT_TYPE_LABELS.get(kind, kind.capitalize())
 

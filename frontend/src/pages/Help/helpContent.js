@@ -124,7 +124,7 @@ export const HELP_TOPICS = [
       ] },
       { type: 'figure', id: 'start-privacy-consent' },
       { type: 'steps', items: [
-        'Choose your registrant type: Student — Vehicle, Employee, or Fetcher / Drop & Go / Parent.',
+        'Choose your registrant type: Student — Vehicle, Employee, or Fetcher / Drop & Go / Driver.',
       ] },
       { type: 'figure', id: 'start-application-form' },
       { type: 'steps', items: [
@@ -222,7 +222,7 @@ export const HELP_TOPICS = [
         'Authorized vehicles are recognised automatically from their plate.',
         'Unregistered or denied plates are flagged so you can act on them.',
         'Visitor passes can be issued for guests, and their exit recorded.',
-        'Every scan is labelled with who is entering — Student, Employee, Drop & Go / Fetcher / Parent, Supplier, Event Organizer, Visitor, or Unregistered — as a coloured tag beside the plate.',
+        'Every scan is labelled with who is entering — Student, Employee, Drop & Go / Fetcher / Driver, Supplier, Event Organizer, Visitor, or Unregistered — as a coloured tag beside the plate.',
       ] },
       { type: 'figure', id: 'guard-entry-management' },
       { type: 'p', text: 'When a plate is checked, the result appears in the middle of the screen. Compare the owner and vehicle with the car in front of you, then Acknowledge — or Override Entry with a reason if it should be let in anyway.' },

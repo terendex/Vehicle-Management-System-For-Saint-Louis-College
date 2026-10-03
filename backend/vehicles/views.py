@@ -1699,17 +1699,29 @@ def _license_db_conflict(drivers_license):
     return None
 
 
-# Student levels whose registrants are minors and can never drive themselves
-MINOR_STUDENT_LEVELS = ('jhs', 'elementary')
+# The only levels a Student — Vehicle registration may be filed under: the ones
+# old enough to hold a licence and drive themselves. JHS, Elementary and SpEd
+# students come to campus through a parent's Fetcher registration instead.
+SELF_DRIVING_STUDENT_LEVELS = ('college', 'shs')
+
+STUDENT_LEVEL_REFUSED = (
+    "Student registration is only for College and Senior High School students who "
+    "drive themselves. A parent or guardian who brings a student to campus should "
+    "register under Fetcher / Drop & Go / Driver.")
+
+STUDENT_DRIVER_REFUSED = (
+    "Student registration is only for students who drive the vehicle themselves. "
+    "A parent, guardian or authorized driver should register under "
+    "Fetcher / Drop & Go / Driver.")
 
 
 def _validate_authorized_driver(registrant_type, data):
     """
-    Enforce the registrant/driver split for student registrations.
-    JHS and Elementary students are minors, so an authorized adult driver
-    (parent/guardian/authorized driver) is mandatory and self-driving is
-    rejected even on direct API calls. When driver_name is present,
-    drivers_license is understood to be the driver's license.
+    A student registration is for a student who drives the vehicle themselves.
+    Parents, guardians and hired drivers register under Fetcher / Drop & Go /
+    Parent instead, so only College and SHS may apply here and no separate
+    driver may be named. Checked server-side so a stale bundle or a direct API
+    call cannot file the old guardian-driven shape.
     Returns an error message string, or None if valid.
     """
     # Reads one form value as tidy text, whether it arrived as a string or a
@@ -1723,22 +1735,13 @@ def _validate_authorized_driver(registrant_type, data):
     if registrant_type != 'student':
         return None                                  # only student applications have this split
 
-    level       = _val('student_level')
-    driver_name = _val('driver_name')
+    if _val('student_level') not in SELF_DRIVING_STUDENT_LEVELS:
+        return STUDENT_LEVEL_REFUSED
 
-    # A minor must name an adult driver. Checked here, not only in the browser,
-    # so a direct API call cannot skip it.
-    if level in MINOR_STUDENT_LEVELS and not driver_name:
-        return ("Junior High and Elementary students are minors and cannot drive. "
-                "An authorized driver (parent/guardian) is required.")
-
-    # If someone else will drive, the record must say who they are to the
-    # student and whose licence is on file.
-    if driver_name:
-        if not _val('driver_relationship'):
-            return "Please specify the authorized driver's relationship to the student."
-        if not _val('drivers_license'):
-            return "The authorized driver's license number is required."
+    # The licence on file is the student's own, so naming anyone else as the
+    # driver is the guardian-driven shape this form no longer accepts.
+    if _val('driver_name') or _val('driver_relationship'):
+        return STUDENT_DRIVER_REFUSED
     return None                                      # valid
 
 
@@ -2325,7 +2328,7 @@ class CdsoDirectRegisterView(APIView):
         if conflict:
             return Response({"error": conflict}, status=status.HTTP_400_BAD_REQUEST)
 
-        driver_error = _validate_authorized_driver(registrant_type, request.data)   # the minor-driver rule
+        driver_error = _validate_authorized_driver(registrant_type, request.data)   # students drive themselves
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2814,9 +2817,8 @@ class PublicOpenRegistrationView(APIView):
                          'student_id', 'employee_id', 'driver_contact'):
             data.pop(withheld, None)
 
-        # 7. Who may drive the vehicle. For a student it may be somebody else
-        # entirely (a parent, a driver), and that person's details are what the
-        # guard checks at the gate, so they are validated as a set.
+        # 7. Who drives the vehicle. A student registration is for the student
+        # driving it themselves; a parent or hired driver registers as a fetcher.
         driver_error = _validate_authorized_driver(registrant_type, data)
         if driver_error:
             return Response({"error": driver_error}, status=status.HTTP_400_BAD_REQUEST)
@@ -2834,12 +2836,12 @@ class PublicOpenRegistrationView(APIView):
         # left to CDSO to chase up later.
         if registrant_type == 'fetcher':
             # Classification is required: fetcher or drop_and_go (allotted
-            # times only), or standby, shown as "Parent (Whole Day)" (may stay
+            # times only), or standby, shown as "Driver (Whole Day)" (may stay
             # and park all day).
             fetcher_type = (data.get('fetcher_type') or '').strip()
             if fetcher_type not in VehicleRegistration.FetcherType.values:   # no default: they grant different access
                 return Response(
-                    {"error": "Please choose a classification: Fetcher, Drop & Go, or Parent (Whole Day)."},
+                    {"error": "Please choose a classification: Fetcher, Drop & Go, or Driver (Whole Day)."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             # At least one student must be listed

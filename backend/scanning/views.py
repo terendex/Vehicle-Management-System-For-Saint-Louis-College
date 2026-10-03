@@ -522,7 +522,7 @@ def _event_plate_result(plate_number: str, event, gate_id: str, user) -> dict:
 
 
 def _is_standby_fetcher(user) -> bool:
-    """Standby fetchers ("Parent (Whole Day)") are allowed to park inside campus
+    """Standby fetchers ("Driver (Whole Day)") are allowed to park inside campus
     while waiting, so the fetcher max-stay limit does not apply to them (only
     to Fetcher and Drop & Go)."""
     # bool(user) first, so an unregistered plate (no account at all) answers

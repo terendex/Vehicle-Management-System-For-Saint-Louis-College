@@ -105,7 +105,7 @@ export const SHOTS = [
     },
     marks: [
       m(1, 'Registration window', 'Shows whether applications are being accepted, and the dates of the current window.', card(text('Registration is currently open', 'body', false))),
-      m(2, 'Registrant type', 'Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Parent. The form that follows asks only for what that type needs.', union(card(text('Student — Vehicle', 'body')), card(text('Fetcher / Drop & Go', 'body')))),
+      m(2, 'Registrant type', 'Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs.', union(card(text('Student — Vehicle', 'body')), card(text('Fetcher / Drop & Go', 'body')))),
       m(3, 'Back to Login', 'Leave the application without submitting.', (p) => p.getByRole('button', { name: /Back to Login/ }).last()),
     ],
   }),
@@ -121,7 +121,7 @@ export const SHOTS = [
     marks: [
       m(1, 'Form type', 'The kind of application you are filling in.', union(text(/application form for a vehicle pass/i, 'body', false), text(/student — vehicle registration/i, 'body', false))),
       m(2, 'Campus Schedule', 'Choose one schedule (Mon · Wed · Fri or Tue · Thu · Fri). Slots are first come, first served; a full schedule cannot be selected.', union(text(/^campus schedule/i, 'body', false), card(text(/Choose one schedule/, 'body', false)))),
-      m(3, 'Registrant type', 'Switch here if you picked the wrong type.', union(card(text('Registered SLC student', 'body')), card(text('Parent or guardian', 'body')))),
+      m(3, 'Registrant type', 'Switch here if you picked the wrong type.', union(card(text('Registered SLC student', 'body')), card(text('Parent, guardian or driver', 'body')))),
       m(4, 'Vehicle identification', 'Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number. Choosing E-Bike asks for neither: the college issues the unit a control number (FM-001, FM-002, and so on) on submission, and that number is what the gate, the pass and the QR code use in place of a plate.', union(card(text(/brand-new and does not have a plate/, 'body', false)), (p) => p.getByPlaceholder(/AAA 0000/).first(), text('Select Color', 'body'))),
       m(5, 'Personal information', 'Your name, then contact details further down. Scroll to the end to attach the required documents and submit.', union(text(/^personal information$/i, 'body', false), ph('e.g. Santos'))),
     ],

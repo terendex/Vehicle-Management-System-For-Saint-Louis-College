@@ -338,7 +338,8 @@ def registration_confirmation_pdf(registration, include_documents=False, pending
         ("Driver's License", r.drivers_license),
     ] + specific)
 
-    # Only present when the registrant is not the one driving (minors, SpEd).
+    # Only on older student registrations filed with a parent or hired driver;
+    # new ones are self-driven, so the section drops out as empty.
     story += section('Authorized Driver', [
         ('Name', r.driver_name),
         ('Relationship',

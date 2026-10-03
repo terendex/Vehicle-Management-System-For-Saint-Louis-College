@@ -165,7 +165,7 @@ class AccessLog(models.Model):
         """
         STUDENT  = 'student',  'Student'
         EMPLOYEE = 'employee', 'Employee'
-        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Parent'
+        FETCHER  = 'fetcher',  'Fetcher / Drop & Go / Driver'
         VISITOR  = 'visitor',  'Visitor'
         SUPPLIER = 'supplier', 'Supplier'
         EVENT    = 'event',    'Event Organizer'

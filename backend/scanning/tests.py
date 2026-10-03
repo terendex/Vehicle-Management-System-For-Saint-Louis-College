@@ -191,7 +191,7 @@ class EntryLogicTests(TestCase):
         self.assertIn('Fetcher', result['message'])
 
     def test_whole_day_parent_allowed_outside_fetcher_hours(self):
-        """A Parent (Whole Day) — stored as fetcher_type 'standby' — stays on
+        """A Driver (Whole Day) — stored as fetcher_type 'standby' — stays on
         campus all day, so the drop-off/pick-up window does not bind them, and
         the guard is told which kind of fetcher this is. Monday 21:00 is past
         the seeded 06:00–19:00 fetcher rule."""
@@ -206,7 +206,7 @@ class EntryLogicTests(TestCase):
             mock_tz.localtime.return_value = monday_9pm
             result = check_entry(vehicle)
         self.assertTrue(result['allowed'])
-        self.assertIn('Parent (Whole Day)', result['message'])
+        self.assertIn('Driver (Whole Day)', result['message'])
 
     def _fetcher_of_kind(self, kind, n):
         from vehicles.models import VehicleRegistration

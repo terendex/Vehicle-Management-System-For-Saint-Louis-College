@@ -1367,6 +1367,50 @@
   margin-bottom: 12px;
 }
 
+/* School year (the label) and registration window (the real dates) each get
+   their own bordered group so the two pairs never read as one set of dates. */
+.rc-period-groups {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.rc-period-group {
+  flex: 1 1 300px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 4px;
+  background: #FFFFFF;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+}
+
+.rc-period-group-title {
+  padding: 0 4px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #2E4C63;
+}
+
+.rc-period-group-hint {
+  margin: 0 0 10px;
+}
+
+.rc-period-group .rc-period-form-fields .rc-reg-field {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.rc-period-summary {
+  font-size: 12.5px;
+  color: #2E4C63;
+  background: #EAF3FA;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+}
+
 .rc-period-form-actions {
   display: flex;
   justify-content: flex-end;

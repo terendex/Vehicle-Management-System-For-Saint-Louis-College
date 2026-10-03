@@ -189,18 +189,19 @@ class TheFormsPayloadIsAcceptedTests(TrialFlowTestCase):
              'program_year': 'Grade 7'},
         ])
 
-    def test_a_guardian_driven_student_still_names_its_driver(self):
-        """JHS/Elementary/SpEd register an adult driver; only their number went."""
-        reg = self.submit(student_payload(
+    def test_a_guardian_driven_student_is_sent_to_the_fetcher_form(self):
+        """A parent driving a JHS student registers as a fetcher now; the
+        student form no longer takes a separate driver."""
+        res = self.client.post('/api/vehicles/register/open/', student_payload(
             email='parent.driver@gmail.com', plate_number='GRD 1111',
             drivers_license='N01-20-800004',
             student_level='jhs', student_program='', student_year='',
             student_grade='7', program_year='JHS - Grade 7',
             driver_name='DELA CRUZ, PEDRO', driver_relationship='parent',
-        ))
-        self.assertEqual(reg.driver_name, 'DELA CRUZ, PEDRO')
-        self.assertEqual(reg.driver_relationship, 'parent')
-        self.assertEqual(reg.driver_contact, '')
+        ), format='json')
+        self.assertEqual(res.status_code, 400, res.data)
+        self.assertIn('Fetcher', res.data['error'])
+        self.assertFalse(VehicleRegistration.objects.filter(plate_number='GRD 1111').exists())
 
     def test_a_brand_new_car_registers_on_its_conduction_number(self):
         reg = self.submit(student_payload(
