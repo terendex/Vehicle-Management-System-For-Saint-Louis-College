@@ -881,17 +881,62 @@ function OwnerLookupModal({ data, onPick, onClose }) {
 
 
 // ─── Record Slip Picker ────────────────────────────────────────────────────────
-// The toolbar's way to Record Visitor Slip: today's visitor slips, inside or
-// already gone, plus any from earlier days never recorded — the unrecorded
-// ones first. A slip can be recorded at any time. Picking one opens the record
-// form — the same one the Active Visitors row and the slip dialog open.
+// The toolbar's way to Record Visitor Slip, in two tabs. To record: the slips
+// still blank — today's, inside or already gone, plus any from earlier days.
+// History: every slip already recorded, any day, searched and paged by the
+// server — kept apart so the To record list does not fill up with finished
+// ones. Newest entry first in both. Picking a row opens the record form (the
+// edit form for a History row) — the same one the Active Visitors row opens.
+const SLIP_PAGE_SIZE = 8
+// Plates are matched without spaces or dashes, so "ASD234" finds "ASD 234".
+const slipKey = (s) => (s || '').toUpperCase().replace(/[\s-]/g, '')
 function RecordSlipPickerModal({ passes, onPick, onClose }) {
-  const sorted = [...passes].sort((a, b) => (!!a.visitor_name - !!b.visitor_name)
-    || new Date(b.entered_at) - new Date(a.entered_at))
+  const pending = passes.filter(p => !p.visitor_name)
+    .sort((a, b) => new Date(b.entered_at) - new Date(a.entered_at))
+  const [tab, setTab]     = useState(pending.length ? 'pending' : 'history')
+  const [query, setQuery] = useState('')
+  const [page, setPage]   = useState(1)
+  const [history, setHistory] = useState({ count: 0, results: [], loaded: false })
+
+  // History comes from the server a page at a time; typing waits a moment so
+  // each keystroke is not its own request.
+  useEffect(() => {
+    if (tab !== 'history') return
+    let stale = false
+    const t = setTimeout(() => {
+      getVisitorPasses({ scope: 'history', q: query.trim(), page, page_size: SLIP_PAGE_SIZE })
+        .then(r => { if (!stale) setHistory({ count: r.data.count, results: r.data.results, loaded: true }) })
+        .catch(async (err) => {
+          if (stale) return
+          setHistory(h => ({ ...h, loaded: true }))
+          await notify.error(err.response?.data?.error || err.response?.data?.detail
+            || 'The slip history could not be loaded. Check the connection and try again.',
+          { title: 'History not loaded' })
+        })
+    }, query ? 300 : 0)
+    return () => { stale = true; clearTimeout(t) }
+  }, [tab, query, page])
+
+  const q = slipKey(query)
+  const pendingMatches = q
+    ? pending.filter(p => [p.plate_number, p.conduction_number].some(v => slipKey(v).includes(q)))
+    : pending
+  const total = tab === 'pending' ? pendingMatches.length : history.count
+  const pages = Math.max(1, Math.ceil(total / SLIP_PAGE_SIZE))
+  const current = Math.min(page, pages)   // the list can shrink under a refresh
+  const shown = tab === 'pending'
+    ? pendingMatches.slice((current - 1) * SLIP_PAGE_SIZE, current * SLIP_PAGE_SIZE)
+    : history.results
+  const switchTab = (next) => { setTab(next); setQuery(''); setPage(1) }
+
   const day = (ts) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const where = (p) => p.status === 'active'
     ? `Inside · ${passTimeInfo(p).label}`
     : p.exited_at ? `Exited ${fmtClock(p.exited_at)}` : `Pass ${p.status}`
+  const empty = tab === 'pending'
+    ? (query.trim() ? `No blank slip matches “${query.trim()}”.` : 'Every visitor slip has been recorded. Recorded slips are in History.')
+    : (!history.loaded ? 'Loading…'
+      : query.trim() ? `No recorded slip matches “${query.trim()}”.` : 'No visitor slips have been recorded yet.')
   return (
     <div className="em-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="em-modal">
@@ -900,28 +945,49 @@ function RecordSlipPickerModal({ passes, onPick, onClose }) {
           <button className="em-modal-close" onClick={onClose}><X size={15} /></button>
         </div>
         <div className="em-modal-body">
-          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
-            Pick the visitor whose slip you are holding — match the plate printed on it.
-            Visitors who already left can still be recorded.
-          </p>
-          <div className="em-lookup-list">
-            {sorted.map(p => {
-              return (
-                <button type="button" key={p.id} className="em-lookup-row" onClick={() => onPick(p)}>
-                  <div className="em-lookup-main">
-                    <span className="em-lookup-plate">{formatPlateNumber(p.plate_number)}</span>
-                    {p.visitor_name
-                      ? <span className="em-class-tag cls-visitor">Recorded</span>
-                      : <span className="em-class-tag em-tag-unrecorded"><AlertTriangle size={9} style={{ verticalAlign: -1 }} /> Not recorded</span>}
-                  </div>
-                  <div className="em-lookup-sub">
-                    {p.visitor_name ? `${p.visitor_name} · ` : ''}
-                    Entered {p.entered_at ? `${p.is_today === false ? `${day(p.entered_at)}, ` : ''}${fmtClock(p.entered_at)}` : '—'} · {where(p)}
-                  </div>
-                </button>
-              )
-            })}
+          <div className="em-tabs" style={{ marginBottom: 10 }}>
+            <button type="button" className={`em-tab${tab === 'pending' ? ' active' : ''}`}
+              onClick={() => switchTab('pending')}>To record ({pending.length})</button>
+            <button type="button" className={`em-tab${tab === 'history' ? ' active' : ''}`}
+              onClick={() => switchTab('history')}>History</button>
           </div>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
+            {tab === 'pending'
+              ? 'Pick the visitor whose slip you are holding — match the plate printed on it. Visitors who already left can still be recorded.'
+              : 'Slips already recorded, newest first. Pick one to correct its details.'}
+          </p>
+          <div className="em-slip-search">
+            <Search size={14} />
+            <input className="em-input" value={query} autoFocus
+              placeholder={tab === 'pending' ? 'Search plate or conduction no.' : 'Search plate, visitor name or conduction no.'}
+              onChange={(e) => { setQuery(e.target.value); setPage(1) }} />
+          </div>
+          {shown.length === 0 && <p className="em-slip-empty">{empty}</p>}
+          <div className="em-lookup-list">
+            {shown.map(p => (
+              <button type="button" key={p.id} className="em-lookup-row" onClick={() => onPick(p)}>
+                <div className="em-lookup-main">
+                  <span className="em-lookup-plate">{formatPlateNumber(p.plate_number)}</span>
+                  {p.visitor_name
+                    ? <span className="em-class-tag cls-visitor">Recorded</span>
+                    : <span className="em-class-tag em-tag-unrecorded"><AlertTriangle size={9} style={{ verticalAlign: -1 }} /> Not recorded</span>}
+                </div>
+                <div className="em-lookup-sub">
+                  {p.visitor_name ? `${p.visitor_name} · ` : ''}
+                  Entered {p.entered_at ? `${p.is_today === false ? `${day(p.entered_at)}, ` : ''}${fmtClock(p.entered_at)}` : '—'} · {where(p)}
+                </div>
+              </button>
+            ))}
+          </div>
+          {total > SLIP_PAGE_SIZE && (
+            <div className="em-slip-pager">
+              <button type="button" className="em-btn em-btn-secondary" disabled={current <= 1}
+                onClick={() => setPage(current - 1)}>Previous</button>
+              <span>Page {current} of {pages} · {total} slips</span>
+              <button type="button" className="em-btn em-btn-secondary" disabled={current >= pages}
+                onClick={() => setPage(current + 1)}>Next</button>
+            </div>
+          )}
         </div>
         <div className="em-modal-foot">
           <button type="button" className="em-btn em-btn-secondary" onClick={onClose}>Cancel</button>
@@ -1875,14 +1941,8 @@ export default function SecurityEntryManagement() {
 
   // Walk-ins inside whose slip has not been typed in yet.
   const unrecordedCount = recordable.filter(p => !p.visitor_name).length
-  const openRecordSlip = async () => {
-    if (recordable.length === 0) {
-      await notify.info('There are no visitor slips today, and none waiting from earlier days. A slip is recorded for a visitor let in with Allow Entry as Visitor.',
-        { title: 'No visitor slips to record' })
-      return
-    }
-    setPickingSlip(true)
-  }
+  // Always opens: with nothing left to record it lands on the History tab.
+  const openRecordSlip = () => setPickingSlip(true)
 
   const handleExtendPass = (p) => {
     extendVisitorPass(p.id, 30)

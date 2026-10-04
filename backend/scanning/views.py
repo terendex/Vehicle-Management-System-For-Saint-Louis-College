@@ -1315,6 +1315,8 @@ class VisitorPassView(APIView):
         # who is here now, not a history. The three relations are all rendered
         # per row, so they are joined rather than fetched one query at a time.
         today = timezone.localdate()
+        if request.query_params.get('scope') == 'history':
+            return self._history(request, today)
         passes = VisitorPass.objects.filter(valid_date=today)
         # ?scope=recordable — the guard's Record Slip list. A walk-in's slip can
         # be recorded at any time, inside or not, so it also carries every
@@ -1329,6 +1331,29 @@ class VisitorPassView(APIView):
         for row in data:
             row['is_today'] = row['valid_date'] == today.isoformat()
         return Response(data)
+
+    # ?scope=history — the Record Slip picker's History tab: every pass that
+    # already has its details, any day, newest first. Kept out of the To record
+    # list so that list only ever shows the slips still waiting. Searched and
+    # paged here, not in the browser, because it grows without end.
+    def _history(self, request, today):
+        from config.pagination import DefaultPagination
+        passes = VisitorPass.objects.exclude(visitor_name='')
+        q = (request.query_params.get('q') or '').strip()
+        if q:
+            ident = q.upper().replace(' ', '')   # plates and conduction numbers are stored without spaces
+            passes = passes.filter(Q(plate_number__icontains=ident)
+                                   | Q(conduction_number__icontains=ident)
+                                   | Q(visitor_name__icontains=' '.join(q.split())))
+        passes = passes.select_related('vehicle', 'office', 'issued_by').order_by('-entered_at', '-pk')
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(passes, request, view=self)
+        rows = VisitorPassSerializer(page if page is not None else passes[:200], many=True).data
+        for row in rows:
+            row['is_today'] = row['valid_date'] == today.isoformat()
+        if page is None:
+            return Response(rows)
+        return Response({'count': paginator.page.paginator.count, 'results': rows})
 
 
 # Every slip endpoint starts here: turn a scanned QR into the row it names, or

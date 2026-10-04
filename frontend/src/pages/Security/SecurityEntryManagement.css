@@ -421,6 +421,37 @@
   overflow-y: auto;
 }
 
+/* Record Visitor Slip picker: search above the list, pager below it. */
+.em-slip-search {
+  position: relative;
+  margin-bottom: 10px;
+}
+.em-slip-search svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #64839C;
+  pointer-events: none;
+}
+.em-slip-search .em-input { width: 100%; padding-left: 30px; }
+
+.em-slip-empty {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #64839C;
+}
+
+.em-slip-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64839C;
+}
+
 .em-lookup-row {
   display: block;
   width: 100%;

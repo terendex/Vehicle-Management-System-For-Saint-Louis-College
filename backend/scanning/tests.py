@@ -666,6 +666,38 @@ class VisitorPassAPITests(TestCase):
         self.assertNotIn(named_old, rows)                 # earlier day, already recorded
         self.assertNotIn(legacy, rows)                    # before blank slips: nothing to copy from
 
+    def test_history_scope_lists_recorded_slips_searched_and_paged(self):
+        from scanning.models import VisitorPass
+        today = timezone.localdate()
+        blank = self._walk_in('VIS042').data['id']
+        old = self.client.post('/api/scan/visitor-pass/',
+                               {'plate_number': 'VIS043', 'visitor_name': 'BEA', 'purpose': 'V'},
+                               format='json').data['id']
+        VisitorPass.objects.filter(pk=old).update(valid_date=today - timedelta(days=40))
+        new = self.client.post('/api/scan/visitor-pass/',
+                               {'plate_number': 'VIS044', 'visitor_name': 'CARLO', 'purpose': 'V'},
+                               format='json').data['id']
+
+        data = self.client.get('/api/scan/visitor-pass/',
+                               {'scope': 'history', 'page': 1, 'page_size': 50}).data
+        ids = [p['id'] for p in data['results']]
+        self.assertNotIn(blank, ids)                      # still waiting: To record, not History
+        self.assertIn(old, ids)                           # any day, not only today
+        self.assertLess(ids.index(new), ids.index(old))   # newest first
+        self.assertFalse(next(p for p in data['results'] if p['id'] == old)['is_today'])
+
+        by_plate = self.client.get('/api/scan/visitor-pass/',
+                                   {'scope': 'history', 'q': 'vis 043', 'page': 1}).data
+        self.assertEqual([p['id'] for p in by_plate['results']], [old])
+        by_name = self.client.get('/api/scan/visitor-pass/',
+                                  {'scope': 'history', 'q': 'carlo', 'page': 1}).data
+        self.assertEqual([p['id'] for p in by_name['results']], [new])
+
+        paged = self.client.get('/api/scan/visitor-pass/',
+                                {'scope': 'history', 'page': 1, 'page_size': 1}).data
+        self.assertGreaterEqual(paged['count'], 2)
+        self.assertEqual(len(paged['results']), 1)
+
     def test_form_slip_renders_longer(self):
         from scanning.models import VisitorPass
         from scanning.slip_printer import render_slip

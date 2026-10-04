@@ -23,8 +23,7 @@ REPORT_CDSO_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'cdsolo
 LH_INSTITUTION = 'Saint Louis College'
 LH_LOCATION    = 'of San Fernando, La Union'
 LH_TAGLINE     = 'The Beacon of Wisdom in the North'
-LH_ACCRED      = ('•  Center of Excellence in Teacher Education        '
-                  '•  ISO 9001: 2015 Quality Management System Certified        '
+LH_ACCRED      = ('•  ISO 9001: 2015 Quality Management System Certified        '
                   '•  CHED Deregulated Status')
 
 
