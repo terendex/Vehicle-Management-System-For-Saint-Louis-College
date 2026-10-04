@@ -54,7 +54,7 @@ export default function PaymentDeadline({ display, secondsLeft, windowDays = 3, 
             You have {windowDays} days from applying. If the Official Receipt is not filed by
             then, this application <strong>expires automatically</strong> and you will need to
             submit a new one.
-            {!label && ' The deadline has passed — submit now if you already paid; if it is refused, apply again.'}
+            {!label && ' The deadline has passed. If you have already paid, submit now. If it is refused, please apply again.'}
           </p>
         )}
       </div>

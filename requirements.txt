@@ -138,3 +138,7 @@ django-storages[s3]==1.14.4
 boto3==1.38.28
 openpyxl==3.1.5
 reportlab==5.0.0
+# Decodes iPhone HEIC receipt photos so the payment step can store them as JPEG
+# (Chrome/Edge cannot display HEIC). Decode-only build of pillow-heif; without
+# it the upload still works and keeps the original file.
+pi-heif==1.4.0

@@ -534,6 +534,18 @@ class VehicleRegistration(models.Model):
             created_at__lte=now - cls.PAYMENT_WINDOW - cls.PAYMENT_GRACE,
         )
 
+    @classmethod
+    def holds_schedule_q(cls):
+        """Registrations that book a campus schedule and take a slot on its days.
+
+        Students, and Drivers (Whole Day): a driver who parks inside all day
+        uses a parking space exactly as a student does, so both draw on the
+        same per-day capacity. Fetcher and Drop & Go come and go within the
+        allotted hours and hold no day at all.
+        """
+        return (models.Q(registrant_type='student')
+                | models.Q(registrant_type='fetcher', fetcher_type=cls.FetcherType.STANDBY))
+
     # The name as every screen, email and PDF prints it. Computed, not stored.
     @property
     def full_name(self) -> str:

@@ -558,7 +558,9 @@ def send_acceptance_email(registration, temp_password, user_code=None):
             ('Department',  esc_or_dash(department_label(registration))),
         ]
 
-    if registration.registrant_type == 'student':
+    # Students and Drivers (Whole Day) booked a rotation; everyone else is
+    # free to come on any campus day.
+    if registration.registrant_type == 'student' or registration.campus_days:
         campus_days_str = esc_or_dash(', '.join(registration.campus_days)
                                       if registration.campus_days else '')
     else:
@@ -727,7 +729,10 @@ def send_pending_email(registration):
         # Classification and the students being collected are this application's
         # identity, the way a student ID or a department is for the other two.
         id_pairs = _fetcher_pairs(registration)
-        schedule_pairs = [('Campus Days', 'Any campus day (Monday to Saturday)')]
+        # A Driver (Whole Day) booked a rotation, the others hold no day.
+        schedule_pairs = [('Campus Days',
+                           esc(', '.join(registration.campus_days)) if registration.campus_days
+                           else 'Any campus day (Monday to Saturday)')]
 
     full_name_val    = esc(registration.full_name)
     email_val        = esc(registration.email)

@@ -436,6 +436,17 @@ else:
         print('[settings] WARNING: USE_R2=false in production - uploaded files '
               'will be lost on every redeploy. Set USE_R2=true.')
 
+# The same goes for local storage: Django never deletes an upload, so every
+# test that posts a receipt or photo left a file in the real media folder
+# (dozens of placeholder receipt_XXXXXXX.jpg per run). Give each test run its
+# own throwaway folder, removed when the run exits.
+if _TESTING:
+    import atexit
+    import shutil
+    import tempfile
+    MEDIA_ROOT = tempfile.mkdtemp(prefix='slc-test-media-')
+    atexit.register(shutil.rmtree, MEDIA_ROOT, ignore_errors=True)
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ── Email Configuration ───────────────────────────────────────────────────

@@ -14,6 +14,7 @@ of their choosing, and these tests pin that the endpoint resolves to one whether
 the payload names the rotation or names days.
 """
 from datetime import timedelta
+from unittest import mock
 
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -436,3 +437,69 @@ class WalkInRegistrationStillWorksTests(RegistrationInputTestCase):
         reg = VehicleRegistration.objects.get(email=payload['email'])
         self.assertEqual(reg.campus_days, [])
         self.assertEqual(reg.schedule, 'ANY')
+
+
+class WholeDayDriverBooksAScheduleTests(RegistrationInputTestCase):
+    """A Driver (Whole Day) parks inside all day, so they book a rotation and
+    take a slot on its days exactly as a student does. Fetcher and Drop & Go
+    still come on any campus day within the allotted hours."""
+
+    def driver(self, fetcher_type='standby', **over):
+        fields = dict(registrant_type='fetcher', fetcher_type=fetcher_type,
+                      student_level='', program_year='',
+                      fetcher_students=[{'full_name': 'DELA CRUZ, JUAN',
+                                         'student_level': 'elementary'}])
+        fields.update(over)
+        return fields
+
+    def test_a_driver_must_choose_a_schedule(self):
+        res = self.submit(**self.driver(schedule='', campus_days=[]))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('must choose a schedule', res.data['error'])
+
+    def test_a_driver_books_the_whole_rotation(self):
+        reg = self.submit_ok(**self.driver(schedule='TTHF', campus_days=[]))
+        self.assertEqual(reg.schedule, 'TTHF')
+        self.assertEqual(reg.campus_days, SCHEDULE_GROUP_DAYS['TTHF'])
+
+    def test_fetcher_and_drop_and_go_hold_no_day(self):
+        for kind in ('fetcher', 'drop_and_go'):
+            reg = self.submit_ok(**self.driver(kind, schedule='MWF'))
+            self.assertEqual(reg.schedule, 'ANY', kind)
+            self.assertEqual(reg.campus_days, [], kind)
+
+    def test_a_driver_cannot_claim_the_sped_exception(self):
+        reg = self.submit_ok(**self.driver(schedule='MWF', student_level='sped'))
+        self.assertEqual(reg.campus_days, SCHEDULE_GROUP_DAYS['MWF'])
+
+    def test_drivers_and_students_share_the_slots(self):
+        self.submit_ok(schedule='MWF')
+        slots = self.client.get('/api/vehicles/register/schedule-slots/').data
+        after_student = slots['groups']['MWF']['used']
+        self.submit_ok(**self.driver(schedule='MWF'))
+        slots = self.client.get('/api/vehicles/register/schedule-slots/').data
+        self.assertEqual(slots['groups']['MWF']['used'], after_student + 1)
+
+        # Other fetchers take nothing.
+        self.submit_ok(**self.driver('drop_and_go'))
+        slots = self.client.get('/api/vehicles/register/schedule-slots/').data
+        self.assertEqual(slots['groups']['MWF']['used'], after_student + 1)
+
+    def test_a_full_schedule_refuses_a_driver(self):
+        self.submit_ok(schedule='MWF')
+        with mock.patch('vehicles.views.SCHEDULE_SLOT_LIMIT', 1):
+            res = self.submit(**self.driver(schedule='MWF'))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('The Mon · Wed · Fri schedule is full '
+                      '(Monday, Wednesday and Friday are at capacity).', res.data['error'])
+
+    def test_the_gate_reads_the_drivers_days_after_acceptance(self):
+        from scanning.entry_logic import _allowed_weekdays
+        reg = self.submit_ok(**self.driver(schedule='TTHF'))
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.post(f'/api/vehicles/registrations/{reg.pk}/accept/',
+                               {'or_number': '7654321'}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.user.campus_days, SCHEDULE_GROUP_DAYS['TTHF'])
+        self.assertEqual(sorted(_allowed_weekdays(reg.user)), [1, 3, 4])

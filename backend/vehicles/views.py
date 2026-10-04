@@ -47,6 +47,7 @@ from .models import Vehicle, RuleConstraint, ParkingSpace, ParkingZone, Referenc
 from .models import _normalize_plate            # the one way a plate is tidied, shared with the models
 from .serializers import VehicleSerializer, RuleConstraintSerializer, ParkingSpaceSerializer, ParkingZoneSerializer, ReferenceItemSerializer, CameraSerializer, ParkingNoticeSerializer, ScheduledVisitSerializer
 from . import parking_camera                    # the background detector threads, one per watched zone
+from .receipt_images import heic_to_jpeg        # iPhone receipt photos stored as JPEG, which every browser shows
 
 logger = logging.getLogger(__name__)
 from accounts.audit import audit, AuditedViewSetMixin   # records staff actions; the mixin does it for whole ViewSets
@@ -2586,7 +2587,8 @@ REGISTRATION_OPEN_MONTH  = 6   # June  (tentative — 2 months before school yea
 REGISTRATION_OPEN_DAY    = 1
 REGISTRATION_CLOSE_MONTH = 10  # October (tentative — end of first semester enrollment window)
 REGISTRATION_CLOSE_DAY   = 31
-# How many students may hold any one campus day. Read here and by the admin
+# How many students and Drivers (Whole Day) together may hold any one campus
+# day (VehicleRegistration.holds_schedule_q). Read here and by the admin
 # dashboard in accounts/views.py, so both draw the line in the same place.
 SCHEDULE_SLOT_LIMIT      = 100  # per day
 
@@ -2672,7 +2674,7 @@ class ScheduleSlotsView(APIView):
         # otherwise a day could be handed out twice over while a queue of
         # submissions sat waiting for review.
         active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-        base = (VehicleRegistration.objects.filter(status__in=active, registrant_type='student')   # only students hold named days; employees and fetchers are 'ANY'
+        base = (VehicleRegistration.objects.filter(VehicleRegistration.holds_schedule_q(), status__in=active)   # students and Drivers (Whole Day); everyone else is 'ANY'
                 .exclude(VehicleRegistration.overdue_q()))   # an application past its payment deadline holds nothing; the submit sweeps it
         limit = SCHEDULE_SLOT_LIMIT
 
@@ -2937,12 +2939,16 @@ class PublicOpenRegistrationView(APIView):
             # Classification is required: fetcher or drop_and_go (allotted
             # times only), or standby, shown as "Driver (Whole Day)" (may stay
             # and park all day).
-            fetcher_type = (data.get('fetcher_type') or '').strip()
+            # str() first: an anonymous caller can send a number or a list.
+            fetcher_type = str(data.get('fetcher_type') or '').strip()
             if fetcher_type not in VehicleRegistration.FetcherType.values:   # no default: they grant different access
                 return Response(
-                    {"error": "Please choose a classification: Fetcher, Drop & Go, or Driver (Whole Day)."},
+                    {"error": "Please choose a classification: Fetcher, Drop & Go or Driver (Whole Day)."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # The checked value is the one stored, so the schedule rule below
+            # and the serializer read the same classification.
+            data['fetcher_type'] = fetcher_type
             # At least one student must be listed
             students = data.get('fetcher_students') or []
             # isinstance as well as the length: this arrives as JSON from an
@@ -2996,11 +3002,16 @@ class PublicOpenRegistrationView(APIView):
                                 status=status.HTTP_400_BAD_REQUEST)
             data['program_year'] = program_year
 
-        # 9. Campus days. Employees and fetchers come in whenever they are
-        # needed, so they hold no particular day and take up no slot: 'ANY' with
-        # an empty day list is what entry_logic reads as "no day restriction".
-        # Students are the only ones the schedule capacity applies to.
-        if registrant_type == 'employee' or registrant_type == 'fetcher':
+        # 9. Campus days. Employees, Fetchers and Drop & Go come in whenever
+        # they are needed, so they hold no particular day and take up no slot:
+        # 'ANY' with an empty day list is what entry_logic reads as "no day
+        # restriction". Students book a rotation, and so does a Driver (Whole
+        # Day), who parks inside all day and so uses a slot just as a student
+        # does (see VehicleRegistration.holds_schedule_q).
+        books_schedule = (registrant_type == 'student'
+                          or (registrant_type == 'fetcher'
+                              and data.get('fetcher_type') == VehicleRegistration.FetcherType.STANDBY))
+        if not books_schedule:
             data['schedule'] = 'ANY'
             data['campus_days'] = []
         else:
@@ -3018,8 +3029,11 @@ class PublicOpenRegistrationView(APIView):
             # Returns the whole rotation and its code, or a ready-to-show
             # error. student_level is passed because SpEd students attend every
             # campus day and are the one exception to the 3-day allowance.
+            # A driver's level is never consulted: the SpEd exception belongs to
+            # the student, and a posted level must not unlock every day for a driver.
             campus_days, schedule_code, day_error = resolve_student_schedule(
-                data.get('schedule'), data.get('campus_days', []), data.get('student_level'))
+                data.get('schedule'), data.get('campus_days', []),
+                data.get('student_level') if registrant_type == 'student' else None)
             if day_error:
                 return Response({"error": day_error}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3027,7 +3041,7 @@ class PublicOpenRegistrationView(APIView):
             # ones — a rotation takes a slot on each of its days, including the
             # ones the applicant never explicitly picked.
             active = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
-            base = VehicleRegistration.objects.filter(status__in=active, registrant_type='student')
+            base = VehicleRegistration.objects.filter(VehicleRegistration.holds_schedule_q(), status__in=active)
 
             # One query with a FILTER per day, for the same reason as
             # ScheduleSlotsView above: a .count() per day is a round-trip per
@@ -3045,9 +3059,12 @@ class PublicOpenRegistrationView(APIView):
                 # whole schedule — saying "Friday is full, pick another day"
                 # would offer a choice the form no longer has.
                 label = SCHEDULE_DAY_LABELS.get(schedule_code, schedule_code)
+                # "Friday is" / "Monday and Wednesday are", read as a sentence.
+                named = (full_days[0] if len(full_days) == 1
+                         else f"{', '.join(full_days[:-1])} and {full_days[-1]}")
                 return Response(
                     {"error": f"The {label} schedule is full "
-                              f"({', '.join(full_days)} at capacity). "
+                              f"({named} {'is' if len(full_days) == 1 else 'are'} at capacity). "
                               f"Please choose the other schedule."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
@@ -3368,6 +3385,10 @@ class RegistrationPaymentView(APIView):
                               f"{RECEIPT_IMAGE_MAX_BYTES // (1024 * 1024)} MB)."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            # iPhone HEIC stored as JPEG, so the CDSO's browser can show it.
+            # Done before the lock: decoding takes a moment, and nothing here
+            # needs the row. Falls back to the original if it cannot convert.
+            receipt_image = heic_to_jpeg(receipt_image)
 
         # Locked, then asked once more. The checks above ran on a row read
         # before a slow upload may have finished arriving, and the deadline

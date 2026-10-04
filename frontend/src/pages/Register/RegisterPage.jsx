@@ -55,41 +55,41 @@ function describeEmail(value, { mode }) {
   const needsId     = mode === EMAIL_MODE.SCHOOL_ID
   const needsDomain = mode !== EMAIL_MODE.PERSONAL
 
-  if (/\s/.test(email)) return 'Email address can’t contain spaces — remove them.'
+  if (/\s/.test(email)) return 'Your email address cannot contain spaces. Please remove them.'
 
   const parts = email.split('@')
   if (parts.length === 1) {
-    if (needsId) return `Email address is missing the @ — enter your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
-    if (needsDomain) return `Email address is missing the @ — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
-    return 'Email address is missing the @ — e.g. juandelacruz@gmail.com.'
+    if (needsId) return `Your email address is missing the @. Enter your school ID number (8 digits) followed by @${SCHOOL_EMAIL_DOMAIN}.`
+    if (needsDomain) return `Your email address is missing the @, for example juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
+    return 'Your email address is missing the @, for example juandelacruz@gmail.com.'
   }
-  if (parts.length > 2) return 'Email address has more than one @ — keep only the one before the domain.'
+  if (parts.length > 2) return 'Your email address has more than one @. Keep only the one before the domain.'
 
   const [local, domain] = parts
   if (!local) {
-    if (needsId) return 'Enter your 8-digit school ID before the @.'
+    if (needsId) return 'Enter your school ID number (8 digits) before the @.'
     if (needsDomain) return 'Enter the name part of your school email before the @.'
-    return 'Enter a name before the @ — e.g. juandelacruz@gmail.com.'
+    return 'Enter a name before the @, for example juandelacruz@gmail.com.'
   }
 
   if (!needsDomain) {
-    if (!domain) return 'Add a domain after the @ — e.g. gmail.com.'
-    if (domain.startsWith('.') || domain.endsWith('.')) return `“${domain}” can’t start or end with a dot.`
-    if (!domain.includes('.')) return `“${domain}” is missing its ending — e.g. ${domain}.com.`
-    return 'Invalid email address format — e.g. juandelacruz@gmail.com.'
+    if (!domain) return 'Add a domain after the @, for example gmail.com.'
+    if (domain.startsWith('.') || domain.endsWith('.')) return `“${domain}” cannot start or end with a dot.`
+    if (!domain.includes('.')) return `“${domain}” is missing its ending, for example ${domain}.com.`
+    return 'This email address is not valid. Use a format like juandelacruz@gmail.com.'
   }
 
   if (!domain) return `Add the school domain after the @: ${SCHOOL_EMAIL_DOMAIN}.`
   if (domain !== SCHOOL_EMAIL_DOMAIN) {
-    return `Registration needs your SLC school email — replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
+    return `Registration requires your SLC school email. Replace @${domain} with @${SCHOOL_EMAIL_DOMAIN}.`
   }
   if (needsId) {
     if (!/^\d+$/.test(local)) {
-      return 'The part before the @ must be your 8-digit school ID — digits only, no letters or dots.'
+      return 'The part before the @ must be your school ID number (8 digits), with no letters or dots.'
     }
-    return `Your school ID must be 8 digits — “${local}” has ${local.length}.`
+    return `Your school ID number must have 8 digits, but “${local}” has ${local.length}.`
   }
-  return `Invalid email address format — e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
+  return `This email address is not valid. Use a format like juan.delacruz@${SCHOOL_EMAIL_DOMAIN}.`
 }
 
 function formatRegDate(iso) {
@@ -132,7 +132,7 @@ const REGISTRATION_TYPES = [
   {
     id: 'student',
     icon: <User size={22} />,
-    label: 'Student — Vehicle',
+    label: 'Student',
     description: 'College or SHS student who drives their own car or motorcycle',
   },
   {
@@ -495,6 +495,13 @@ export default function RegisterPage() {
   const [fetcherType, setFetcherType] = useState('')
   const [fetcherStudents, setFetcherStudents] = useState([{ ...EMPTY_FETCHER_STUDENT }])
 
+  // Who books a campus schedule (MWF / TTHF) and takes a slot on its days:
+  // students, and a Driver (Whole Day), who parks inside all day. Fetcher and
+  // Drop & Go come within the allotted hours and hold no day. Mirrors
+  // VehicleRegistration.holds_schedule_q on the backend.
+  const booksSchedule = registrantType === 'student'
+    || (registrantType === 'fetcher' && fetcherType === 'standby')
+
   const updateFetcherStudent = (index, field, value) => {
     setFetcherStudents(prev => prev.map((s, i) => (i === index ? { ...s, [field]: value } : s)))
   }
@@ -546,7 +553,7 @@ export default function RegisterPage() {
   const FIELD_PATTERNS = {
     plate_number: {
       validate: isValidPlateNumber,
-      message: 'Invalid Philippine plate number format',
+      message: 'This is not a valid Philippine plate number.',
       hint: 'e.g. AAA 0000 · AA 0000 · A000AA · AAA000',
     },
     // See EMAIL_MODE above for why each group gets the rule it does. A student
@@ -558,32 +565,32 @@ export default function RegisterPage() {
       ? {
           regex: STUDENT_EMAIL_REGEX,
           describe: (value) => describeEmail(value, { mode: emailMode }),
-          message: `Use your SLC school email — your 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}`,
+          message: `Use your SLC school email: your school ID number (8 digits) followed by @${SCHOOL_EMAIL_DOMAIN}.`,
           hint: `e.g. 12345678@${SCHOOL_EMAIL_DOMAIN}`,
         }
       : emailMode === EMAIL_MODE.SCHOOL
         ? {
             regex: SCHOOL_EMAIL_REGEX,
             describe: (value) => describeEmail(value, { mode: emailMode }),
-            message: `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}`,
+            message: `Use your SLC school email, which ends in @${SCHOOL_EMAIL_DOMAIN}.`,
             hint: `e.g. juan.delacruz@${SCHOOL_EMAIL_DOMAIN}`,
           }
         : {
             regex: PERSONAL_EMAIL_REGEX,
             describe: (value) => describeEmail(value, { mode: emailMode }),
-            message: 'Invalid email address format',
+            message: 'This email address is not valid.',
             hint: 'e.g. juandelacruz@gmail.com',
           },
     conduction_number: {
       regex: /^[A-Z0-9]{5,12}$/i,
-      message: 'Invalid conduction number. Use 5–12 alphanumeric characters.',
+      message: 'This conduction number is not valid. Use 5 to 12 letters or numbers.',
       hint: 'e.g. CS12345A678',
     },
     drivers_license: {
       // LTO format: 1 office letter + 2-digit district + dash + 2-digit year + dash + 6-digit serial
       // Mask shown to the user: A00-00-000000
       regex: /^[A-Z]\d{2}-\d{2}-\d{6}$/i,
-      message: 'Invalid LTO license number. Use format: A00-00-000000',
+      message: 'This LTO license number is not valid. Use the format A00-00-000000.',
       hint: 'e.g. A00-00-000000',
     },
   }
@@ -745,7 +752,7 @@ export default function RegisterPage() {
     // correct on the form, so they are said on their own.
     if (regStatus && !regStatus.is_open) {
       await notify.error(
-        'Registration is currently closed. Please try again during the registration window.',
+        'Registration is currently closed. Please apply again during the registration period.',
         { title: 'Registration closed' },
       )
       return
@@ -771,7 +778,7 @@ export default function RegisterPage() {
     if (formData.vehicle_type_choice === 'Other') {
       const typed = formData.vehicle_type.trim().toLowerCase()
       const listed = VEHICLE_TYPE_OPTIONS.find(t => t.toLowerCase() === typed)
-      if (listed) problems.push(`${listed} is in the Vehicle Type list — choose it there instead of Other.`)
+      if (listed) problems.push(`${listed} is already in the Vehicle Type list. Choose it from the list instead of Other.`)
       else if (typed === 'other') problems.push('Specify your vehicle type.')
     }
 
@@ -809,25 +816,29 @@ export default function RegisterPage() {
       } else if (formData.student_level === 'college' && (!findProgram(formData.student_program) || !formData.student_year)) {
         problems.push('Select your program and year level.')
       } else if (formData.student_level === 'shs' && (!formData.student_strand || !formData.student_grade)) {
-        problems.push('Select your track/strand and grade level.')
-      }
-      const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
-      if (!chosen) {
-        problems.push('Choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
-      } else if (groupSlots(chosen)?.available === 0) {
-        problems.push(`The ${chosen.short} schedule is full — choose the other schedule.`)
+        problems.push('Select your track or strand and your grade level.')
       }
     }
 
     if (registrantType === 'fetcher') {
       if (!fetcherType) {
-        problems.push('Choose your classification: Fetcher, Drop & Go, or Driver (Whole Day).')
+        problems.push('Choose your classification: Fetcher, Drop & Go or Driver (Whole Day).')
       }
       fetcherStudents.forEach((st, i) => {
         if (!st.full_name.trim() || !st.student_level) {
-          problems.push(`Student #${i + 1}: full name and education level are required.`)
+          problems.push(`Student #${i + 1}: enter the full name and education level.`)
         }
       })
+    }
+
+    // Students and Drivers (Whole Day) book a rotation; see booksSchedule.
+    if (booksSchedule) {
+      const chosen = SCHEDULE_GROUPS.find(g => g.code === formData.schedule)
+      if (!chosen) {
+        problems.push('Choose your campus schedule: Mon · Wed · Fri or Tue · Thu · Fri.')
+      } else if (groupSlots(chosen)?.available === 0) {
+        problems.push(`The ${chosen.short} schedule is full. Please choose the other schedule.`)
+      }
     }
 
     if (await notify.validation(problems, { title: 'Check your application' })) return
@@ -889,9 +900,9 @@ export default function RegisterPage() {
         // be refused as a duplicate, which reads like a different problem.
         notify.error(
           'Your connection dropped before the server answered, so we cannot tell whether your '
-          + 'application went through. Check your email (and spam folder) for the confirmation '
-          + 'before submitting again — if it arrived, you are already registered and only need to '
-          + 'follow the steps in that email.',
+          + 'application went through. Before submitting again, check your email (including the '
+          + 'spam folder) for the confirmation. If it arrived, you are already registered and only '
+          + 'need to follow the steps in that email.',
           { title: 'Connection problem' })
         console.error('Registration error:', err)
         return
@@ -1027,14 +1038,14 @@ export default function RegisterPage() {
                       const start = formatRegDate(regStatus.open_date)
                       const end   = formatRegDate(regStatus.close_date)
                       const range = start && end
-                        ? <span className="reg-window-range">{start} – {end}</span>
-                        : <span className="reg-window-range reg-window-range--tentative">June 1 <em>(tentative)</em> – October 31 <em>(tentative)</em></span>
+                        ? <span className="reg-window-range">{start} to {end}</span>
+                        : <span className="reg-window-range reg-window-range--tentative">June 1 <em>(tentative)</em> to October 31 <em>(tentative)</em></span>
                       if (regStatus.is_open)
-                        return <>Window: {range}</>
+                        return <>Registration period: {range}</>
                       // Window already ended — state that instead of showing a stale past range.
                       if (regStatus.close_date && regStatus.close_date < todayISO())
-                        return <>The registration period ended on <span className="reg-window-range">{end}</span>. Please check back for the next window.</>
-                      return <>Registration window: {range}. Submissions are not accepted outside the registration period.</>
+                        return <>The registration period ended on <span className="reg-window-range">{end}</span>. Please check back for the next registration period.</>
+                      return <>Registration period: {range}. Applications are not accepted outside this period.</>
                     })()}
                   </div>
                 </div>
@@ -1064,8 +1075,8 @@ export default function RegisterPage() {
             </p>
             <p className="reg-modal-note">
               <strong>After you submit, you have 3 days</strong> to pay the Vehicle Pass fee at the
-              Accounting Office and file your Official Receipt through the link we email you —
-              otherwise the application expires and you will need to apply again.
+              Accounting Office and file your Official Receipt through the link we email you.
+              Otherwise, the application expires and you will need to apply again.
             </p>
 
             <button className="reg-back-btn" onClick={() => navigate('/login')}>
@@ -1143,7 +1154,7 @@ export default function RegisterPage() {
                       nothing to settle at the Accounting Office.
                     </IllustratedStep>
                     <IllustratedStep step={2} art={<CdsoOfficeArt />} title="Go to the CDSO Office">
-                      Bring a valid ID and your driver's licence. The CDSO reviews your
+                      Bring a valid ID and your driver's license. The CDSO reviews your
                       application against them, then releases your vehicle pass.
                     </IllustratedStep>
                   </>
@@ -1154,14 +1165,15 @@ export default function RegisterPage() {
                       art={<PayAtAccountingArt />}
                       title={`Pay ₱${vehiclePassFee.toFixed(2)} at the Accounting Office`}
                     >
-                      Settle the vehicle pass fee at the counter and keep the Official Receipt (OR)
-                      they hand you — you will need its number, and the receipt itself at the CDSO.
+                      Pay the vehicle pass fee at the counter and keep the Official Receipt (OR)
+                      you are given. You will need its number, and the CDSO will ask to see the
+                      receipt itself.
                     </IllustratedStep>
                     <IllustratedStep step={2} art={<UploadOrArt />} title="File your Official Receipt number">
                       Open the link in the email we just sent and enter the OR number printed on
-                      your receipt. Keep the receipt itself — the CDSO checks the paper copy at
-                      the counter. Your application is not queued for review until this is done,
-                      and it <strong>expires</strong> if this is not done within 3 days.
+                      your receipt. Keep the paper receipt, because the CDSO checks it at the
+                      counter. Your application is not reviewed until this is done, and it{' '}
+                      <strong>expires</strong> if this is not done within 3 days.
                     </IllustratedStep>
                   </>
                 )}
@@ -1197,6 +1209,56 @@ export default function RegisterPage() {
     { id: 'fetcher',  icon: <Users size={24} />, label: 'Fetcher / Drop & Go / Driver', desc: 'Parent, guardian or driver' },
   ]
 
+  /* The schedule picker, shared by the student block and the Driver (Whole
+     Day) classification: both book a whole rotation from the same slots. */
+  const schedulePicker = (
+    <div className="form-group col-span-2">
+      <label className="days-label">
+        Select Your Campus Schedule <span className="required">*</span>
+      </label>
+      <div className="schedule-group-picker">
+        {SCHEDULE_GROUPS.map(group => {
+          const slot = groupSlots(group)
+          const isFull = slot?.available === 0
+          const isSelected = formData.schedule === group.code
+          return (
+            <button
+              key={group.code}
+              type="button"
+              className={[
+                'schedule-group-card',
+                isSelected ? 'schedule-group-card--selected' : '',
+                isFull ? 'schedule-group-card--full' : '',
+              ].filter(Boolean).join(' ')}
+              onClick={() => !isFull && selectSchedule(group)}
+              disabled={isFull}
+              aria-pressed={isSelected}
+              title={isFull ? `The ${group.short} schedule is full` : group.caption}
+            >
+              <span className="schedule-group-days">{group.short}</span>
+              <span className="schedule-group-caption">{group.caption}</span>
+              <span className="schedule-group-slots">
+                {loadingSlots
+                  ? '···'
+                  : slot
+                    ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
+                    : ''}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="campus-day-summary">
+        <span className="campus-day-counter">
+          {formData.schedule
+            ? `You may enter on ${SCHEDULE_GROUPS.find(g => g.code === formData.schedule)?.caption}.`
+            : 'No schedule selected yet.'}
+        </span>
+      </div>
+    </div>
+  )
+
   /* A parent, guardian or hired driver who opened the student form is sent to
      Fetcher / Drop & Go / Driver, where they pick their own classification. */
   const switchToFetcher = () => {
@@ -1221,11 +1283,11 @@ export default function RegisterPage() {
                   ? "STUDENT'S PERSONAL INFORMATION"
                   : isEmployee
                     ? "EMPLOYEE'S PERSONAL INFORMATION"
-                    : "FETCHER / DROP & GO / PARENT PERSONAL INFORMATION"}
+                    : "FETCHER / DROP & GO / DRIVER PERSONAL INFORMATION"}
             </p>
             {registrantType && (
               <span className="registrant-badge">
-                {isStudent ? 'Student — Vehicle Registration'
+                {isStudent ? 'Student Vehicle Registration'
                   : isEmployee ? 'Employee Registration'
                     : 'Fetcher / Drop & Go / Driver Registration'}
               </span>
@@ -1245,15 +1307,15 @@ export default function RegisterPage() {
                 </div>
                 <div className="reg-window-dates">
                   {regStatus.is_open
-                    ? <>Window: <span className="reg-window-range">{formatRegDate(regStatus.open_date)} – {formatRegDate(regStatus.close_date)}</span></>
+                    ? <>Registration period: <span className="reg-window-range">{formatRegDate(regStatus.open_date)} to {formatRegDate(regStatus.close_date)}</span></>
                     : (() => {
                         const today = todayISO()
                         // Closed & still upcoming — the start date is genuinely in the future.
                         if (regStatus.open_date && regStatus.open_date > today)
-                          return <>Next window opens approximately on <span className="reg-window-range">{formatRegDate(regStatus.open_date)}</span>. Submissions are not accepted outside the registration period.</>
+                          return <>The next registration period opens on or around <span className="reg-window-range">{formatRegDate(regStatus.open_date)}</span>. Applications are not accepted outside the registration period.</>
                         // Closed & already ended — don't advertise a past start date as the "next" window.
                         if (regStatus.close_date && regStatus.close_date < today)
-                          return <>The registration period ended on <span className="reg-window-range">{formatRegDate(regStatus.close_date)}</span>. Please check back for the next window.</>
+                          return <>The registration period ended on <span className="reg-window-range">{formatRegDate(regStatus.close_date)}</span>. Please check back for the next registration period.</>
                         // No period scheduled (open_date is null), or an edge with no future date to promise.
                         return <>Registration is not open at this time. Please check back for the next window.</>
                       })()}
@@ -1278,34 +1340,43 @@ export default function RegisterPage() {
                 <div className="form-grid">
                   <div className="form-group col-span-2">
                     <label className="days-label">
-                      Campus Schedule {isStudent && <span className="required">*</span>}
+                      Campus Schedule {booksSchedule && <span className="required">*</span>}
                     </label>
-                    {isStudent ? (
+                    {booksSchedule ? (
                       <div className="schedule-note">
                         <Info size={13} />
                         <span>
-                          Choose <strong>one</strong> schedule — it covers all three of its days.
-                          Slots are <strong>first come, first serve</strong>; a schedule that is
-                          <strong> full</strong> cannot be selected.
+                          {isFetcher && <>As a Driver (Whole Day), you may stay and park inside the
+                            campus the whole day, but only on the days of your schedule. </>}
+                          Choose <strong>one</strong> schedule. It covers all three of its days.
+                          Slots are given on a <strong>first come, first served</strong> basis,
+                          and a <strong>full</strong> schedule cannot be selected.
                         </span>
                       </div>
                     ) : isEmployee ? (
                       /* Spelled out as Monday–Saturday: "any day" reads as Sunday
                          included, and the campus is closed then. */
+                      /* The text is one <span>: the note is a flex row, and loose
+                         text beside a <strong> would each become a column. */
                       <p className="campus-day-anyday-note">
                         <Info size={13} />
-                        Employees are permitted to enter and park on <strong>any campus day
-                        (Monday to Saturday)</strong>.
+                        <span>
+                          Employees are permitted to enter and park on <strong>any campus day
+                          (Monday to Saturday)</strong>.
+                        </span>
                       </p>
                     ) : (
-                      /* Fetcher — every campus day; entry rules depend on classification */
+                      /* Fetcher and Drop & Go: every campus day, within the allotted
+                         hours. A Driver (Whole Day) books a schedule (above). */
                       <p className="campus-day-anyday-note fetcher-note">
                         <Info size={13} />
-                        {fetcherType === 'standby'
-                          ? <>Drivers (Whole Day) may enter on <strong>any campus day (Monday to Saturday)</strong> and are allowed to stay and park inside the campus the whole day.</>
-                          : fetcherType === 'drop_and_go'
-                            ? <>Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>
-                            : <>Fetchers may enter on <strong>any campus day (Monday to Saturday)</strong> during designated drop-off and pick-up hours only. Entry outside these hours will be restricted.</>}
+                        <span>
+                          {fetcherType === 'drop_and_go'
+                            ? <>Drop &amp; Go may enter on <strong>any campus day (Monday to Saturday)</strong>, but only during the designated hours for dropping off students. Entry outside these hours is not allowed.</>
+                            : fetcherType === 'fetcher'
+                              ? <>Fetchers may enter on <strong>any campus day (Monday to Saturday)</strong>, but only during the designated hours for picking up students. Entry outside these hours is not allowed.</>
+                              : <>Your entry days and hours depend on the classification you choose below.</>}
+                        </span>
                       </p>
                     )}
                   </div>
@@ -1359,7 +1430,7 @@ export default function RegisterPage() {
                   setDupErrors(prev => ({ ...prev, plate_number: null, conduction_number: null }))
                 }}
               />
-              <span>My vehicle is brand-new and does not have a plate number yet (I have a conduction number).</span>
+              <span>My vehicle is brand new and does not have a plate number yet. I will use its conduction number.</span>
             </label>}
 
             <div className="form-grid">
@@ -1376,8 +1447,8 @@ export default function RegisterPage() {
                     className="reg-control-number"
                   />
                   <span className="field-hint">
-                    E-Bikes are issued a control number instead of a plate. It is assigned
-                    automatically when you submit and cannot be changed.
+                    An E-Bike is issued a control number instead of a plate number. It is
+                    assigned automatically when you submit and cannot be changed.
                   </span>
                 </div>
               ) : !isNewVehicle ? (
@@ -1407,7 +1478,7 @@ export default function RegisterPage() {
                     placeholder={FIELD_PATTERNS.conduction_number.hint}
                     className={formErrors.conduction_number || dupErrors.conduction_number ? 'input-error' : ''}
                   />
-                  <span className="field-hint">For newly purchased vehicles without a plate yet. {FIELD_PATTERNS.conduction_number.hint}</span>
+                  <span className="field-hint">For newly purchased vehicles that do not have a plate number yet. {FIELD_PATTERNS.conduction_number.hint}</span>
                 </div>
               )}
 
@@ -1552,10 +1623,10 @@ export default function RegisterPage() {
                     no way to tell whether their own Gmail is allowed. */}
                 <span className="field-hint">
                   {emailMode === EMAIL_MODE.SCHOOL_ID
-                    ? `College students use their SLC school email — 8-digit ID followed by @${SCHOOL_EMAIL_DOMAIN}.`
+                    ? `College students must use their SLC school email: your school ID number (8 digits) followed by @${SCHOOL_EMAIL_DOMAIN}.`
                     : emailMode === EMAIL_MODE.SCHOOL
-                      ? `Use your SLC school email — any name followed by @${SCHOOL_EMAIL_DOMAIN}.`
-                      : 'Use a personal email address you actually check — a Gmail account is fine.'}
+                      ? `Use your SLC school email, which ends in @${SCHOOL_EMAIL_DOMAIN}.`
+                      : 'Use a personal email address that you check regularly. A Gmail account is fine.'}
                 </span>
               </div>
 
@@ -1592,8 +1663,8 @@ export default function RegisterPage() {
                       <Info size={13} />
                       <span>
                         This form is for a student who <strong>drives the vehicle themselves</strong>.
-                        A parent, guardian or driver bringing a student to campus — including
-                        Junior High, Elementary and SpEd students — registers under{' '}
+                        A parent, guardian or driver who brings a student to campus, including
+                        Junior High School, Elementary and SpEd students, should register under{' '}
                         <strong>Fetcher / Drop &amp; Go / Driver</strong>.
                         <button type="button" className="fetcher-redirect-switch" onClick={switchToFetcher}>
                           Register as Fetcher / Driver
@@ -1624,16 +1695,16 @@ export default function RegisterPage() {
                         >
                           <option value="">Select Program</option>
                           {COLLEGES.map(c => (
-                            <optgroup key={c.college} label={`${c.college} — ${c.name}`}>
+                            <optgroup key={c.college} label={`${c.college} (${c.name})`}>
                               {c.programs.map(p => (
-                                <option key={p.code} value={p.code}>{`${p.code} — ${p.name}`}</option>
+                                <option key={p.code} value={p.code}>{`${p.code} (${p.name})`}</option>
                               ))}
                             </optgroup>
                           ))}
                         </select>
                         {selectedProgram?.requires_bachelors && (
                           <span className="field-hint">
-                            Juris Doctor is a graduate law program: it admits only students who
+                            Juris Doctor is a graduate law program. It admits only students who
                             have already finished a bachelor's degree.
                           </span>
                         )}
@@ -1706,53 +1777,7 @@ export default function RegisterPage() {
                   The first-come-first-serve notice sits at the top of the form;
                   the rotation itself is claimed here, right after the education
                   level, so the whole student block reads in one pass. */}
-              {isStudent && (
-                <div className="form-group col-span-2">
-                  <label className="days-label">
-                    Select Your Campus Schedule <span className="required">*</span>
-                  </label>
-                  <div className="schedule-group-picker">
-                    {SCHEDULE_GROUPS.map(group => {
-                      const slot = groupSlots(group)
-                      const isFull = slot?.available === 0
-                      const isSelected = formData.schedule === group.code
-                      return (
-                        <button
-                          key={group.code}
-                          type="button"
-                          className={[
-                            'schedule-group-card',
-                            isSelected ? 'schedule-group-card--selected' : '',
-                            isFull ? 'schedule-group-card--full' : '',
-                          ].filter(Boolean).join(' ')}
-                          onClick={() => !isFull && selectSchedule(group)}
-                          disabled={isFull}
-                          aria-pressed={isSelected}
-                          title={isFull ? `The ${group.short} schedule is full` : group.caption}
-                        >
-                          <span className="schedule-group-days">{group.short}</span>
-                          <span className="schedule-group-caption">{group.caption}</span>
-                          <span className="schedule-group-slots">
-                            {loadingSlots
-                              ? '···'
-                              : slot
-                                ? (isFull ? 'FULL' : `${slot.available} slot${slot.available !== 1 ? 's' : ''} left`)
-                                : '—'}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-
-                  <div className="campus-day-summary">
-                    <span className="campus-day-counter">
-                      {formData.schedule
-                        ? `You may enter on ${formData.campus_days.join(', ')}.`
-                        : 'No schedule selected yet.'}
-                    </span>
-                  </div>
-                </div>
-              )}
+              {isStudent && schedulePicker}
 
               <div className="form-group col-span-2">
                 <label>Driver's License Number <span className="required">*</span></label>
@@ -1787,7 +1812,7 @@ export default function RegisterPage() {
                   >
                     <span className="reg-type-inline-icon"><Users size={24} /></span>
                     <span className="reg-type-inline-label">Fetcher</span>
-                    <span className="reg-type-inline-desc">Picks up a student during the allotted pick-up times</span>
+                    <span className="reg-type-inline-desc">Picks up a student within the allotted hours</span>
                   </button>
                   <button
                     type="button"
@@ -1796,24 +1821,34 @@ export default function RegisterPage() {
                   >
                     <span className="reg-type-inline-icon"><Clock size={24} /></span>
                     <span className="reg-type-inline-label">Drop &amp; Go</span>
-                    <span className="reg-type-inline-desc">Drops off a student during the allotted drop-off times</span>
+                    <span className="reg-type-inline-desc">Drops off a student within the allotted hours</span>
                   </button>
                   <button
                     type="button"
                     className={`reg-type-inline-btn${fetcherType === 'standby' ? ' selected' : ''}`}
-                    onClick={() => setFetcherType('standby')}
+                    onClick={() => {
+                      setFetcherType('standby')
+                      if (!scheduleSlots) fetchScheduleSlots()
+                    }}
                   >
                     <span className="reg-type-inline-icon"><Car size={24} /></span>
                     <span className="reg-type-inline-label">Driver (Whole Day)</span>
-                    <span className="reg-type-inline-desc">Stays on campus the whole day; allowed to park inside</span>
+                    <span className="reg-type-inline-desc">Stays and parks inside the campus the whole day on a chosen schedule</span>
                   </button>
                 </div>
 
+                {/* A Driver (Whole Day) parks inside all day, so they book a
+                    rotation and take a slot on its days, just like a student. */}
+                {fetcherType === 'standby' && (
+                  <div className="form-grid" style={{ marginTop: 16 }}>
+                    {schedulePicker}
+                  </div>
+                )}
+
                 <hr className="divider" />
-                <h3 className="section-heading">Students to Fetch <span className="required">*</span></h3>
+                <h3 className="section-heading">Students You Bring or Fetch <span className="required">*</span></h3>
                 <p className="field-hint" style={{ display: 'block', marginBottom: 12 }}>
-                  List at least one student you will be fetching. Use "Add another student" if you
-                  fetch more than one.
+                  List at least one student. Use "Add another student" if there is more than one.
                 </p>
                 {fetcherStudents.map((s, i) => (
                   <div key={i} className="fetcher-student-card">
@@ -1857,7 +1892,7 @@ export default function RegisterPage() {
                           type="text"
                           value={s.program_year}
                           onChange={e => updateFetcherStudent(i, 'program_year', e.target.value)}
-                          placeholder="e.g. BSIT - 3 or Grade 7"
+                          placeholder="e.g. BSIT 3 or Grade 7"
                         />
                       </div>
 
@@ -1949,8 +1984,8 @@ export default function RegisterPage() {
                   />
                   <span>
                     <strong>CONFIRMATION OF DETAILS:</strong> I confirm that all the details I
-                    have entered in this form — my personal information and vehicle details —
-                    are <strong>true, complete and correct</strong>. I
+                    have entered in this form, including my personal information and vehicle
+                    details, are <strong>true, complete and correct</strong>. I
                     understand that any false or misleading information is grounds for the denial
                     or revocation of my vehicle pass.
                   </span>
@@ -1989,10 +2024,10 @@ export default function RegisterPage() {
                 <Clock size={16} />
                 <div className="pay-deadline-body">
                   <p className="pay-deadline-when">
-                    <strong>3-day deadline:</strong> after you submit, pay
-                    ₱{vehiclePassFee.toFixed(2)} at the Accounting Office and file your Official
-                    Receipt number through the link we email you within <strong>3 days</strong>,
-                    or this application expires and you will need to apply again.
+                    <strong>Payment deadline:</strong> After you submit, pay
+                    ₱{vehiclePassFee.toFixed(2)} at the Accounting Office and enter your Official
+                    Receipt number through the link we email you within <strong>3 days</strong>.
+                    Otherwise, this application expires and you will need to apply again.
                   </p>
                 </div>
               </div>

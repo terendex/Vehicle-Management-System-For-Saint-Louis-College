@@ -31,6 +31,32 @@ const TYPE_LABEL = {
   fetcher:  'Fetcher / Drop & Go / Driver',
 }
 
+/* The server's own rules for the receipt file (the model's allowed extensions
+   and RECEIPT_IMAGE_MAX_BYTES in vehicles/views.py), checked here too so a
+   wrong file is refused the moment it is picked, not after minutes of upload
+   on slow data. The server still checks; change both together. */
+const RECEIPT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'pdf']
+const RECEIPT_MAX_BYTES = 12 * 1024 * 1024
+const RECEIPT_MAX_MB = RECEIPT_MAX_BYTES / (1024 * 1024)
+const RECEIPT_TYPE_EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+  'image/heic': 'heic', 'image/heif': 'heif', 'application/pdf': 'pdf',
+}
+// Photos that compressReceipt can shrink, so their size is judged after it.
+const SHRINKABLE = /^image\/(jpeg|png|webp|heic|heif)$/i
+
+/* The picked file with an extension the server accepts, or null if it is not
+   a receipt the server would take. Some phone apps hand over a photo named
+   just "image" with no extension; the server reads the type off the name, so
+   one is added from the file's type rather than refusing a good photo. */
+function receiptWithExtension(file) {
+  const ext = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : ''
+  if (RECEIPT_EXTENSIONS.includes(ext)) return file
+  const fromType = RECEIPT_TYPE_EXT[(file.type || '').toLowerCase()]
+  if (!fromType) return null
+  return new File([file], `${file.name || 'receipt'}.${fromType}`, { type: file.type })
+}
+
 function SlcHeader() {
   return (
     <header className="paypage-header">
@@ -112,6 +138,26 @@ export default function PaymentPage() {
   // mistyped number should not have to photograph the receipt a second time.
   const needsPhoto = !receiptFile && !details?.has_receipt
 
+  const pickReceipt = (e) => {
+    const picked = e.target.files?.[0] || null
+    const file = picked && receiptWithExtension(picked)
+    let problem = null
+    if (picked && !file) {
+      problem = 'The receipt must be a photo (JPG, PNG, WEBP, HEIC) or a PDF.'
+    } else if (file && file.size > RECEIPT_MAX_BYTES && !SHRINKABLE.test(file.type)) {
+      // A photo is shrunk before upload, so only judged after that (in
+      // handleSubmit). A PDF or an unrecognised image is sent as it is.
+      problem = `That file is too large (maximum ${RECEIPT_MAX_MB} MB). Take a new photo of the receipt instead.`
+    }
+    if (problem) {
+      e.target.value = ''        // clear the input, so picking the same file again still fires onChange
+      setReceiptFile(null)
+      notify.error(problem, { title: 'Receipt not accepted' })
+      return
+    }
+    setReceiptFile(file)
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     const problems = [...fieldProblems(e.currentTarget)]
@@ -127,6 +173,13 @@ export default function PaymentPage() {
       // Shrunk first: on slow mobile data a full-size phone photo is minutes
       // of upload, against a deadline.
       const upload = await compressReceipt(receiptFile)
+      // Still over the limit after shrinking (or the browser could not shrink
+      // it): refuse now rather than upload it only for the server to refuse.
+      if (upload && upload.size > RECEIPT_MAX_BYTES) {
+        notify.error(`The receipt photo is too large (maximum ${RECEIPT_MAX_MB} MB), even after shrinking it. `
+          + 'Take a new photo of the receipt, or save it as a JPG, and try again.', { title: 'Receipt not submitted' })
+        return
+      }
       await registrationApi.submitPaymentReceipt(token, orNumber, upload, setProgress)
       setSubmitted(true)
     } catch (err) {
@@ -375,11 +428,11 @@ export default function PaymentPage() {
               <input
                 id="or-photo"
                 type="file"
-                /* capture hints a phone at its camera rather than the gallery;
-                   desktop browsers ignore it and show the file picker. */
-                capture="environment"
+                /* No `capture`: on many phones it opens the camera only, with
+                   no way to pick a receipt photo already in the gallery.
+                   Without it the phone offers both. */
                 accept="image/*,.pdf,.heic,.heif"
-                onChange={(e) => setReceiptFile(e.target.files?.[0] || null)}
+                onChange={pickReceipt}
                 disabled={submitting}
                 className="paypage-file"
               />

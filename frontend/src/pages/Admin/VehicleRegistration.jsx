@@ -352,10 +352,10 @@ export default function VehicleRegistration() {
     setOrNumber(reg.or_number || '')
     setDaysOverride(reg.campus_days?.length > 0 ? [...reg.campus_days] : [])
     setSpecialCaseReason('')
-    // Per-day remaining student slots — so the admin can see capacity before
+    // Per-day remaining slots — so the admin can see capacity before
     // assigning campus days (same slot counts shown on the public register form).
     setScheduleSlots(null)
-    if (reg.registrant_type === 'student') {
+    if (reg.registrant_type === 'student' || reg.fetcher_type === 'standby') {
       registrationApi.getScheduleSlots().then(setScheduleSlots).catch(() => {})
     }
   }
@@ -876,6 +876,18 @@ export default function VehicleRegistration() {
                       >
                         <Receipt size={13} /> Open the receipt (PDF)
                       </a>
+                    ) : /\.(heic|heif)($|\?)/i.test(selectedReg.or_receipt_image) ? (
+                      // iPhone format from before uploads were converted to
+                      // JPEG. Chrome and Edge cannot draw it, so a link instead
+                      // of a broken thumbnail.
+                      <a
+                        href={selectedReg.or_receipt_image}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="or-receipt-link"
+                      >
+                        <Receipt size={13} /> Download the receipt (iPhone HEIC photo; opens on a phone or Mac)
+                      </a>
                     ) : (
                       <a
                         href={selectedReg.or_receipt_image}
@@ -1017,7 +1029,9 @@ export default function VehicleRegistration() {
                     </div>
                   )}
 
-                  {selectedReg.registrant_type === 'student' && (
+                  {/* Students and Drivers (Whole Day) book a rotation; the
+                      other fetchers hold no day to adjust. */}
+                  {(selectedReg.registrant_type === 'student' || selectedReg.fetcher_type === 'standby') && (
                     <div className="form-group">
                       <label className="form-label">
                         <CalendarDays size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
@@ -1057,7 +1071,7 @@ export default function VehicleRegistration() {
                         })}
                       </div>
                       <p className="form-hint" style={{ marginTop: 0, marginBottom: 6 }}>
-                        Numbers show remaining student slots per day. Assigning a <strong>full</strong> day
+                        Numbers show the slots left per day, shared by students and Drivers (Whole Day). Assigning a <strong>full</strong> day
                         is allowed for special cases but exceeds the day's capacity.
                       </p>
                       {daysOverride.length > 0 ? (

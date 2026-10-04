@@ -24,7 +24,10 @@ function loadImage(file) {
 }
 
 export default async function compressReceipt(file) {
-  if (!file || file.size <= SKIP_BELOW || !/^image\/(jpeg|png|webp)$/i.test(file.type)) return file
+  // HEIC is tried too: Safari can decode it, and then it goes up as a small
+  // JPEG. Other browsers cannot, fall through to `return file` below, and the
+  // server converts it instead.
+  if (!file || file.size <= SKIP_BELOW || !/^image\/(jpeg|png|webp|heic|heif)$/i.test(file.type)) return file
   try {
     const img = await loadImage(file)
     const scale = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight))

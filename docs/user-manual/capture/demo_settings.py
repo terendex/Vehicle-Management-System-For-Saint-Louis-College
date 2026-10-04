@@ -5,6 +5,7 @@ import os
 
 os.environ['USE_R2'] = 'false'
 from config.settings import *  # noqa
+from config.settings import _TESTING
 
 DATABASES = {
     'default': {
@@ -25,7 +26,8 @@ STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
 }
-MEDIA_ROOT = os.environ['DEMO_MEDIA_ROOT']
+if not _TESTING:   # tests keep the throwaway folder config.settings gave them
+    MEDIA_ROOT = os.environ['DEMO_MEDIA_ROOT']
 MEDIA_URL = '/media/'
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 EMAIL_TRANSPORT_BACKEND = EMAIL_BACKEND   # the retry outbox sends through this one

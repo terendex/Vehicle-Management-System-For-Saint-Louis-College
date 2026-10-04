@@ -131,7 +131,8 @@ def resolve_student_schedule(schedule, days, student_level=None):
             return [], '', (f"Not a campus day: {', '.join(str(d) for d in rejected)}. "
                             f"Choose from {', '.join(ALL_DAYS)}.")
         if not cleaned:
-            return [], '', ('Students must choose a schedule: '
+            # "You", not "Students": a Driver (Whole Day) books a rotation too.
+            return [], '', ('You must choose a schedule: '
                             f"{SCHEDULE_DAY_LABELS['MWF']} or {SCHEDULE_DAY_LABELS['TTHF']}.")
         code = schedule_group(cleaned)
         if code not in SCHEDULE_GROUP_DAYS:
