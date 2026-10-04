@@ -1123,6 +1123,102 @@ def send_registration_expired_email(registration):
     )
 
 
+def send_payment_reminder_email(registration):
+    """Reminds an applicant that their receipt is due in under a day.
+
+    Sent once per application by vehicles.registration_deadline.remind_due, on
+    a background thread. Two things can change between that sweep and this
+    send, and both are checked here, where the mail is actually built:
+
+      * the applicant may have filed their receipt (or the CDSO decided) in the
+        meantime, so the row is read again and nothing goes out if it is no
+        longer on the clock;
+      * on a slow or dropped connection the outbox retries the send, but never
+        past the deadline itself (expires_in). A reminder that arrives after
+        the deadline would contradict the expiry notice that follows it.
+    """
+    from django.utils import timezone
+    from .email_outbox import expires_in
+    from .registration_deadline import format_deadline
+
+    registration.refresh_from_db()
+    if not registration.on_payment_clock():
+        return
+    deadline = registration.payment_deadline()
+    seconds_left = (deadline - timezone.now()).total_seconds() if deadline else 0
+    if seconds_left < 60:
+        return
+
+    full_name_val = esc(registration.full_name)
+    ref_number    = f"REG-{str(registration.pk).zfill(6)}"
+    plate_val     = esc_or_dash(registration.plate_number or registration.conduction_number)
+    deadline_val  = format_deadline(deadline)
+    local         = timezone.localtime(deadline)
+    # "Mon, Oct 5, 5:00 PM". Built by hand: Windows' strftime has no %-d / %-I.
+    short_deadline = f"{local:%a, %b} {local.day}, {local.hour % 12 or 12}:{local:%M} {local:%p}"
+    fee           = registration.pass_fee()
+    # PUBLIC_SITE_URL, never FRONTEND_URL: the campus FRONTEND_URL is a LAN
+    # address an applicant's phone cannot reach.
+    base_url      = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
+    payment_link  = f"{base_url}/registration/payment?token={registration.payment_token}"
+
+    html_message = _shell(
+        accent=WARN_INK,
+        preheader=f'{ref_number} expires {deadline_val} unless your receipt number is filed.',
+        heading='Payment Deadline Reminder',
+        intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your vehicle '
+               f'registration <strong style="color:{INK};">{ref_number}</strong> is still '
+               f'waiting for your Official Receipt number. If it is not filed by the deadline '
+               f'below, the application expires automatically and you will need to apply again.'),
+        rows_html=(
+            _panel(
+                f'<div style="background:{WARN_BG};border:1px solid {WARN_BORDER};border-radius:8px;'
+                f'padding:10px 12px;margin-bottom:12px;color:{WARN_INK};font-size:14px;'
+                f'line-height:1.6;"><strong>Deadline: {esc(deadline_val)}</strong></div>'
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;margin-bottom:14px;">'
+                f'Pay the Vehicle Pass fee of <strong>&#8369;{fee:.2f}</strong> at the '
+                f'<strong>Accounting Office</strong>, then file the Official Receipt number '
+                f'using the button below. It only takes a minute on your phone.</div>'
+                + _button(payment_link, 'File Official Receipt Number')
+                + f'<div style="color:{FAINT};font-size:11.5px;line-height:1.6;margin-top:12px;'
+                  f'word-break:break-all;">Or paste this link into your browser: {payment_link}</div>',
+                bg=TINT_BG, border=BORDER_FIRM)
+            + _panel(
+                f'<div style="color:{INK};font-size:14px;line-height:1.7;">'
+                f'<strong>Already filed it?</strong> You can ignore this email. '
+                f'<strong>Paid but cannot file the number?</strong> Bring your Official Receipt '
+                f'to the <strong>CDSO Office</strong> before the deadline.</div>',
+                bg=PANEL_BG, border=BORDER)
+            + _section('Your application', _kv([
+                ('Reference No.',      ref_number),
+                ('Plate / Conduction', plate_val),
+            ]))
+        ),
+    )
+
+    with expires_in(seconds_left):
+        send_mail(
+            # Short, with the date up front: a phone inbox cuts the subject at
+            # about 40 characters. The full deadline is in the preheader and body.
+            subject=f"Reminder: file your receipt by {short_deadline} ({ref_number})",
+            message=(f"Dear {registration.full_name},\n\n"
+                     f"Your vehicle registration {ref_number} is still waiting for your Official "
+                     f"Receipt number.\n\n"
+                     f"DEADLINE: {deadline_val}\n"
+                     f"If it is not filed by then, the application expires automatically and you "
+                     f"must apply again.\n\n"
+                     f"Pay the Vehicle Pass fee of PHP {fee:.2f} at the Accounting Office, then file "
+                     f"the Official Receipt number here:\n{payment_link}\n\n"
+                     f"Already filed it? You can ignore this email.\n"
+                     f"Paid but cannot file the number? Bring your Official Receipt to the CDSO "
+                     f"Office before the deadline.\n\n"
+                     f"Saint Louis College Smart Parking and Vehicle Verification System"),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[registration.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
 def _change_rows(summary):
     """A change set as a from/to block, for both mails below.
 

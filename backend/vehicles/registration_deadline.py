@@ -8,18 +8,22 @@ this module is what acts on it:
                         in-process scheduler, on every submission (so an
                         abandoned application never blocks a fresh one), and
                         lazily when somebody opens an overdue application's link.
+  * remind_due()        mails one reminder to each applicant whose deadline is
+                        under a day away. Run hourly beside expire_overdue.
   * deadline_payload()  the deadline as every public screen receives it.
 
 Campus and Railway share one database, so either server may run a sweep at any
 moment. Each sweep locks the rows it takes (SKIP LOCKED), so two servers never
 expire, or mail, the same application twice, and a receipt upload that is
 holding its row wins over a sweep that arrives at the same instant.
+Reminders are claimed in the scheduler's job ledger instead, one row per
+application, so neither server ever sends the same reminder twice.
 """
 from __future__ import annotations
 
 import logging
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 log = logging.getLogger(__name__)
@@ -99,6 +103,72 @@ def expire_overdue(now=None, pk=None) -> list:
     log.info("[registration-deadline] expired %d unpaid application(s): %s",
              len(rows), ', '.join(f'REG-{r.pk:06d}' for r in rows))
     return rows
+
+
+# Ledger key prefix for reminder claims: "payment_reminder:<pk>".
+REMINDER_JOB = 'payment_reminder'
+
+
+def remind_due(now=None) -> list:
+    """Mail one reminder to each applicant whose deadline is under a day away.
+
+    Returns the rows a reminder was handed off for. Idempotent: the claim is a
+    DailyJobRun row keyed by the application (run_date is the deadline's date),
+    so the hourly sweep, a second server, or a restart never sends it twice.
+    It needs no column on the registration, so there is no migration to
+    coordinate between Railway and the campus clone.
+
+    Nothing is sent once the deadline has passed. The grace hour is never
+    advertised, and a reminder that lands after the stated deadline would only
+    contradict the expiry notice that follows it.
+    """
+    from .email_utils import send_in_background, send_payment_reminder_email
+    from .models import DailyJobRun, VehicleRegistration
+
+    R = VehicleRegistration
+    now = now or timezone.now()
+    lead = R.PAYMENT_REMINDER_LEAD
+    # A superset (an application filed before the rollout passes this test
+    # early); the exact window is checked per row below. Only unpaid online
+    # applications are pending at once, so this stays a handful of rows.
+    candidates = R.objects.filter(
+        status=R.Status.PENDING,
+        payment_status=R.PaymentStatus.UNPAID,
+        source=R.Source.PUBLIC,
+        created_at__lte=now - (R.PAYMENT_WINDOW - lead),
+    )
+
+    sent = []
+    for row in candidates:
+        deadline = row.payment_deadline()
+        if deadline is None or not (deadline - lead <= now < deadline):
+            continue
+        try:
+            with transaction.atomic():
+                claim = DailyJobRun.objects.create(
+                    job=f'{REMINDER_JOB}:{row.pk}',
+                    run_date=timezone.localdate(deadline),
+                    finished_at=now, result='reminder sent')
+        except IntegrityError:
+            continue                                    # already reminded
+
+        def release(claim_pk=claim.pk):
+            # The mail could not even be built or stored. Drop the claim so the
+            # next hourly pass tries again while there is still time.
+            DailyJobRun.objects.filter(pk=claim_pk).delete()
+
+        try:
+            send_in_background(send_payment_reminder_email, row, on_failure=release)
+        except Exception:                               # noqa: BLE001
+            log.exception("[registration-deadline] could not send the reminder for REG-%06d", row.pk)
+            release()
+            continue
+        sent.append(row)
+
+    if sent:
+        log.info("[registration-deadline] reminded %d applicant(s): %s",
+                 len(sent), ', '.join(f'REG-{r.pk:06d}' for r in sent))
+    return sent
 
 
 def _announce(rows):

@@ -479,6 +479,9 @@ class VehicleRegistration(models.Model):
     # pressed Submit before the deadline must not lose to their own connection.
     # Never advertised: every screen and email states PAYMENT_WINDOW alone.
     PAYMENT_GRACE = datetime.timedelta(hours=1)
+    # One reminder email goes out once the deadline is this close (see
+    # registration_deadline.remind_due), never after the deadline itself.
+    PAYMENT_REMINDER_LEAD = datetime.timedelta(days=1)
     # Applications filed before the deadline existed were never told about it,
     # so their three days run from the rollout instead of from submission.
     # 5 PM Friday, Asia/Manila: their deadline is 5 PM Monday, within office

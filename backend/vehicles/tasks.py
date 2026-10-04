@@ -184,25 +184,31 @@ def auto_archive_expired_accounts():
 
 @shared_task(name="vehicles.expire_unpaid_registrations")
 def expire_unpaid_registrations():
-    """Expire online applications whose 3-day payment deadline has passed.
+    """Expire online applications whose 3-day payment deadline has passed, and
+    remind the ones whose deadline is under a day away.
 
     Hourly on the in-process scheduler (see scheduler.HOURLY_JOBS); the rule
     and the work are in vehicles.registration_deadline. Idempotent.
 
-    Hourly claims put 24 rows a day in the job ledger, which nothing else ever
-    reads after the hour is over, so this job clears out its own week-old ones.
+    Hourly claims put 24 rows a day in the job ledger, and each reminder adds
+    one more; nothing reads either after a week, so this job clears out its
+    own week-old ones. Expiry runs first, so an application is never reminded
+    in the same pass that expires it.
     """
     from datetime import timedelta
 
+    from django.db.models import Q
+
     from .models import DailyJobRun
-    from .registration_deadline import expire_overdue
+    from .registration_deadline import REMINDER_JOB, expire_overdue, remind_due
 
     expired = expire_overdue()
+    reminded = remind_due()
     DailyJobRun.objects.filter(
-        job__startswith='expire_unpaid_registrations:',
+        Q(job__startswith='expire_unpaid_registrations:') | Q(job__startswith=f'{REMINDER_JOB}:'),
         run_date__lt=timezone.localdate() - timedelta(days=7),
     ).delete()
-    return {"expired": len(expired)}
+    return {"expired": len(expired), "reminded": len(reminded)}
 
 
 @shared_task(name="vehicles.auto_manage_events")

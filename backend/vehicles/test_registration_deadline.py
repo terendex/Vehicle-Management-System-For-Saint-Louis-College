@@ -12,7 +12,9 @@ tests pin:
   * expiry frees the plate for a fresh application, mails the applicant, and
     the dead link says why instead of a generic "invalid link";
   * an upload that arrives inside the grace hour is still accepted;
-  * applications filed before the rollout get three days from the rollout.
+  * applications filed before the rollout get three days from the rollout;
+  * one reminder goes out in the last day, never twice, never after the
+    deadline, and a slow mail connection can never deliver it late.
 
 Time is moved by backdating created_at, not by patching the clock, so the
 tests do not depend on what time of day the suite runs.
@@ -21,11 +23,14 @@ from datetime import timedelta
 from unittest import mock
 
 from django.core import mail
+from django.test import override_settings
 from django.utils import timezone
 
 from vehicles import scheduler
-from vehicles.models import DailyJobRun, VehicleRegistration
-from vehicles.registration_deadline import expire_overdue
+from vehicles.email_utils import send_payment_reminder_email
+from vehicles.models import DailyJobRun, EmailOutbox, VehicleRegistration
+from vehicles.registration_deadline import expire_overdue, remind_due
+from vehicles.test_email_outbox import OUTBOX, FlakyTransport
 from vehicles.test_registration_payment import PaymentTestCase
 
 R = VehicleRegistration
@@ -219,3 +224,106 @@ class SchedulerTests(PaymentTestCase):
         expire_unpaid_registrations()
         self.assertFalse(DailyJobRun.objects.filter(job__startswith='expire_unpaid').exists())
         self.assertTrue(DailyJobRun.objects.filter(job='auto_backup').exists())
+
+
+@mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', LONG_AGO)
+class ReminderTests(PaymentTestCase):
+    """One "deadline is close" email in the last day before the deadline."""
+
+    def reminders(self):
+        return [m for m in mail.outbox if 'Reminder' in m.subject]
+
+    def test_reminder_goes_out_in_the_last_day(self):
+        reg = age(self.submit(), timedelta(days=2, hours=1))
+        mail.outbox.clear()
+        self.assertEqual([r.pk for r in remind_due()], [reg.pk])
+        [msg] = self.reminders()
+        self.assertEqual(msg.to, [reg.email])
+        self.assertIn('DEADLINE:', msg.body)
+        self.assertIn(f'token={reg.payment_token}', msg.body)
+        html = msg.alternatives[0][0]
+        # The shared shell: phone viewport, and a full width tap target.
+        self.assertIn('width=device-width', html)
+        self.assertIn('sh-btn', html)
+        self.assertIn(f'token={reg.payment_token}', html)
+
+    def test_no_reminder_before_the_last_day(self):
+        age(self.submit(), timedelta(days=1, hours=23))
+        mail.outbox.clear()
+        self.assertEqual(remind_due(), [])
+        self.assertEqual(self.reminders(), [])
+
+    def test_never_sent_twice(self):
+        age(self.submit(), timedelta(days=2, hours=1))
+        mail.outbox.clear()
+        self.assertEqual(len(remind_due()), 1)
+        self.assertEqual(remind_due(), [])
+        self.assertEqual(len(self.reminders()), 1)
+
+    def test_no_reminder_after_the_deadline(self):
+        """Inside the unadvertised grace hour the applicant is not told anything."""
+        age(self.submit(), timedelta(days=3, minutes=30))
+        mail.outbox.clear()
+        self.assertEqual(remind_due(), [])
+
+    def test_paid_exempt_and_walk_in_are_not_reminded(self):
+        paid = self.submit()
+        self.assertEqual(self.pay(paid).status_code, 200)
+        age(paid, timedelta(days=2, hours=1))
+        age(self.submit_employee('Cleaning and Services'), timedelta(days=2, hours=1))
+        walk_in = age(self.submit(), timedelta(days=2, hours=1))
+        R.objects.filter(pk=walk_in.pk).update(source=R.Source.DIRECT)
+        mail.outbox.clear()
+        self.assertEqual(remind_due(), [])
+        self.assertEqual(self.reminders(), [])
+
+    def test_receipt_filed_after_the_sweep_stops_the_send(self):
+        """The background send reads the row again before mailing."""
+        reg = age(self.submit(), timedelta(days=2, hours=1))
+        self.assertEqual(self.pay(reg).status_code, 200)
+        mail.outbox.clear()
+        send_payment_reminder_email(reg)        # `reg` is the stale, unpaid copy
+        self.assertEqual(self.reminders(), [])
+
+    def test_a_send_that_cannot_be_built_is_retried_next_hour(self):
+        reg = age(self.submit(), timedelta(days=2, hours=1))
+        mail.outbox.clear()
+        with mock.patch('vehicles.email_utils._shell', side_effect=RuntimeError('boom')):
+            remind_due()
+        self.assertFalse(DailyJobRun.objects.filter(job=f'payment_reminder:{reg.pk}').exists())
+        self.assertEqual([r.pk for r in remind_due()], [reg.pk])
+        self.assertEqual(len(self.reminders()), 1)
+
+    @override_settings(**OUTBOX)
+    def test_slow_connection_never_delivers_it_after_the_deadline(self):
+        """A failed send is queued for retry, but only until the deadline."""
+        FlakyTransport.sent = []
+        FlakyTransport.error = ConnectionError('connection reset by peer')
+        FlakyTransport.failures = 0
+        reg = age(self.submit(), timedelta(days=2, hours=1))
+        FlakyTransport.failures = 1
+        self.assertEqual(len(remind_due()), 1)
+        row = EmailOutbox.objects.get(subject__contains='Reminder')
+        self.assertLessEqual(row.expires_at, reg.payment_deadline() + timedelta(seconds=5))
+        # The claim is kept: the outbox owns the retry, so the next sweep must
+        # not queue a second copy.
+        FlakyTransport.failures = 0
+        self.assertEqual(remind_due(), [])
+        self.assertEqual(EmailOutbox.objects.filter(subject__contains='Reminder').count(), 1)
+
+    def test_rollout_application_is_reminded_the_day_before_its_deadline(self):
+        reg = self.submit()
+        with mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', timezone.now() - timedelta(days=2, hours=1)):
+            R.objects.filter(pk=reg.pk).update(created_at=R.PAYMENT_DEADLINE_ROLLOUT - timedelta(days=20))
+            mail.outbox.clear()
+            self.assertEqual([r.pk for r in remind_due()], [reg.pk])
+
+    def test_hourly_task_reminds_and_prunes_its_ledger(self):
+        from vehicles.tasks import expire_unpaid_registrations
+        age(self.submit(), timedelta(days=2, hours=1))
+        DailyJobRun.objects.create(job='payment_reminder:999999',
+                                   run_date=timezone.localdate() - timedelta(days=10))
+        mail.outbox.clear()
+        self.assertEqual(expire_unpaid_registrations(), {'expired': 0, 'reminded': 1})
+        self.assertFalse(DailyJobRun.objects.filter(job='payment_reminder:999999').exists())
+        self.assertEqual(DailyJobRun.objects.filter(job__startswith='payment_reminder:').count(), 1)
