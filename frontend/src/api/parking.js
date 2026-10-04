@@ -89,6 +89,20 @@ export const zoneApi = {
     return data
   },
 
+  // Who is parked in an occupied bay, as a guard saw it. Guards and the admin
+  // may write it; every guard and the admin see it on their maps, and it
+  // clears itself when the bay goes free.
+  recordOccupant: async (spaceId, { plate, name }) => {
+    const { data } = await api.post(`/vehicles/parking/${spaceId}/occupant/`, {
+      plate_number: plate, name,
+    })
+    return data
+  },
+  clearOccupant: async (spaceId) => {
+    const { data } = await api.delete(`/vehicles/parking/${spaceId}/occupant/`)
+    return data
+  },
+
   setCapacity: async (id, capacity_override) => {
     const { data } = await api.patch(`/vehicles/parking-zones/${id}/set-capacity/`, { capacity_override })
     return data

@@ -1887,9 +1887,17 @@ class ParkingCameraThread(threading.Thread):
 
         sp.is_occupied = occupied
         sp.occupied_by = "CAMERA" if occupied else ""
+        fields = ["is_occupied", "occupied_by"]
+        if not occupied:
+            # The car left: forget who a guard recorded as parked here, so the
+            # next car never shows the previous driver. Taking a bay leaves the
+            # columns alone — this in-memory row predates any guard's note, and
+            # writing its blanks back would erase one made moments ago.
+            sp.clear_occupant()
+            fields += list(sp.OCCUPANT_FIELDS)
         try:
             close_old_connections()
-            sp.save(update_fields=["is_occupied", "occupied_by"])
+            sp.save(update_fields=fields)
             self._hyst[sp.id] = 0
         except Exception as exc:
             # Roll the in-memory flag back so the next frames retry the write

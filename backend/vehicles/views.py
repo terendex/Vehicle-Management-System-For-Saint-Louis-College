@@ -35,7 +35,7 @@ from decimal import Decimal, InvalidOperation   # money values, and the error ra
 
 import cv2                                      # only for the camera preview endpoints further down
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, Q, Value    # Q builds "this OR that" conditions
+from django.db.models import Count, Prefetch, Q, Value    # Q builds "this OR that" conditions
 from django.db.models.functions import Lower, Replace, Upper   # for case/spacing-insensitive matching in the database
 from django.http import StreamingHttpResponse, HttpResponse    # StreamingHttpResponse feeds the MJPEG preview
 from rest_framework import viewsets, permissions
@@ -208,12 +208,110 @@ class ParkingReadOnlyUnlessAdmin(permissions.BasePermission):
         return getattr(request.user, 'role', None) == 'admin'   # writing is the CDSO's alone
 
 
+# A free bay has no one in it to record. 409, not 400: the request was fine,
+# the bay changed under it — and the form closes on it rather than retrying.
+BAY_FREED = 'This space is free now — the vehicle has left, so there is no one to record.'
+
+
+class CanRecordParkingOccupant(permissions.BasePermission):
+    """Guards record who is parked in a bay; the admin may correct it."""
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated
+                    and getattr(request.user, 'role', None) in ('security', 'admin'))
+
+
 # Individual bays. Drawn and edited through the zone's save-layout action
 # below; this ViewSet is what the screens read them back through.
 class ParkingSpaceViewSet(viewsets.ModelViewSet):
-    queryset           = ParkingSpace.objects.all()
+    queryset           = ParkingSpace.objects.select_related('zone', 'occupant_noted_by')
     serializer_class   = ParkingSpaceSerializer
     permission_classes = [ParkingReadOnlyUnlessAdmin]
+
+    # The admin's Mark Free. A freed bay forgets its recorded occupant, exactly
+    # as it does when the camera sees it empty, so the next car parked there
+    # never shows the previous driver.
+    def perform_update(self, serializer):
+        with transaction.atomic():   # one commit, so the live refresh never sees the bay freed but still named
+            self._save_and_clear(serializer)
+
+    def _save_and_clear(self, serializer):
+        space = serializer.save()
+        if not space.is_occupied:
+            # Unconditional, against the row rather than this copy of it: a
+            # guard's note saved while this request ran is not in `space`.
+            ParkingSpace.objects.filter(pk=space.pk).update(
+                occupant_plate='', occupant_name='',
+                occupant_noted_by=None, occupant_noted_at=None)
+            space.clear_occupant()
+
+    # Who is parked in an occupied bay, as the guard on the ground saw it: the
+    # plate or conduction number, and optionally the driver's name. Every
+    # parking screen shows it, so one guard's note reaches the admin and the
+    # other guards.
+    #
+    # Written with queryset .update() on the occupant columns only, so
+    # `updated_at` is left alone — it is part of bay_occupancy.layout_signature,
+    # and a plain save() would throw away the zone's prepared baseline over a
+    # note that changes nothing about the bay. .update() fires no post_save, so
+    # the change is broadcast by hand.
+    #
+    # The record is only written WHERE the bay is still occupied, in the same
+    # statement. Checking first and saving after left a gap: the camera could
+    # free the bay in between (clearing nothing, as there was nothing yet), and
+    # the note would then sit on a free bay and be shown against the next car.
+    @action(detail=True, methods=['post', 'delete'], url_path='occupant',
+            permission_classes=[CanRecordParkingOccupant])
+    def occupant(self, request, pk=None):
+        from django.utils import timezone as _tz
+        from .models import canonical_identifier
+        space = self.get_object()
+        where = f"Space {space.space_number}" + (f" ({space.zone.name})" if space.zone else '')
+        rows  = ParkingSpace.objects.filter(pk=space.pk)
+
+        def respond():
+            fresh = self.get_queryset().get(pk=space.pk)
+            try:
+                from realtime.broadcast import broadcast_change
+                broadcast_change('parkingspace', 'updated', id=space.pk)
+            except Exception:
+                logger.exception("parking occupant broadcast failed")   # the record still stands
+            return Response(self.get_serializer(fresh).data)
+
+        if request.method == 'DELETE':
+            had = space.occupant_plate
+            rows.update(occupant_plate='', occupant_name='',
+                        occupant_noted_by=None, occupant_noted_at=None)
+            if had:
+                audit(request, AuditLog.Action.RECORD_UPDATED,
+                      f"Parking occupant cleared: {where} — was {had}")
+            return respond()
+
+        if not space.is_occupied:
+            return Response({'error': BAY_FREED}, status=drf_status.HTTP_409_CONFLICT)
+        import re as _re
+        data  = request.data if isinstance(request.data, dict) else {}   # a JSON list body is not a form
+        plate = canonical_identifier(str(data.get('plate_number') or ''))
+        if not plate:
+            return Response({'plate_number': ['Enter the plate or conduction number.']},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+        # Letters, digits and the hyphen of an e-bike control number (FM-001):
+        # what a plate or conduction number can actually hold.
+        if len(plate) > 30 or not _re.fullmatch(r'[A-Z0-9-]+', plate):
+            return Response({'plate_number': ['Use only the letters and numbers on the plate.']},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+        name = ' '.join(str(data.get('name') or '').split()).upper()   # one tidy line, names in capitals
+        if len(name) > 150:
+            return Response({'name': ['Keep the name under 150 characters.']},
+                            status=drf_status.HTTP_400_BAD_REQUEST)
+
+        written = rows.filter(is_occupied=True).update(
+            occupant_plate=plate, occupant_name=name,
+            occupant_noted_by=request.user, occupant_noted_at=_tz.now())
+        if not written:                                  # freed between the check and the write
+            return Response({'error': BAY_FREED}, status=drf_status.HTTP_409_CONFLICT)
+        audit(request, AuditLog.Action.RECORD_UPDATED,
+              f"Parking occupant recorded: {where} — {plate}" + (f", {name}" if name else ''))
+        return respond()
 
 
 # A parking area and everything done to it: the bay layout, the empty-lot
@@ -222,7 +320,8 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
 class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
     # select_related/prefetch_related fetch the camera and the bays up front,
     # so listing zones is a couple of queries rather than two per zone.
-    queryset           = ParkingZone.objects.select_related('camera').prefetch_related('spaces').all()
+    queryset           = ParkingZone.objects.select_related('camera').prefetch_related(
+        Prefetch('spaces', queryset=ParkingSpace.objects.select_related('occupant_noted_by'))).all()
     serializer_class   = ParkingZoneSerializer
     permission_classes = [ParkingReadOnlyUnlessAdmin]    # guards read, CDSO edits
     audit_label        = 'Parking Zone'
@@ -293,7 +392,7 @@ class ParkingZoneViewSet(AuditedViewSetMixin, viewsets.ModelViewSet):
             )
             result.append(space)
 
-        return Response(ParkingSpaceSerializer(result, many=True).data)   # hand back the saved layout
+        return Response(ParkingSpaceSerializer(result, many=True, context={'request': request}).data)   # hand back the saved layout
 
     @action(detail=True, methods=['post'], url_path='set-baseline')
     def set_baseline(self, request, pk=None):

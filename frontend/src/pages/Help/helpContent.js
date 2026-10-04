@@ -280,6 +280,7 @@ export const HELP_TOPICS = [
       { type: 'figure', id: 'guard-parking' },
       { type: 'p', text: 'Free, Parked and Capacity come from the parking cameras across every zone of that vehicle type. On campus is a different count — gate entry and exit scans, parked or not — so it is normally the higher of the two. Held appears when an event is reserving spaces.' },
       { type: 'note', text: 'Each zone shows its own status: Monitoring, Camera off, or Not set up. “Not set up” means an admin has not finished that zone\'s setup, so its bay colours may be out of date — check before sending anyone to a bay it shows as free.' },
+      { type: 'p', text: 'The camera can tell that a bay is taken, but not by whom. Click an occupied bay and press Record who parked here: type the plate or conduction number, and the driver\'s name (it fills in by itself for a registered vehicle). The plate then shows on the bay for every guard and the admin. The record clears itself when the bay goes free, and Edit or Clear corrects it.' },
       { type: 'steps', items: [
         'To record a vehicle parked across two bays, press Issue Violation. It issues Double Parking only; the gate records the other offences itself.',
         'Type the plate or conduction number, add any notes (which bays), and press Issue Violation. The result says which offence it is and how long the owner loses campus access. Only one offence is counted per owner per day, so a second report that day records nothing new.',
@@ -433,13 +434,14 @@ export const HELP_TOPICS = [
       { type: 'p', text: 'Three steps make a zone monitored, and the banner on the zone tells you which one is outstanding:' },
       { type: 'steps', items: [
         'Capture a reference image with the lot empty — press Edit Parking Slots, then Use as Reference Image. It is what every bay is scored against, so the lot has to be clear.',
-        'Draw the slots on it. Use Box for rectangular bays or Pen for angled ones, then Save Layout.',
+        'Draw the slots on it, then Save Layout. Shapes places standard car or motorcycle bays with one click (straight, sideways, angled 45° or 60°, and perspective for a low camera); Box draws a rectangle; Pen traces any outline.',
         'Press Start Monitoring. That stores the reference image as the zone\'s empty baseline and the detector begins scoring the bays.',
       ] },
       { type: 'figure', id: 'cdso-parking-edit-slots' },
       { type: 'p', text: 'Free, Parked and Capacity cover every zone of the selected vehicle type and come from the cameras. On Campus counts gate scans instead, parked or not, so it is normally higher — drop-offs, vehicles still circling, and vehicles parked where no camera watches.' },
       { type: 'note', text: 'There is no detection on/off switch. A zone with a camera and a finished setup is always monitored, and the server restarts the detector by itself. The badge beside the mode buttons says which state it is in: Monitoring bays, Starting camera, or Not monitored yet.' },
       { type: 'note', text: 'Replacing the reference image later marks the baseline stale, and the banner asks you to update it. Until you do, the zone is scored against the older picture.' },
+      { type: 'note', text: 'Click a slot to adjust it: drag the centre to move it, a corner to reshape it, the knob on the stalk below it to rotate it (hold Shift for 15° steps), and − / + to make it smaller or larger. The copy button (or Ctrl+D) duplicates it, which is the quick way to fill a row.' },
       { type: 'note', text: 'Where a camera sends two views stacked in one frame, the editor asks which view the zone covers before any bay is drawn, so a bay cannot straddle the seam between them.' },
     ],
   },

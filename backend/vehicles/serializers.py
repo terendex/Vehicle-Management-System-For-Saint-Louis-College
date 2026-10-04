@@ -232,15 +232,50 @@ class ReferenceItemSerializer(serializers.ModelSerializer):
 
 class ParkingSpaceSerializer(serializers.ModelSerializer):
     vehicle_category = serializers.SerializerMethodField()
+    # The guard-recorded occupant. Read-only here: it is written only through
+    # the occupant action, which guards may use and this PATCH path is not.
+    occupant_noted_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model  = ParkingSpace
         fields = ['id', 'zone', 'space_number', 'vehicle_category',
                   'x1', 'y1', 'x2', 'y2', 'points', 'lens_index',
-                  'is_occupied', 'occupied_by', 'updated_at']
+                  'is_occupied', 'occupied_by',
+                  'occupant_plate', 'occupant_name', 'occupant_noted_at', 'occupant_noted_by_name',
+                  'updated_at']
+        read_only_fields = ['occupant_plate', 'occupant_name', 'occupant_noted_at']
 
     def get_vehicle_category(self, obj):
         return obj.zone.vehicle_category if obj.zone else None
+
+    def get_occupant_noted_by_name(self, obj):
+        return obj.occupant_noted_by.full_name if obj.occupant_noted_by else ''
+
+    OCCUPANT_KEYS = ('occupant_plate', 'occupant_name', 'occupant_noted_at', 'occupant_noted_by_name')
+
+    # A driver's name is staff information. Owners read the same bay map (the
+    # zone list and the availability view both serialize bays), so the
+    # occupant fields are removed unless the request is from a guard or the
+    # admin — and a serializer given no request at all shows nothing rather
+    # than guessing. Removed from the fields, not from the output, so nobody's
+    # name is even looked up for a reader who will not see it.
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get('request')
+        if getattr(getattr(request, 'user', None), 'role', None) not in ('security', 'admin'):
+            for key in self.OCCUPANT_KEYS:
+                fields.pop(key, None)
+        return fields
+
+    # The admin's Mark Occupied / Mark Free. Writes only the columns sent (and
+    # updated_at, as the full save it replaces did), so it cannot write back a
+    # stale copy of columns other writers own: a guard's occupant record saved
+    # a moment earlier, or the camera's noise_stats.
+    def update(self, instance, validated_data):
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save(update_fields=[*validated_data, 'updated_at'])
+        return instance
 
 
 class ParkingNoticeSerializer(serializers.ModelSerializer):

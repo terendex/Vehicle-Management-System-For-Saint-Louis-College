@@ -1,6 +1,23 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, Loader2, RefreshCw, ShieldCheck, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Camera, Loader2, Pencil, RefreshCw, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react'
 import { lookupVehicleByPlate } from '../api/vehicles'
+import { zoneApi } from '../api/parking'
+import notify, { useFeedbackStore } from './Feedback/notify'
+import { bayPlate } from '../utils/bayPlate'
+
+// The server's own reason, when it gave one.
+function apiError(err, fallback) {
+  if (!err?.response) return `${fallback} The server could not be reached.`
+  const data = err.response.data
+  if (typeof data?.error === 'string') return data.error
+  if (typeof data?.detail === 'string') return data.detail
+  const first = data && typeof data === 'object' ? Object.values(data).flat()[0] : null
+  return typeof first === 'string' ? first : fallback
+}
+
+const fmtNoted = (iso) => (iso
+  ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  : '')
 
 /**
  * Who is parked in a bay.
@@ -113,22 +130,197 @@ export function BayOccupantDetails({ plate }) {
 }
 
 /**
+ * Who a guard recorded as parked in this bay: driver, plate, and who noted it
+ * when. Shown to guards and the admin — the API leaves these fields out for
+ * anyone else.
+ */
+export function OccupantRecord({ space }) {
+  if (!space.occupant_plate) {
+    return (
+      <p className="pm-bay-note">
+        <Camera size={13} />
+        <span>
+          {bayPlate(space)
+            ? 'No guard has recorded who parked here yet.'
+            : 'Detected by camera — no plate recorded yet.'}
+        </span>
+      </p>
+    )
+  }
+  return (
+    <div className="pm-bay-rows">
+      <div className="pm-bay-row">
+        <span className="pm-bay-label">Parked by</span>
+        <span className="pm-bay-value">{space.occupant_name || '—'}</span>
+      </div>
+      <div className="pm-bay-row">
+        <span className="pm-bay-label">Plate / conduction no.</span>
+        <span className="pm-bay-value pm-bay-plate">{space.occupant_plate}</span>
+      </div>
+      <p className="pm-occ-noted">
+        Recorded{space.occupant_noted_by_name ? ` by ${space.occupant_noted_by_name}` : ''}
+        {space.occupant_noted_at ? ` · ${fmtNoted(space.occupant_noted_at)}` : ''}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * The guard's form: plate (required) and the driver (optional). A registered
+ * plate fills the name in from its owner while the box is still empty — the
+ * guard can overwrite it, since whoever drove may not be the registrant.
+ */
+function OccupantForm({ space, onSaved, onCancel, onFreed }) {
+  const [plate, setPlate]   = useState(space.occupant_plate || bayPlate(space))
+  const [name, setName]     = useState(space.occupant_name || '')
+  const [saving, setSaving] = useState(false)
+  // What the boxes hold right now, for answers that arrive after the guard
+  // has moved on; and the name the lookup filled in, which a later lookup may
+  // replace — a name the guard typed is never replaced.
+  const plateNow   = useRef(plate)
+  const nameNow    = useRef(name)
+  const autoName   = useRef(null)
+  const lookedUp   = useRef(null)    // the plate last looked up, so Tab does not ask twice
+  const savingNow  = useRef(false)   // Enter pressed twice must not send twice
+  useEffect(() => { plateNow.current = plate }, [plate])
+  useEffect(() => { nameNow.current = name }, [name])
+
+  const fillName = async () => {
+    const p = plate.trim()
+    const typed = name.trim() && name !== autoName.current
+    if (!p || typed || lookedUp.current === p) return
+    lookedUp.current = p
+    try {
+      const { data } = await lookupVehicleByPlate(p)
+      const owner = data?.found ? (data.vehicle?.user?.full_name || '').toUpperCase() : ''
+      if (plateNow.current.trim() !== p) return                  // the plate changed meanwhile
+      const cur = nameNow.current
+      if (cur.trim() && cur !== autoName.current) return        // the guard typed a name meanwhile
+      autoName.current = owner || null
+      setName(owner)                                            // unregistered: clear a stale auto-fill
+    } catch {
+      lookedUp.current = null                                   // let a later blur try again
+    }
+  }
+
+  const save = async () => {
+    if (savingNow.current) return
+    if (!plate.trim()) {
+      await notify.error('Enter the plate or conduction number of the vehicle parked here.', {
+        title: 'Occupant not recorded',
+      })
+      return
+    }
+    savingNow.current = true
+    setSaving(true)
+    try {
+      const updated = await zoneApi.recordOccupant(space.id, { plate: plate.trim(), name: name.trim() })
+      onSaved(updated)
+      notify.success(`Space ${space.space_number}: ${updated.occupant_plate} recorded.`, {
+        title: 'Occupant recorded',
+      })
+    } catch (err) {
+      await notify.error(apiError(err, 'The occupant could not be recorded.'), {
+        title: 'Occupant not recorded',
+      })
+      // The bay went free while the form was open: there is no one to record,
+      // so the dialog closes instead of offering a Save that cannot work.
+      if (err?.response?.status === 409) onFreed?.()
+    } finally {
+      savingNow.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="pm-occ-form">
+      <label className="pm-modal-label" htmlFor="occ-plate">
+        Plate / conduction number <span className="pm-req">*</span>
+      </label>
+      <input
+        id="occ-plate"
+        className="pm-modal-input"
+        value={plate}
+        onChange={e => setPlate(e.target.value.toUpperCase())}
+        onBlur={fillName}
+        onKeyDown={e => e.key === 'Enter' && save()}
+        placeholder="e.g. ABC 1234"
+        maxLength={30} autoFocus
+      />
+      <label className="pm-modal-label" htmlFor="occ-name">Who parked here</label>
+      <input
+        id="occ-name"
+        className="pm-modal-input"
+        value={name}
+        onChange={e => setName(e.target.value.toUpperCase())}
+        onFocus={fillName}
+        onKeyDown={e => e.key === 'Enter' && save()}
+        placeholder="Driver's name — filled in for registered vehicles"
+        maxLength={150}
+      />
+      <div className="pm-occ-form-actions">
+        <button type="button" className="pm-btn pm-btn--outline" onClick={onCancel} disabled={saving}>Cancel</button>
+        <button type="button" className="pm-btn pm-btn--primary" onClick={save} disabled={saving}>
+          {saving ? <Loader2 size={13} className="pm-spin" /> : <UserPlus size={13} />} Save
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
  * The details above as a dialog, for the screens where clicking a bay is a
  * question rather than an action. `children` is the footer, so a screen that
  * can also free the bay puts its button there instead of opening a second
  * dialog on top of this one.
+ *
+ * `canRecord` (guards and the admin) adds the occupant record and its form.
+ * `onUpdated` hears about a save at once; every other open screen picks it up
+ * from the live `parkingspace` refresh.
  */
-export default function BayOccupantModal({ space, zoneName, onClose, children }) {
+export default function BayOccupantModal({ space: initial, zoneName, onClose, canRecord = false, onUpdated, children }) {
+  const [space, setSpace]     = useState(initial)
+  const [editing, setEditing] = useState(false)
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return
+      // A message box open over this dialog owns the key. Both listen on the
+      // capture phase, and this one was added first, so it runs first — without
+      // this, Esc on "Occupant recorded" closed the dialog underneath and left
+      // the message on screen.
+      if (useFeedbackStore.getState().queue.length > 0) return
       e.preventDefault()
       e.stopImmediatePropagation()
-      onClose?.()
+      if (editing) setEditing(false)   // Esc backs out of the form first
+      else onClose?.()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  }, [onClose, editing])
+
+  const saved = (u) => {
+    setSpace(u)
+    setEditing(false)
+    onUpdated?.(u)
+  }
+
+  const clear = async () => {
+    const ok = await notify.confirm({
+      title: 'Clear occupant record?',
+      message: `Remove ${space.occupant_plate} as the vehicle parked in space ${space.space_number}?`,
+      confirmLabel: 'Clear record',
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      saved(await zoneApi.clearOccupant(space.id))
+    } catch (err) {
+      await notify.error(apiError(err, 'The record could not be cleared.'), { title: 'Record not cleared' })
+    }
+  }
+
+  const plate = bayPlate(space)
 
   return (
     <div className="pm-overlay" onClick={e => e.target === e.currentTarget && onClose?.()}>
@@ -138,13 +330,42 @@ export default function BayOccupantModal({ space, zoneName, onClose, children })
           <button className="pm-modal-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
         <div className="pm-modal-body">
-          <BayOccupantDetails plate={space.occupied_by} />
-        </div>
-        <div className="pm-modal-footer">
-          {children ?? (
-            <button className="pm-btn pm-btn--primary" onClick={onClose} autoFocus>Close</button>
+          {canRecord && (editing ? (
+            <OccupantForm space={space} onSaved={saved} onCancel={() => setEditing(false)} onFreed={onClose} />
+          ) : (
+            <div className="pm-occ-section">
+              <OccupantRecord space={space} />
+              <div className="pm-occ-actions">
+                <button type="button" className="pm-btn pm-btn--outline" onClick={() => setEditing(true)}>
+                  {space.occupant_plate
+                    ? <><Pencil size={13} /> Edit</>
+                    : <><UserPlus size={13} /> Record who parked here</>}
+                </button>
+                {space.occupant_plate && (
+                  <button type="button" className="pm-btn pm-btn--outline pm-occ-clear" onClick={clear}>
+                    <Trash2 size={13} /> Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {!editing && plate && (
+            <div className={canRecord ? 'pm-occ-lookup' : undefined}>
+              {canRecord && <div className="pm-occ-lookup-title">Vehicle records</div>}
+              <BayOccupantDetails key={plate} plate={plate} />
+            </div>
+          )}
+          {!canRecord && !plate && (
+            <p className="pm-bay-note"><Camera size={13} /> Detected by camera — no plate recorded yet.</p>
           )}
         </div>
+        {!editing && (
+          <div className="pm-modal-footer">
+            {children ?? (
+              <button className="pm-btn pm-btn--primary" onClick={onClose} autoFocus>Close</button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

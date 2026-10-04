@@ -410,6 +410,56 @@
 
 .pm-edit-hint { font-size: 12.5px; color: #4A6B85; font-style: italic; }
 
+/* ── Standard shapes bar (Edit Parking Slots → Shapes) ── */
+.pm-shapebar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  background: #F4F8FB;
+  border: 1px solid #D3E1EC;
+  border-radius: 10px;
+}
+.pm-shape-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pm-shape-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pm-shape-btn polygon {
+  fill: rgba(27, 169, 104, 0.18);
+  stroke: #5C7B92;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.pm-shape-btn:hover { border-color: #03396C; }
+.pm-shape-btn--active { border-color: #03396C; background: #EAF2F8; }
+.pm-shape-btn--active polygon { fill: rgba(246, 206, 17, 0.35); stroke: #03396C; }
+.pm-shape-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2E4C63;
+}
+.pm-shape-field input[type="range"] { width: 110px; accent-color: #03396C; }
+.pm-shape-val { min-width: 36px; font-weight: 500; color: #4A6B85; font-variant-numeric: tabular-nums; }
+
 /* ── Canvas wrapper + image + SVG ── */
 .pm-canvas-wrapper {
   position: relative;
@@ -688,6 +738,8 @@
   cursor: pointer;
   transition: background 0.15s;
 }
+.pm-popover-btn     { background: #F1F5F9; color: #2E4C63; }   /* − / +, unless a modifier below says otherwise */
+.pm-popover-btn:hover { background: #DCE6EE; }
 .pm-popover-btn--ok  { background: #E3F5EC; color: #13804F; }
 .pm-popover-btn--ok:hover  { background: #BFE7D2; }
 .pm-popover-btn--dup { background: #EAF2F8; color: #03396C; }
@@ -896,6 +948,47 @@
 
 .pm-bay-pill--ok  { background: #D6F0E6; border-color: #B6E3D2; color: #0F7A5A; }
 .pm-bay-pill--bad { background: #FADEDE; border-color: #F3C0C0; color: #C62828; }
+
+/* ── Guard-recorded occupant (BayOccupantModal) ─────────────── */
+.pm-occ-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-occ-noted {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #5C7B92;
+}
+.pm-occ-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pm-occ-clear { color: #C62828; }
+.pm-occ-form {
+  display: flex;
+  flex-direction: column;
+}
+.pm-occ-form .pm-modal-input { margin-bottom: 14px; }
+.pm-occ-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pm-occ-lookup {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #E3ECF3;
+}
+.pm-occ-lookup-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #5C7B92;
+  margin-bottom: 8px;
+}
 
 .pm-modal-footer {
   display: flex;

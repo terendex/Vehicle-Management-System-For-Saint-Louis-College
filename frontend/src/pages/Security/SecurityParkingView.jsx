@@ -9,6 +9,7 @@ import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
 import BayOccupantModal from '../../components/BayOccupant'
+import { bayPlate } from '../../utils/bayPlate'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
 import { useCameraContext } from '../../context/CameraContext'
@@ -504,14 +505,18 @@ export default function SecurityParkingView() {
                       const w     = Math.abs(s.x2 - s.x1), h = Math.abs(s.y2 - s.y1)
                       const color = s.is_occupied ? '#D93B3B' : '#1BA968'
                       const fill  = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
-                      const known = s.is_occupied && !!s.occupied_by
+                      // Every taken bay opens: the guard can say who is in
+                      // it even when the camera only knows that someone is.
+                      const plate = s.is_occupied ? bayPlate(s) : ''
                       return (
                         <g
                           key={s.id}
-                          onClick={known ? () => setBayLookup(s) : undefined}
-                          style={known ? { cursor: 'pointer' } : undefined}
+                          onClick={s.is_occupied ? () => setBayLookup(s) : undefined}
+                          style={s.is_occupied ? { cursor: 'pointer' } : undefined}
                         >
-                          {known && <title>{`${s.occupied_by} — click for details`}</title>}
+                          {s.is_occupied && (
+                            <title>{plate ? `${plate} — click for details` : 'Click to record who parked here'}</title>
+                          )}
                           {/* Draw the bay the shape it was drawn in. The pen
                               tool stores freeform vertices in `points`; x1..y2
                               is only the bounding box kept for overlap maths. */}
@@ -528,21 +533,21 @@ export default function SecurityParkingView() {
                           )}
                           <text
                             x={x + w / 2}
-                            y={y + h / 2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}
+                            y={y + h / 2 - (plate ? 0.013 : 0)}
                             textAnchor="middle" dominantBaseline="middle"
                             fill="#fff" fontSize={0.028} fontWeight="bold"
                             style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.55)', strokeWidth: '0.005' }}
                           >
                             {s.space_number}
                           </text>
-                          {s.is_occupied && s.occupied_by && (
+                          {plate && (
                             <text
                               x={x + w / 2} y={y + h / 2 + 0.023}
                               textAnchor="middle" dominantBaseline="middle"
                               fill="#F3C0C0" fontSize={0.02} fontWeight="600"
                               style={{ paintOrder: 'stroke', stroke: 'rgba(0,0,0,0.5)', strokeWidth: '0.004' }}
                             >
-                              {s.occupied_by}
+                              {plate}
                             </text>
                           )}
                         </g>
@@ -785,6 +790,8 @@ export default function SecurityParkingView() {
           space={bayLookup}
           zoneName={selZone?.name}
           onClose={() => setBayLookup(null)}
+          canRecord
+          onUpdated={loadZones}
         />
       )}
 

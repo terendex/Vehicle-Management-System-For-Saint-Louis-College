@@ -1367,6 +1367,19 @@ class ParkingSpace(models.Model):
     lens_index   = models.PositiveSmallIntegerField(default=0)
     is_occupied  = models.BooleanField(default=False)    # what the screens show as red or green
     occupied_by  = models.CharField(max_length=20, blank=True)   # the plate, when one was read
+    # Who is parked here, as a guard recorded it on the parking screen: the
+    # camera can see that a bay is taken but not by whom. Cleared when the bay
+    # goes free (camera or Mark Free), so the next car never inherits the
+    # previous driver. Written with save(update_fields=OCCUPANT_FIELDS) only —
+    # see noise_stats below for why a plain save() would cost the zone its
+    # baseline.
+    occupant_plate    = models.CharField(max_length=30, blank=True)    # plate or conduction number, canonical form
+    occupant_name     = models.CharField(max_length=150, blank=True)   # the driver, as the guard gave it
+    occupant_noted_by = models.ForeignKey(
+        'accounts.User', null=True, blank=True, on_delete=models.SET_NULL,   # the record outlives the guard's account
+        related_name='noted_parking_occupants',
+    )
+    occupant_noted_at = models.DateTimeField(null=True, blank=True)
     # What this bay's own readings look like while it is empty, and therefore
     # what counts as a change worth claiming it for — see bay_occupancy.
     # {'samples': n, 'mad_mean', 'mad_std', 'edge_mean', 'edge_std', 'updated_at'}.
@@ -1383,9 +1396,20 @@ class ParkingSpace(models.Model):
     )
     updated_at   = models.DateTimeField(auto_now=True)   # touched on every occupancy change
 
+    # The columns a guard's occupant record lives in — the update_fields for
+    # every write of it, so none of them touches updated_at.
+    OCCUPANT_FIELDS = ('occupant_plate', 'occupant_name', 'occupant_noted_by', 'occupant_noted_at')
+
     class Meta:
         db_table = 'tbl_parking_space'
         ordering = ['zone__vehicle_category', 'space_number']   # group by lot type, then by bay label
+
+    def clear_occupant(self):
+        """Forget the recorded occupant (in memory; the caller saves)."""
+        self.occupant_plate    = ''
+        self.occupant_name     = ''
+        self.occupant_noted_by = None
+        self.occupant_noted_at = None
 
     def __str__(self):
         status = f"({self.occupied_by})" if self.is_occupied else "(free)"

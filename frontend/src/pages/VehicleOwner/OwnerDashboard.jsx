@@ -22,6 +22,7 @@ import {
 import ChangeDiff from '../../components/RegistrationDetails/ChangeDiff'
 import '../../components/RegistrationDetails/detailFields.css'
 import { getNotices } from '../../api/vehicles'
+import { bayPlate } from '../../utils/bayPlate'
 import './OwnerDashboard.css'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
 import { isControlNumber, vehicleQrPayload } from '../../utils/plateFormat'
@@ -1230,18 +1231,20 @@ export default function OwnerDashboard() {
                   {/* Parking grid */}
                   {parkingSpaces.length > 0 ? (
                     <div className="od-parking-grid">
-                      {parkingSpaces.map(space => (
-                        <div
-                          key={space.id}
-                          className={`od-parking-space ${space.is_occupied ? 'occupied' : 'free'}`}
-                          title={space.is_occupied ? `Occupied${space.occupied_by ? ` by ${space.occupied_by}` : ''}` : 'Available'}
-                        >
-                          <span className="od-space-num">{space.space_number}</span>
-                          {space.is_occupied && space.occupied_by && (
-                            <span className="od-space-plate">{space.occupied_by}</span>
-                          )}
-                        </div>
-                      ))}
+                      {parkingSpaces.map(space => {
+                        // bayPlate drops the detector's "CAMERA" placeholder.
+                        const plate = space.is_occupied ? bayPlate(space) : ''
+                        return (
+                          <div
+                            key={space.id}
+                            className={`od-parking-space ${space.is_occupied ? 'occupied' : 'free'}`}
+                            title={space.is_occupied ? `Occupied${plate ? ` by ${plate}` : ''}` : 'Available'}
+                          >
+                            <span className="od-space-num">{space.space_number}</span>
+                            {plate && <span className="od-space-plate">{plate}</span>}
+                          </div>
+                        )
+                      })}
                     </div>
                   ) : (
                     <div className="od-parking-empty">

@@ -5,11 +5,13 @@ import {
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, ListChecks, Check,
   VideoOff, Search, Maximize2, Minimize2, Copy, ChevronDown, WifiOff,
+  Shapes, Minus,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import DoubleParkingAlerts from '../../components/DoubleParkingAlerts'
-import { BayOccupantDetails } from '../../components/BayOccupant'
+import BayOccupantModal from '../../components/BayOccupant'
+import { bayPlate } from '../../utils/bayPlate'
 import AdminLayout from '../../components/Layout/AdminLayout'
 import { zoneApi } from '../../api/parking'
 import { camerasApi } from '../../api/cameras'
@@ -102,11 +104,146 @@ function translated(s, dx, dy) {
 // of the frame. Enough to see it is a new slot, close enough to drag into place.
 const PASTE_STEP = 0.03
 
+// ── Standard slot shapes ──────────────────────────────────────────
+// Shapes are built in "picture units": 1 = the height of the view on screen,
+// x scaled by its aspect, so a 2.5 × 5 m car bay really is 1:2 on screen and
+// turning it does not skew it. `toNorm` turns them into stored 0–1 frame
+// coordinates. The on-screen size is only a starting guess — how big a bay
+// looks depends on how far the camera is from it — which is why every placed
+// slot can be resized.
+const BAY_SIZES = {
+  car:        { w: 2.5, l: 5.0, screen: 0.22 },   // metres; `screen` = default length on screen
+  motorcycle: { w: 1.0, l: 2.0, screen: 0.12 },
+}
+const PERSPECTIVE_FAR   = 0.65   // the far edge's width, against the near edge
+const PERSPECTIVE_DEPTH = 0.8    // how much a bay's length is foreshortened
+
+// A bay at `deg` to the aisle, centred on 0,0. Its top and bottom edges run
+// along the aisle; its sides follow the painted stall lines, leaning right for
+// dir 1 and left for -1. 90° is a plain rectangle. `far` < 1 narrows the top
+// edge for a camera looking along the bay.
+function angledBay(w, l, deg, dir = 1, far = 1, depth = 1) {
+  const t     = deg * Math.PI / 180
+  const along = w / Math.sin(t)                     // the bay's width measured along the aisle
+  const d     = l * Math.sin(t) * depth             // how far it reaches back from the aisle
+  const off   = dir * l * Math.cos(t) * depth / 2   // how far the top slides past the bottom
+  const top   = along * far
+  return [[-top / 2 + off, -d / 2], [top / 2 + off, -d / 2], [along / 2 - off, d / 2], [-along / 2 - off, d / 2]]
+}
+
+const SLOT_SHAPES = [
+  { key: 'straight', label: 'Straight',         tip: 'Nose-in bay',                       make: (w, l) => angledBay(w, l, 90) },
+  { key: 'sideways', label: 'Sideways',         tip: 'Parallel parking along a curb',     make: (w, l) => angledBay(l, w, 90) },
+  { key: 'a45r',     label: '45° right',        tip: 'Angled bay, leaning right',         make: (w, l) => angledBay(w, l, 45, 1) },
+  { key: 'a45l',     label: '45° left',         tip: 'Angled bay, leaning left',          make: (w, l) => angledBay(w, l, 45, -1) },
+  { key: 'a60r',     label: '60° right',        tip: 'Steeper angled bay, leaning right', make: (w, l) => angledBay(w, l, 60, 1) },
+  { key: 'a60l',     label: '60° left',         tip: 'Steeper angled bay, leaning left',  make: (w, l) => angledBay(w, l, 60, -1) },
+  { key: 'persp',    label: 'Perspective',      tip: 'Straight bay seen by a low camera — narrower at the far end',
+    make: (w, l) => angledBay(w, l, 90, 1, PERSPECTIVE_FAR, PERSPECTIVE_DEPTH) },
+  { key: 'p45r',     label: 'Perspective 45° right', tip: 'Angled bay seen by a low camera, leaning right',
+    make: (w, l) => angledBay(w, l, 45, 1, PERSPECTIVE_FAR, PERSPECTIVE_DEPTH) },
+  { key: 'p45l',     label: 'Perspective 45° left',  tip: 'Angled bay seen by a low camera, leaning left',
+    make: (w, l) => angledBay(w, l, 45, -1, PERSPECTIVE_FAR, PERSPECTIVE_DEPTH) },
+]
+
+const rotatePts = (pts, deg) => {
+  const t = deg * Math.PI / 180, c = Math.cos(t), s = Math.sin(t)
+  return pts.map(([x, y]) => [x * c - y * s, x * s + y * c])
+}
+
+// The shape a stamp would place: picture units, centred on 0,0.
+function stampShape(vehicle, shapeKey, size, angle) {
+  const bay   = BAY_SIZES[vehicle] ?? BAY_SIZES.car
+  const shape = SLOT_SHAPES.find(s => s.key === shapeKey) ?? SLOT_SHAPES[0]
+  const unit  = bay.screen * size / bay.l             // picture units per metre
+  return rotatePts(shape.make(bay.w * unit, bay.l * unit), angle)
+}
+
+// Picture units around a centre → stored full-frame coordinates, and back.
+const toNorm   = (pts, cx, cy, aspect, lensCount) => pts.map(([x, y]) => [cx + x / aspect, cy + y / lensCount])
+const fromNorm = (pts, cx, cy, aspect, lensCount) => pts.map(([x, y]) => [(x - cx) * aspect, (y - cy) * lensCount])
+
+// Slides an outline back inside the frame and its lens band without changing
+// it; one too big to fit is clipped to the edges instead.
+function fitInBand(pts, top, bot) {
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+  const dx = Math.min(0, 1 - Math.max(...xs)) || Math.max(0, -Math.min(...xs))
+  const dy = Math.min(0, bot - Math.max(...ys)) || Math.max(0, top - Math.min(...ys))
+  return pts.map(([x, y]) => [
+    Math.max(0, Math.min(1, x + dx)),
+    Math.max(top, Math.min(bot, y + dy)),
+  ])
+}
+
+const centreOf = (s) => [(s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2]
+
+// The same slot grown or shrunk by `f` about its centre. A box stays a box.
+// Shrinking stops at the smallest slot the box tool will draw (DRAG_MIN on
+// screen), rather than going on until it is a dot nobody can select.
+function scaledSlot(s, f, lensCount) {
+  if (f < 1 && Math.min(s.x2 - s.x1, (s.y2 - s.y1) * lensCount) * f < DRAG_MIN) return s
+  const [cx, cy] = centreOf(s)
+  const band = s.lens_index ?? 0
+  const pts  = fitInBand(
+    shapePoints(s).map(([x, y]) => [cx + (x - cx) * f, cy + (y - cy) * f]),
+    band / lensCount, (band + 1) / lensCount)
+  if (s.points && s.points.length >= 3) return withPoints(s, pts)
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+  return { ...s, x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys) }
+}
+
+// The same slot turned `deg` about its centre, in picture units so it keeps
+// its shape on screen. A turned box becomes a four-corner outline.
+function rotatedSlot(s, deg, aspect, lensCount) {
+  const [cx, cy] = centreOf(s)
+  const band = s.lens_index ?? 0
+  const pts  = toNorm(rotatePts(fromNorm(shapePoints(s), cx, cy, aspect, lensCount), deg), cx, cy, aspect, lensCount)
+  return withPoints(s, fitInBand(pts, band / lensCount, (band + 1) / lensCount))
+}
+
+// A shape's outline fitted into a 24 × 24 box, for its palette button.
+function shapeThumb(shapeKey) {
+  const pts = stampShape('car', shapeKey, 1, 0)
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+  const minX = Math.min(...xs), minY = Math.min(...ys)
+  const k = 18 / Math.max(Math.max(...xs) - minX, Math.max(...ys) - minY)
+  const ox = (24 - (Math.max(...xs) - minX) * k) / 2, oy = (24 - (Math.max(...ys) - minY) * k) / 2
+  return pts.map(([x, y]) => `${(ox + (x - minX) * k).toFixed(1)},${(oy + (y - minY) * k).toFixed(1)}`).join(' ')
+}
+
+const STAMP_STORE = 'pm.slotStamp'
+const STAMP_DEFAULTS = { shape: 'straight', size: { car: 1, motorcycle: 1 }, angle: { car: 0, motorcycle: 0 } }
+const SIZE_MIN = 0.5, SIZE_MAX = 2
+// A stored number, if it is one and in range; otherwise the default. Whatever
+// is in storage was written by an older build or by hand, and a NaN here
+// would become NaN coordinates — which JSON sends as null and save-layout
+// cannot take.
+const storedNum = (v, lo, hi, dflt) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : dflt)
+function loadStamp() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STAMP_STORE) || 'null')
+    if (saved && typeof saved === 'object') {
+      const per = (key, lo, hi) => Object.fromEntries(Object.keys(BAY_SIZES).map(v =>
+        [v, storedNum(saved[key]?.[v], lo, hi, STAMP_DEFAULTS[key][v])]))
+      return {
+        shape: SLOT_SHAPES.some(s => s.key === saved.shape) ? saved.shape : STAMP_DEFAULTS.shape,
+        size:  per('size', SIZE_MIN, SIZE_MAX),
+        angle: per('angle', -90, 90),
+      }
+    }
+  } catch { /* private window, blocked storage — defaults are fine */ }
+  return STAMP_DEFAULTS
+}
+
 // A four-way arrow in a -1..1 box, drawn as the centre move handle.
 const MOVE_GLYPH =
   'M0,-0.55 L0,0.55 M-0.55,0 L0.55,0 ' +
   'M-0.22,-0.33 L0,-0.55 L0.22,-0.33 M-0.22,0.33 L0,0.55 L0.22,0.33 ' +
   'M-0.33,-0.22 L-0.55,0 L-0.33,0.22 M0.33,-0.22 L0.55,0 L0.33,0.22'
+
+// A turning arrow in the same -1..1 box, drawn on the rotate handle.
+const ROTATE_GLYPH =
+  'M0.5,0.1 A0.5,0.5 0 1 1 0.1,-0.5 M0.1,-0.5 L0.38,-0.62 M0.1,-0.5 L0.22,-0.22'
 
 function autoLabel(list, cat) {
   const pre  = cat === 'motorcycle' ? 'M' : 'C'
@@ -123,7 +260,13 @@ export default function ParkingManagement({ embedded = false }) {
   const [selId,        setSelId]        = useState(null)
   const [mode,         setMode]         = useState('live')
   const [drafts,       setDrafts]       = useState([])
-  const [tool,         setTool]         = useState('box') // 'box' | 'pen' (Edit Layout only)
+  const [tool,         setTool]         = useState('box') // 'box' | 'pen' | 'shape' (Edit Layout only)
+  // The standard-shape stamp: which shape, and the size and angle last used
+  // for each vehicle. Remembered per browser so a row of bays is placed the
+  // same way next visit. The vehicle is picked per zone and otherwise
+  // follows the zone's own category.
+  const [stamp,        setStamp]        = useState(loadStamp)
+  const [stampVehicleFor, setStampVehicleFor] = useState({})   // { zoneId: 'car' | 'motorcycle' }
   const [penPoints,    setPenPoints]    = useState([])
   const [penCursor,    setPenCursor]    = useState(null)
   const [selDraft,     setSelDraft]     = useState(null)
@@ -238,6 +381,9 @@ export default function ParkingManagement({ embedded = false }) {
   const [clipLabel, setClipLabel] = useState(null)   // shown in the hint line
 
   useEffect(() => { draftsRef.current = drafts }, [drafts])
+  useEffect(() => {
+    try { localStorage.setItem(STAMP_STORE, JSON.stringify(stamp)) } catch { /* storage blocked */ }
+  }, [stamp])
   useEffect(() => { rbRef.current = rubberBand }, [rubberBand])
 
   const selZone = zones.find(z => z.id === selId) ?? null
@@ -287,6 +433,27 @@ export default function ParkingManagement({ embedded = false }) {
   const toFullFrame = (pt) => (
     lensCount > 1 ? { x: pt.x, y: (pt.y + lensIdx) / lensCount } : pt
   )
+
+  // Width over height of the view on screen. The overlay is stretched over the
+  // picture (preserveAspectRatio none), so its own box is the picture's shape —
+  // what the standard shapes and the rotate handle need to keep true angles.
+  const viewAspect = () => {
+    const r = svgEl.current?.getBoundingClientRect()
+    return r && r.width > 0 && r.height > 0 ? r.width / r.height : 16 / 9
+  }
+  const stampVeh   = stampVehicleFor[selId] ?? (selZone?.vehicle_category === 'motorcycle' ? 'motorcycle' : 'car')
+  const stampSize  = stamp.size[stampVeh] ?? 1
+  const stampAngle = stamp.angle[stampVeh] ?? 0
+  const setStampFor = (key, value) => setStamp(st => ({ ...st, [key]: { ...st[key], [stampVeh]: value } }))
+
+  // The standard shape centred on a full-frame point, kept inside the view.
+  // `aspect` comes from the caller — measured at the event, since the ghost
+  // preview is drawn during render, where the overlay's box cannot be read.
+  const stampAt = (pt, aspect) => {
+    const pts = toNorm(stampShape(stampVeh, stamp.shape, stampSize, stampAngle),
+                       pt.x, pt.y, aspect, lensCount)
+    return fitInBand(pts, lensIdx / lensCount, (lensIdx + 1) / lensCount)
+  }
 
   // ── Which camera is this zone (and this feed) actually about? ────
   //
@@ -659,6 +826,32 @@ export default function ParkingManagement({ embedded = false }) {
     if (z) await offerBaseline(z)
   }
 
+  // ── New slots ────────────────────────────────────────────────────
+  // Every way of making a slot — box, pen, standard shape, paste — ends here:
+  // a new, free slot with the next label, on the view being shown, selected so
+  // its ✓ / duplicate / ✗ popover is up at once. `geom` is the box (and the
+  // outline, when it has one).
+  const addDraft = (geom) => {
+    const id    = tid()
+    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
+    const d = {
+      _id: id, id: null,
+      space_number: label,
+      vehicle_category: selZone?.vehicle_category,
+      points: null,
+      lens_index: lensIdx,
+      is_occupied: false, occupied_by: '',
+      ...geom,
+    }
+    setDrafts(p => [...p, d])
+    // Ahead of the effect that normally syncs it, so a slot added straight
+    // after this one is labelled past it instead of reusing its number.
+    draftsRef.current = [...draftsRef.current, d]
+    setSelDraft(id)
+    setDraftLabel(label)
+    return d
+  }
+
   // ── SVG drawing (edit mode) ─────────────────────────────────────
   const onMouseDown = (e) => {
     if (mode !== 'edit' || tool !== 'box') return
@@ -707,6 +900,15 @@ export default function ParkingManagement({ embedded = false }) {
       const dx = Math.max(-orig.x1, Math.min(1 - orig.x2, pt.x - xf.start.x))
       const dy = Math.max(-orig.y1, Math.min(1 - orig.y2, pt.y - xf.start.y))
       next = translated(orig, dx, dy)
+    } else if (xf.kind === 'rotate') {
+      // The turn is the angle swept around the slot's centre, measured in
+      // picture units so it matches what the eye sees. Shift snaps to 15°.
+      const aspect = viewAspect()
+      const [cx, cy] = centreOf(orig)
+      const ang = (p) => Math.atan2((p.y - cy) * lensCount, (p.x - cx) * aspect) * 180 / Math.PI
+      let deg = ang(pt) - ang(xf.start)
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15
+      next = rotatedSlot(orig, deg, aspect, lensCount)
     } else if (e.shiftKey && !(orig.points && orig.points.length >= 3)) {
       // Rectangular resize: the dragged corner moves, the opposite one stays.
       const opp = shapePoints(orig)[(xf.index + 2) % 4]
@@ -750,6 +952,10 @@ export default function ParkingManagement({ embedded = false }) {
       if (penPoints.length > 0) setPenCursor(toFullFrame(svgPt(e, svgEl.current)))
       return
     }
+    if (mode === 'edit' && tool === 'shape') {   // the stamp's ghost follows the pointer
+      setPenCursor({ ...toFullFrame(svgPt(e, svgEl.current)), aspect: viewAspect() })
+      return
+    }
     if (!dragStart.current) return
     const pt = toFullFrame(svgPt(e, svgEl.current))
     const dx = Math.abs(pt.x - dragStart.current.x)
@@ -786,19 +992,7 @@ export default function ParkingManagement({ embedded = false }) {
     const ny1 = Math.min(rb.y1, rb.y2), ny2 = Math.max(rb.y1, rb.y2)
     if (nx2 - nx1 < DRAG_MIN || ny2 - ny1 < DRAG_MIN) return
 
-    const id    = tid()
-    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
-    setDrafts(p => [...p, {
-      _id: id, id: null,
-      space_number: label,
-      vehicle_category: selZone?.vehicle_category,
-      x1: nx1, y1: ny1, x2: nx2, y2: ny2,
-      points: null,
-      lens_index: lensIdx,
-      is_occupied: false, occupied_by: '',
-    }])
-    setSelDraft(id)
-    setDraftLabel(label)
+    addDraft({ x1: nx1, y1: ny1, x2: nx2, y2: ny2 })
   }
 
   const onMouseLeave = () => {
@@ -811,24 +1005,18 @@ export default function ParkingManagement({ embedded = false }) {
   // ── Pen tool (freeform polygon spaces) ───────────────────────────
   const finalizePenShape = (points) => {
     if (points.length < 3) return
-    const xs = points.map(p => p.x), ys = points.map(p => p.y)
-    const id    = tid()
-    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
-    setDrafts(p => [...p, {
-      _id: id, id: null,
-      space_number: label,
-      vehicle_category: selZone?.vehicle_category,
-      x1: Math.min(...xs), y1: Math.min(...ys), x2: Math.max(...xs), y2: Math.max(...ys),
-      points: points.map(p => [p.x, p.y]),
-      lens_index: lensIdx,
-      is_occupied: false, occupied_by: '',
-    }])
-    setSelDraft(id)
-    setDraftLabel(label)
+    addDraft(withPoints({}, points.map(p => [p.x, p.y])))
   }
 
   const onSvgClick = (e) => {
     if (needsLensChoice || justXformed.current) return
+    if (mode === 'edit' && tool === 'shape') {
+      // Clicking a slot selects it (its own handler stops the click); only a
+      // click on open picture places a new one.
+      commitLabel()
+      addDraft(withPoints({}, stampAt(toFullFrame(svgPt(e, svgEl.current)), viewAspect())))
+      return
+    }
     if (mode !== 'edit' || tool !== 'pen') return
     const pt = toFullFrame(svgPt(e, svgEl.current))
     if (penPoints.length >= 3 && Math.hypot(pt.x - penPoints[0].x, pt.y - penPoints[0].y) < 0.02) {
@@ -848,6 +1036,12 @@ export default function ParkingManagement({ embedded = false }) {
   const deleteSelDraft = () => {
     setDrafts(p => p.filter(s => s._id !== selDraft))
     setSelDraft(null)
+  }
+
+  // − / + on the popover: the selected slot 10% smaller or larger, about its
+  // centre. Any slot — box, pen or standard shape.
+  const resizeSelDraft = (f) => {
+    setDrafts(p => p.map(d => d._id === selDraft ? scaledSlot(d, f, lensCount) : d))
   }
 
   // ── Copy / paste ─────────────────────────────────────────────────
@@ -887,23 +1081,9 @@ export default function ParkingManagement({ embedded = false }) {
     dx = Math.max(-s.x1, Math.min(1 - s.x2, dx))
     dy = Math.max(top - s.y1, Math.min(bot - s.y2, dy))
 
-    const id    = tid()
-    const label = autoLabel(draftsRef.current, selZone?.vehicle_category ?? 'motorcycle')
-    const pasted = {
-      ...translated(s, dx, dy),
-      _id: id, id: null,
-      space_number: label,
-      vehicle_category: selZone?.vehicle_category,
-      lens_index: lensIdx,
-      is_occupied: false, occupied_by: '',
-    }
-    setDrafts(p => [...p, pasted])
-    // Ahead of the effect that normally syncs it, so a second paste pressed
-    // straight after labels past this one instead of reusing its number.
-    draftsRef.current = [...draftsRef.current, pasted]
+    const { x1, y1, x2, y2, points } = translated(s, dx, dy)
+    const pasted = addDraft({ x1, y1, x2, y2, points })
     clipRef.current = { ...pasted }
-    setSelDraft(id)
-    setDraftLabel(label)
     return true
   }
 
@@ -1307,15 +1487,22 @@ export default function ParkingManagement({ embedded = false }) {
                   <div className="pm-mode-toggle">
                     <button
                       className={`pm-mode-btn${tool === 'box' ? ' pm-mode-btn--active' : ''}`}
-                      onClick={() => { setTool('box'); setPenPoints([]) }}
+                      onClick={() => { setTool('box'); setPenPoints([]); setPenCursor(null) }}
                     >
                       <Square size={13} /> Box
                     </button>
                     <button
                       className={`pm-mode-btn${tool === 'pen' ? ' pm-mode-btn--active' : ''}`}
-                      onClick={() => setTool('pen')}
+                      onClick={() => { setTool('pen'); setPenCursor(null) }}
                     >
                       <PenTool size={13} /> Pen
+                    </button>
+                    <button
+                      className={`pm-mode-btn${tool === 'shape' ? ' pm-mode-btn--active' : ''}`}
+                      onClick={() => { setTool('shape'); setPenPoints([]); setPenCursor(null) }}
+                      title="Place standard car or motorcycle slots"
+                    >
+                      <Shapes size={13} /> Shapes
                     </button>
                   </div>
                 )}
@@ -1439,6 +1626,70 @@ export default function ParkingManagement({ embedded = false }) {
                   {assigning ? <Loader2 size={13} className="pm-spin" /> : <Video size={13} />}
                   Use {activeDeviceCam.name}
                 </button>
+              </div>
+            )}
+
+            {/* Standard shapes: pick the vehicle, the shape, its size and
+                angle, then click the picture. Its own row — the toolbar is
+                already full, and these are set together, not one at a time. */}
+            {mode === 'edit' && tool === 'shape' && (
+              <div className="pm-shapebar">
+                <div className="pm-mode-toggle" role="group" aria-label="Vehicle">
+                  {CAT_OPTS.map(({ key, label, Icon }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`pm-mode-btn${stampVeh === key ? ' pm-mode-btn--active' : ''}`}
+                      onClick={() => setStampVehicleFor(m => ({ ...m, [selId]: key }))}
+                    >
+                      <Icon size={13} /> {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="pm-shape-list" role="group" aria-label="Slot shape">
+                  {SLOT_SHAPES.map(sh => (
+                    <button
+                      key={sh.key}
+                      type="button"
+                      className={`pm-shape-btn${stamp.shape === sh.key ? ' pm-shape-btn--active' : ''}`}
+                      onClick={() => setStamp(st => ({ ...st, shape: sh.key }))}
+                      title={`${sh.label} — ${sh.tip}`}
+                      aria-label={sh.label}
+                      aria-pressed={stamp.shape === sh.key}
+                    >
+                      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                        <polygon points={shapeThumb(sh.key)} />
+                      </svg>
+                    </button>
+                  ))}
+                </div>
+                <label className="pm-shape-field">
+                  Size
+                  <input
+                    type="range" min={SIZE_MIN * 100} max={SIZE_MAX * 100} step={5}
+                    value={Math.round(stampSize * 100)}
+                    onChange={e => setStampFor('size', Number(e.target.value) / 100)}
+                    onDoubleClick={() => setStampFor('size', 1)}
+                    title="Double-click to reset to 100%"
+                  />
+                  <span className="pm-shape-val">{Math.round(stampSize * 100)}%</span>
+                </label>
+                <label className="pm-shape-field">
+                  Angle
+                  <input
+                    type="range" min={-90} max={90} step={5}
+                    value={stampAngle}
+                    onChange={e => setStampFor('angle', Number(e.target.value))}
+                    onDoubleClick={() => setStampFor('angle', 0)}
+                    title="Double-click to reset to 0°"
+                  />
+                  <span className="pm-shape-val">{stampAngle}°</span>
+                </label>
+                <span className="pm-edit-hint">
+                  {needsLensChoice
+                    ? 'Pick a camera view first'
+                    : `Click the picture to place a ${stampVeh} slot · resize or rotate it after`}
+                </span>
               </div>
             )}
 
@@ -1614,6 +1865,7 @@ export default function ParkingManagement({ embedded = false }) {
                   const color  = zoneCamOffline ? '#8FA6B8' : s.is_occupied ? '#D93B3B' : '#1BA968'
                   const fill   = s.is_occupied ? 'rgba(217, 59, 59,0.3)' : 'rgba(27, 169, 104,0.25)'
                   const stroke = sel ? '#F6CE11' : color
+                  const plate  = s.is_occupied ? bayPlate(s) : ''
                   return (
                     <g
                       key={id}
@@ -1656,21 +1908,21 @@ export default function ParkingManagement({ embedded = false }) {
                       ))}
                       <text
                         x={x + w/2}
-                        y={y + h/2 - (s.is_occupied && s.occupied_by ? 0.013 : 0)}
+                        y={y + h/2 - (plate ? 0.013 : 0)}
                         textAnchor="middle" dominantBaseline="middle"
                         fill="#fff" fontSize={0.028} fontWeight="bold"
                         style={{ paintOrder:'stroke', stroke:'rgba(0,0,0,0.55)', strokeWidth:'0.005' }}
                       >
                         {s.space_number}
                       </text>
-                      {s.is_occupied && s.occupied_by && (
+                      {plate && (
                         <text
                           x={x + w/2} y={y + h/2 + 0.023}
                           textAnchor="middle" dominantBaseline="middle"
                           fill="#F3C0C0" fontSize={0.02} fontWeight="600"
                           style={{ paintOrder:'stroke', stroke:'rgba(0,0,0,0.5)', strokeWidth:'0.004' }}
                         >
-                          {s.occupied_by}
+                          {plate}
                         </text>
                       )}
                     </g>
@@ -1717,6 +1969,45 @@ export default function ParkingManagement({ embedded = false }) {
                         </title>
                       </ellipse>
                     ))}
+                    {/* Rotate handle, on a stalk below the slot — above is where
+                        the label popover sits, and it would cover the knob.
+                        Above only when the slot is at the bottom of the view.
+                        Drag around the centre to turn it, Shift snaps to 15°. */}
+                    {(() => {
+                      const cx   = (selDraftSp.x1 + selDraftSp.x2) / 2
+                      const bot  = (lensIdx + 1) / lensCount
+                      const gap  = 0.05 / lensCount
+                      const down = selDraftSp.y2 + gap <= bot - handleRy * 1.5
+                      const base = down ? selDraftSp.y2 : selDraftSp.y1
+                      const hy   = down ? base + gap : base - gap
+                      const r    = handleR * 1.4
+                      return (
+                        <g
+                          style={{ cursor: 'grab' }}
+                          onMouseDown={e => startXform(e, 'rotate', selDraftSp)}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <title>Drag to rotate the slot (Shift snaps to 15°)</title>
+                          <line
+                            x1={cx} y1={base} x2={cx} y2={hy}
+                            stroke="#F6CE11" strokeWidth={1.5} vectorEffect="non-scaling-stroke"
+                            pointerEvents="none"
+                          />
+                          <ellipse
+                            cx={cx} cy={hy} rx={r} ry={r / lensCount}
+                            fill="#F6CE11" stroke="#03396C" strokeWidth={0.002}
+                          />
+                          <path
+                            d={ROTATE_GLYPH}
+                            transform={`translate(${cx} ${hy}) scale(${r} ${r / lensCount})`}
+                            fill="none" stroke="#03396C" strokeWidth={1.6}
+                            strokeLinecap="round" strokeLinejoin="round"
+                            vectorEffect="non-scaling-stroke"
+                            pointerEvents="none"
+                          />
+                        </g>
+                      )
+                    })()}
                     {/* Centre move handle: grab here to carry the whole slot.
                         Dragging the body works too, but on a small slot the
                         body is mostly corner handles, and nothing said so. */}
@@ -1748,6 +2039,20 @@ export default function ParkingManagement({ embedded = false }) {
                       )
                     })()}
                   </g>
+                )}
+
+                {/* The standard shape a click would place, under the pointer.
+                    Not clickable itself — the click goes through to the
+                    picture, or to the slot it is over. */}
+                {mode === 'edit' && tool === 'shape' && penCursor && !needsLensChoice && (
+                  <polygon
+                    points={stampAt(penCursor, penCursor.aspect ?? 16 / 9).map(p => p.join(',')).join(' ')}
+                    fill="rgba(246, 206, 17, 0.18)"
+                    stroke="#F6CE11"
+                    strokeWidth={0.003}
+                    strokeDasharray="0.012 0.006"
+                    pointerEvents="none"
+                  />
                 )}
 
                 {/* Rubber band (edit mode) */}
@@ -1929,7 +2234,10 @@ export default function ParkingManagement({ embedded = false }) {
                 <div
                   className="pm-popover"
                   style={{
-                    left: `${(selDraftSp.x1 + selDraftSp.x2) / 2 * 100}%`,
+                    // Centred on the slot, but held off the picture's edges
+                    // (half the popover's width) so a slot by the edge does
+                    // not push its label box out of view.
+                    left: `clamp(135px, ${(selDraftSp.x1 + selDraftSp.x2) / 2 * 100}%, calc(100% - 135px))`,
                     // Full-frame y mapped into the lens band on screen.
                     top:  `${(selDraftSp.y1 * lensCount - lensIdx) * 100}%`,
                   }}
@@ -1945,6 +2253,12 @@ export default function ParkingManagement({ embedded = false }) {
                   />
                   <button className="pm-popover-btn pm-popover-btn--ok" onClick={acceptSelDraft} title="Keep this slot (Enter)">
                     <Check size={14} />
+                  </button>
+                  <button className="pm-popover-btn" onClick={() => resizeSelDraft(1 / 1.1)} title="Make this slot smaller">
+                    <Minus size={14} />
+                  </button>
+                  <button className="pm-popover-btn" onClick={() => resizeSelDraft(1.1)} title="Make this slot larger">
+                    <Plus size={14} />
                   </button>
                   <button
                     className="pm-popover-btn pm-popover-btn--dup"
@@ -2005,10 +2319,12 @@ export default function ParkingManagement({ embedded = false }) {
                 {mode === 'live'
                   ? 'Click a space to toggle manually · auto-refreshes every 8 s'
                   : (selDraftSp
-                      ? 'Drag the centre handle to move · drag a yellow corner to reshape (Shift = keep box) · blue dot adds a corner · Ctrl+C / Ctrl+V copy & paste · ✓ keep · ✗ / Delete remove'
+                      ? 'Drag the centre handle to move · drag a yellow corner to reshape (Shift = keep box) · yellow knob on the stalk rotates (Shift = 15° steps) · − / + resize · blue dot adds a corner · Ctrl+C / Ctrl+V copy & paste · ✓ keep · ✗ / Delete remove'
                       : tool === 'pen'
                         ? 'Click to trace a freeform shape · click a slot to edit it'
-                        : 'Click-drag to draw · click a slot to move, reshape, copy, or remove it')
+                        : tool === 'shape'
+                          ? 'Click to place the chosen shape · click a slot to resize, rotate, copy, or remove it'
+                          : 'Click-drag to draw · click a slot to move, reshape, copy, or remove it')
                     + (clipLabel ? ` · Copied ${clipLabel} — Ctrl+V to paste` : '')}
               </span>
             </div>
@@ -2315,24 +2631,22 @@ export default function ParkingManagement({ embedded = false }) {
       )}
 
       {/* ── Modal: occupied bay ── */}
+      {/* The guard's occupant record shows here too, and the admin may
+          correct it; Mark Free clears it along with the bay. */}
       {spaceOp?.type === 'free' && (
-        <div className="pm-overlay" onClick={() => setSpaceOp(null)}>
-          <div className="pm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="pm-modal-header">
-              <span>Space {spaceOp.space.space_number} — Occupied</span>
-              <button className="pm-modal-close" onClick={() => setSpaceOp(null)}><X size={16} /></button>
-            </div>
-            <div className="pm-modal-body">
-              <BayOccupantDetails plate={spaceOp.space.occupied_by} />
-            </div>
-            <div className="pm-modal-footer">
-              <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>
-              <button className="pm-btn pm-btn--green" onClick={confirmFree}>
-                <CheckCircle2 size={13} /> Mark Free
-              </button>
-            </div>
-          </div>
-        </div>
+        <BayOccupantModal
+          space={spaceOp.space}
+          zoneName={selZone?.name}
+          onClose={() => setSpaceOp(null)}
+          canRecord
+          onUpdated={u => setZones(p => p.map(z => z.id === selId
+            ? { ...z, spaces: z.spaces.map(s => s.id === u.id ? u : s) } : z))}
+        >
+          <button className="pm-btn pm-btn--outline" onClick={() => setSpaceOp(null)}>Cancel</button>
+          <button className="pm-btn pm-btn--green" onClick={confirmFree}>
+            <CheckCircle2 size={13} /> Mark Free
+          </button>
+        </BayOccupantModal>
       )}
       {/* ── Confirmation Modal ── */}
       {confirmModal?.type === 'deleteZone' && (
