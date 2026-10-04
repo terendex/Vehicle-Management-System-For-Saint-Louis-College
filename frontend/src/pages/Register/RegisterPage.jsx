@@ -1347,7 +1347,8 @@ export default function RegisterPage() {
                         <Info size={13} />
                         <span>
                           {isFetcher && <>As a Driver (Whole Day), you may stay and park inside the
-                            campus the whole day, but only on the days of your schedule. </>}
+                            campus the whole day, but only on the days of your schedule, and you
+                            must enter within the allotted hours. </>}
                           Choose <strong>one</strong> schedule. It covers all three of its days.
                           Slots are given on a <strong>first come, first served</strong> basis,
                           and a <strong>full</strong> schedule cannot be selected.

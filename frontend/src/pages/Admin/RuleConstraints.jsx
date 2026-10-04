@@ -83,9 +83,9 @@ const ENTRY_TYPES = [
   {
     key: 'fetcher',
     title: 'Fetcher / Drop & Go / Driver',
-    // Hours and max stay bind Fetcher and Drop & Go; a Driver (Whole Day) is held to
-    // the days alone (scanning/entry_logic.py, the 'standby' fetcher_type).
-    desc: 'Parent, guardian or driver. Drivers (Whole Day) skip the hours and max stay',
+    // Days and hours bind every kind of fetcher; the max stay binds Fetcher and
+    // Drop & Go only, never a Driver (Whole Day) (the 'standby' fetcher_type).
+    desc: 'Parent, guardian or driver. Drivers (Whole Day) skip only the max stay',
     Icon: Users,
     hasStayLimit: true,
     hasOwnDays: true,

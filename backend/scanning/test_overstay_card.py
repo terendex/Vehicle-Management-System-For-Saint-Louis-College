@@ -145,6 +145,33 @@ class OverstayCardTests(APITestCase):
         self._enter('FETCH01', owner, 45)
         self.assertEqual(self._plates(), {'FETCH01'})
 
+    def _fetcher_exit(self, email, kind, plate, minutes_ago):
+        """A fetcher of `kind` who came in `minutes_ago` and is now recorded out
+        through the guard's Record Exit, where _check_stay_limit runs."""
+        owner = self._owner(email, 'fetcher')
+        VehicleRegistration.objects.create(
+            user=owner, **name_kwargs(owner.full_name), email=owner.email,
+            status='accepted', registrant_type='fetcher', fetcher_type=kind)
+        self._enter(plate, owner, minutes_ago)
+        self.client.force_authenticate(self.guard)
+        res = self.client.post('/api/scan/exit/', {'plate_number': plate}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        return owner, res
+
+    def test_a_standby_fetcher_exits_without_an_overstay(self):
+        """The exit half of the same exemption: five hours inside is a Driver
+        (Whole Day) doing what they registered for, not a time-exceed."""
+        owner, res = self._fetcher_exit('os17@slc.edu.ph', 'standby', 'WHD1234', 300)
+        self.assertEqual(res.data['duration_minutes'], 300)   # paired, so the limit was reachable
+        self.assertEqual(res.data['overstay_minutes'], 0)
+        self.assertFalse(Violation.objects.filter(owner=owner).exists())
+
+    def test_a_drop_and_go_exit_past_the_cap_is_a_time_exceed(self):
+        owner, res = self._fetcher_exit('os18@slc.edu.ph', 'drop_and_go', 'DNG1234', 300)
+        self.assertGreater(res.data['overstay_minutes'], 0)
+        self.assertTrue(Violation.objects.filter(
+            owner=owner, violation_type=Violation.Type.TIME_EXCEED).exists())
+
     def test_worst_offender_is_first(self):
         self._enter('MILD001', self._owner('os8@slc.edu.ph', 'student'), 70)
         self._enter('BAD0001', self._owner('os9@slc.edu.ph', 'student'), 400)

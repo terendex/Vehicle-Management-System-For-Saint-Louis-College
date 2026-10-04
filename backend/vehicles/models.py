@@ -246,8 +246,9 @@ class VehicleRegistration(models.Model):
     # (drops one off) are held to the same drop-off/pick-up hours and max stay;
     # they are told apart so CDSO and the reports can see who does which.
     # 'standby' is shown as "Driver (Whole Day)": the parent or driver who
-    # stays on campus all day is filed here, apart from the students, and is the only
-    # kind not held to the hours. Stored values keep their old names so
+    # stays on campus all day is filed here, apart from the students. They enter
+    # within the same hours, but are the only kind not held to the max stay, and
+    # they book campus days like a student. Stored values keep their old names so
     # existing registrations (all drop_and_go or standby) carry over unchanged.
     class FetcherType(models.TextChoices):
         FETCHER     = 'fetcher',     'Fetcher'
@@ -319,7 +320,8 @@ class VehicleRegistration(models.Model):
 
     # Fetcher-specific — classification plus the students being fetched.
     # fetcher / drop_and_go: entry only during the allotted drop-off/pick-up hours.
-    # standby:              "Driver (Whole Day)" — stays on campus and may park all day.
+    # standby:              "Driver (Whole Day)" — enters within the hours on their
+    #                       booked days, then may stay and park all day.
     fetcher_type     = models.CharField(max_length=20, choices=FetcherType.choices, blank=True)
     # [{full_name, student_id, student_level, program_year}, ...] — at least one
     # entry is required for fetcher registrations (validated in the views).

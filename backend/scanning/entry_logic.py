@@ -421,17 +421,17 @@ def _decide_entry(vehicle) -> dict:
         denial = _day_denial(rule, user, today_weekday)     # same two day checks as students
         if denial:
             return _result('wrong_day', False, denial, rule.name if rule else None, waivable=True)
-        # Standby fetchers ("Driver (Whole Day)") may stay parked all day, so the
-        # drop-off/pick-up time window only restricts Fetcher and Drop & Go.
+        # Every kind of fetcher enters within the rule's hours. What sets a
+        # standby fetcher ("Driver (Whole Day)") apart is the max stay, checked
+        # at exit (scanning/views.py _is_standby_fetcher): once in, they may stay.
         kinds = set(user.registrations.filter(
             status='accepted', registrant_type='fetcher',
         ).values_list('fetcher_type', flat=True))      # the approved classification(s)
-        is_standby = 'standby' in kinds
         # Name the kind, so the guard sees why waiting is (or is not) allowed.
-        label = ('Driver (Whole Day)' if is_standby
+        label = ('Driver (Whole Day)' if 'standby' in kinds
                  else 'Drop & Go' if kinds == {'drop_and_go'}
                  else 'Fetcher')
-        if rule and not is_standby and not _is_within_window(rule, now):
+        if rule and not _is_within_window(rule, now):
             return _result('denied', False,
                 f'{label} access restricted. Outside allowed hours ({rule.start_time}–{rule.end_time}).',
                 rule.name, waivable=True)

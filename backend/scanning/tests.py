@@ -190,36 +190,42 @@ class EntryLogicTests(TestCase):
         self.assertTrue(result['allowed'])
         self.assertIn('Fetcher', result['message'])
 
-    def test_whole_day_parent_allowed_outside_fetcher_hours(self):
-        """A Driver (Whole Day) — stored as fetcher_type 'standby' — stays on
-        campus all day, so the drop-off/pick-up window does not bind them, and
-        the guard is told which kind of fetcher this is. Monday 21:00 is past
-        the seeded 06:00–19:00 fetcher rule."""
-        from vehicles.models import VehicleRegistration
-        owner, vehicle = _make_owner('parent@slc.edu.ph', 'PRNT01', User.OwnerType.FETCHER, schedule='ANY')
-        VehicleRegistration.objects.create(
-            user=owner, last_name='Owner', first_name='Test', email=owner.email,
-            status='accepted', registrant_type='fetcher', fetcher_type='standby')
-        monday_9pm = timezone.make_aware(datetime(2026, 7, 6, 21, 0))
-        with patch('scanning.entry_logic.timezone') as mock_tz:
-            mock_tz.localdate.return_value = date(2026, 7, 6)
-            mock_tz.localtime.return_value = monday_9pm
-            result = check_entry(vehicle)
-        self.assertTrue(result['allowed'])
-        self.assertIn('Driver (Whole Day)', result['message'])
+    def test_whole_day_driver_is_named_and_held_to_the_hours(self):
+        """A Driver (Whole Day) — stored as fetcher_type 'standby' — enters
+        within the seeded 06:00–19:00 fetcher rule like every fetcher; only the
+        max stay spares them. The guard is told which kind of fetcher this is."""
+        vehicle = self._fetcher_of_kind('standby', 9, campus_days=['Monday', 'Wednesday', 'Friday'])
+        inside = self._check_at(vehicle, 10)
+        self.assertTrue(inside['allowed'])
+        self.assertTrue(inside['message'].startswith('Driver (Whole Day) — '), inside['message'])
+        after = self._check_at(vehicle, 21)
+        self.assertFalse(after['allowed'])
+        self.assertEqual(after['status'], 'denied')
+        self.assertIn('Driver (Whole Day) access restricted', after['message'])
 
-    def _fetcher_of_kind(self, kind, n):
+    def test_whole_day_driver_denied_on_a_day_they_did_not_book(self):
+        """They book a rotation like a student, and the gate holds them to it:
+        a Monday, Wednesday, Friday driver is turned away on a Tuesday."""
+        vehicle = self._fetcher_of_kind('standby', 8, campus_days=['Monday', 'Wednesday', 'Friday'])
+        result = self._check_at(vehicle, 10, day=date(2026, 7, 7))   # a Tuesday
+        self.assertFalse(result['allowed'])
+        self.assertEqual(result['status'], 'wrong_day')
+        self.assertIn('Registered days: Monday, Wednesday, Friday', result['message'])
+
+    def _fetcher_of_kind(self, kind, n, campus_days=None):
         from vehicles.models import VehicleRegistration
-        owner, vehicle = _make_owner(f'kind{n}@slc.edu.ph', f'KIND0{n}', User.OwnerType.FETCHER, schedule='ANY')
+        owner, vehicle = _make_owner(f'kind{n}@slc.edu.ph', f'KIND0{n}', User.OwnerType.FETCHER,
+                                     campus_days=campus_days, schedule='ANY')
         VehicleRegistration.objects.create(
             user=owner, last_name='Owner', first_name='Test', email=owner.email,
-            status='accepted', registrant_type='fetcher', fetcher_type=kind)
+            status='accepted', registrant_type='fetcher', fetcher_type=kind,
+            campus_days=campus_days or [])
         return vehicle
 
-    def _check_at(self, vehicle, hour):
-        moment = timezone.make_aware(datetime(2026, 7, 6, hour, 0))   # a Monday
+    def _check_at(self, vehicle, hour, day=date(2026, 7, 6)):   # a Monday unless told otherwise
+        moment = timezone.make_aware(datetime(day.year, day.month, day.day, hour, 0))
         with patch('scanning.entry_logic.timezone') as mock_tz:
-            mock_tz.localdate.return_value = date(2026, 7, 6)
+            mock_tz.localdate.return_value = day
             mock_tz.localtime.return_value = moment
             return check_entry(vehicle)
 
