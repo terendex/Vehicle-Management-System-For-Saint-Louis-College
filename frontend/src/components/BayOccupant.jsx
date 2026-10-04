@@ -142,7 +142,7 @@ export function OccupantRecord({ space }) {
         <span>
           {bayPlate(space)
             ? 'No guard has recorded who parked here yet.'
-            : 'Detected by camera — no plate recorded yet.'}
+            : 'Detected by the camera. No plate has been recorded yet.'}
         </span>
       </p>
     )
@@ -151,7 +151,7 @@ export function OccupantRecord({ space }) {
     <div className="pm-bay-rows">
       <div className="pm-bay-row">
         <span className="pm-bay-label">Parked by</span>
-        <span className="pm-bay-value">{space.occupant_name || '—'}</span>
+        <span className="pm-bay-value">{space.occupant_name || 'Not given'}</span>
       </div>
       <div className="pm-bay-row">
         <span className="pm-bay-label">Plate / conduction no.</span>
@@ -255,7 +255,7 @@ function OccupantForm({ space, onSaved, onCancel, onFreed }) {
         onChange={e => setName(e.target.value.toUpperCase())}
         onFocus={fillName}
         onKeyDown={e => e.key === 'Enter' && save()}
-        placeholder="Driver's name — filled in for registered vehicles"
+        placeholder="Driver's name (filled in for registered vehicles)"
         maxLength={150}
       />
       <div className="pm-occ-form-actions">
@@ -356,7 +356,7 @@ export default function BayOccupantModal({ space: initial, zoneName, onClose, ca
             </div>
           )}
           {!canRecord && !plate && (
-            <p className="pm-bay-note"><Camera size={13} /> Detected by camera — no plate recorded yet.</p>
+            <p className="pm-bay-note"><Camera size={13} /> Detected by the camera. No plate has been recorded yet.</p>
           )}
         </div>
         {!editing && (

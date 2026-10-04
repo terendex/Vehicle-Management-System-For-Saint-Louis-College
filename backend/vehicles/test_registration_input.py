@@ -394,7 +394,7 @@ class WalkInRegistrationStillWorksTests(RegistrationInputTestCase):
 
     def _direct(self, **over):
         self.client.force_authenticate(user=self.admin)
-        payload = self.payload(or_number='7654321', **over)
+        payload = self.payload(**{'or_number': '7654321', **over})
         return payload, self.client.post('/api/vehicles/register/direct/',
                                          payload, format='json')
 
@@ -437,6 +437,36 @@ class WalkInRegistrationStillWorksTests(RegistrationInputTestCase):
         reg = VehicleRegistration.objects.get(email=payload['email'])
         self.assertEqual(reg.campus_days, [])
         self.assertEqual(reg.schedule, 'ANY')
+
+    def _fetcher(self, fetcher_type, **over):
+        fields = dict(registrant_type='fetcher', fetcher_type=fetcher_type,
+                      student_id='', student_level='', program_year='',
+                      fetcher_students=[{'full_name': 'DELA CRUZ, JUAN',
+                                         'student_level': 'elementary'}])
+        fields.update(over)
+        return self._direct(**fields)
+
+    def test_walk_in_driver_keeps_the_days_given(self):
+        # Same rule as the online form: a Driver (Whole Day) books days.
+        payload, res = self._fetcher('standby', campus_days=['Tuesday', 'Thursday', 'Friday'])
+        self.assertEqual(res.status_code, 201, res.data)
+        reg = VehicleRegistration.objects.get(email=payload['email'])
+        self.assertEqual(reg.schedule, 'TTHF')
+        self.assertEqual(reg.user.campus_days, ['Tuesday', 'Thursday', 'Friday'])
+
+    def test_walk_in_driver_must_have_a_day(self):
+        _, res = self._fetcher('standby', campus_days=[])
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('at least one campus day', res.data['error'])
+
+    def test_walk_in_fetcher_and_drop_and_go_carry_no_days(self):
+        for i, kind in enumerate(('fetcher', 'drop_and_go')):
+            # A receipt is used once, so each walk-in brings its own.
+            payload, res = self._fetcher(kind, campus_days=['Monday'], or_number=f'765430{i}')
+            self.assertEqual(res.status_code, 201, res.data)
+            reg = VehicleRegistration.objects.get(email=payload['email'])
+            self.assertEqual(reg.campus_days, [], kind)
+            self.assertEqual(reg.schedule, 'ANY', kind)
 
 
 class WholeDayDriverBooksAScheduleTests(RegistrationInputTestCase):

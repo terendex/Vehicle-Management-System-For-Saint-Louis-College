@@ -211,7 +211,7 @@ class ParkingReadOnlyUnlessAdmin(permissions.BasePermission):
 
 # A free bay has no one in it to record. 409, not 400: the request was fine,
 # the bay changed under it — and the form closes on it rather than retrying.
-BAY_FREED = 'This space is free now — the vehicle has left, so there is no one to record.'
+BAY_FREED = 'This space is free now. The vehicle has left, so there is no one to record.'
 
 
 class CanRecordParkingOccupant(permissions.BasePermission):
@@ -284,7 +284,7 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
                         occupant_noted_by=None, occupant_noted_at=None)
             if had:
                 audit(request, AuditLog.Action.RECORD_UPDATED,
-                      f"Parking occupant cleared: {where} — was {had}")
+                      f"Parking occupant cleared: {had} removed from {where}")
             return respond()
 
         if not space.is_occupied:
@@ -311,7 +311,7 @@ class ParkingSpaceViewSet(viewsets.ModelViewSet):
         if not written:                                  # freed between the check and the write
             return Response({'error': BAY_FREED}, status=drf_status.HTTP_409_CONFLICT)
         audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Parking occupant recorded: {where} — {plate}" + (f", {name}" if name else ''))
+              f"Parking occupant recorded: {plate}" + (f" ({name})" if name else '') + f" in {where}")
         return respond()
 
 
@@ -2441,11 +2441,19 @@ class CdsoDirectRegisterView(APIView):
         # because `schedule` was only ever read back off the row, a caller who
         # supplied campus_days without a schedule got the blanket 'MWF' default
         # no matter which days those actually were.
-        if registrant_type in ('employee', 'fetcher'):
-            data['campus_days'] = []                 # staff and fetchers are not tied to specific days...
+        # A Driver (Whole Day) parks inside all day and so books days just as a
+        # student does, as on the online form (VehicleRegistration.holds_schedule_q).
+        fetcher_type = str(request.data.get('fetcher_type') or '').strip()
+        if registrant_type == 'fetcher':
+            data['fetcher_type'] = fetcher_type      # the checked value is the one stored
+        books_schedule = (registrant_type == 'student'
+                          or (registrant_type == 'fetcher'
+                              and fetcher_type == VehicleRegistration.FetcherType.STANDBY))
+        if not books_schedule:
+            data['campus_days'] = []                 # staff, Fetcher and Drop & Go are not tied to specific days...
             data['schedule'] = 'ANY'                 # ...so any campus day is allowed
         else:
-            # Students pick days. clean_campus_days hands back what it accepted
+            # Students and drivers pick days. clean_campus_days hands back what it accepted
             # and what it refused, so an unrecognised day is named in the error
             # rather than silently dropped.
             campus_days, rejected = clean_campus_days(data.get('campus_days', []))
@@ -2456,7 +2464,7 @@ class CdsoDirectRegisterView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             if not campus_days:
-                return Response({"error": "Students must have at least one campus day."},
+                return Response({"error": "Choose at least one campus day."},
                                 status=status.HTTP_400_BAD_REQUEST)
             data['campus_days'] = campus_days
             data['schedule'] = schedule_group(campus_days)   # derive the rotation from the days, never trust a sent one

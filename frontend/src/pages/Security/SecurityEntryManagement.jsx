@@ -953,7 +953,7 @@ function RecordSlipPickerModal({ passes, onPick, onClose }) {
           </div>
           <p style={{ margin: '0 0 10px', fontSize: 12, color: '#64839C' }}>
             {tab === 'pending'
-              ? 'Pick the visitor whose slip you are holding — match the plate printed on it. Visitors who already left can still be recorded.'
+              ? 'Pick the visitor whose slip you are holding, and match the plate printed on it. Visitors who already left can still be recorded.'
               : 'Slips already recorded, newest first. Pick one to correct its details.'}
           </p>
           <div className="em-slip-search">
@@ -974,7 +974,7 @@ function RecordSlipPickerModal({ passes, onPick, onClose }) {
                 </div>
                 <div className="em-lookup-sub">
                   {p.visitor_name ? `${p.visitor_name} · ` : ''}
-                  Entered {p.entered_at ? `${p.is_today === false ? `${day(p.entered_at)}, ` : ''}${fmtClock(p.entered_at)}` : '—'} · {where(p)}
+                  Entered {p.entered_at ? `${p.is_today === false ? `${day(p.entered_at)}, ` : ''}${fmtClock(p.entered_at)}` : 'at an unknown time'} · {where(p)}
                 </div>
               </button>
             ))}

@@ -515,7 +515,7 @@ export default function SecurityParkingView() {
                           style={s.is_occupied ? { cursor: 'pointer' } : undefined}
                         >
                           {s.is_occupied && (
-                            <title>{plate ? `${plate} — click for details` : 'Click to record who parked here'}</title>
+                            <title>{plate ? `${plate}: click for details` : 'Click to record who parked here'}</title>
                           )}
                           {/* Draw the bay the shape it was drawn in. The pen
                               tool stores freeform vertices in `points`; x1..y2

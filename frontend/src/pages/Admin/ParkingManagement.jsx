@@ -138,7 +138,7 @@ const SLOT_SHAPES = [
   { key: 'a45l',     label: '45° left',         tip: 'Angled bay, leaning left',          make: (w, l) => angledBay(w, l, 45, -1) },
   { key: 'a60r',     label: '60° right',        tip: 'Steeper angled bay, leaning right', make: (w, l) => angledBay(w, l, 60, 1) },
   { key: 'a60l',     label: '60° left',         tip: 'Steeper angled bay, leaning left',  make: (w, l) => angledBay(w, l, 60, -1) },
-  { key: 'persp',    label: 'Perspective',      tip: 'Straight bay seen by a low camera — narrower at the far end',
+  { key: 'persp',    label: 'Perspective',      tip: 'Straight bay seen by a low camera, narrower at the far end',
     make: (w, l) => angledBay(w, l, 90, 1, PERSPECTIVE_FAR, PERSPECTIVE_DEPTH) },
   { key: 'p45r',     label: 'Perspective 45° right', tip: 'Angled bay seen by a low camera, leaning right',
     make: (w, l) => angledBay(w, l, 45, 1, PERSPECTIVE_FAR, PERSPECTIVE_DEPTH) },
@@ -1653,7 +1653,7 @@ export default function ParkingManagement({ embedded = false }) {
                       type="button"
                       className={`pm-shape-btn${stamp.shape === sh.key ? ' pm-shape-btn--active' : ''}`}
                       onClick={() => setStamp(st => ({ ...st, shape: sh.key }))}
-                      title={`${sh.label} — ${sh.tip}`}
+                      title={`${sh.label}: ${sh.tip}`}
                       aria-label={sh.label}
                       aria-pressed={stamp.shape === sh.key}
                     >
