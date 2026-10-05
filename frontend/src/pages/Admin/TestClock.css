@@ -1,0 +1,120 @@
+.tc-page {
+  padding: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.tc-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.tc-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 24px;
+  font-weight: 800;
+  color: #03396C;
+  margin: 0;
+}
+
+.tc-subtitle {
+  font-size: 14px;
+  color: #4A6B85;
+  margin: 4px 0 0;
+  max-width: 640px;
+}
+
+.tc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 10px;
+  background: #fff;
+  font-weight: 600;
+  color: #0B2340;
+  cursor: pointer;
+}
+
+.tc-toggle input { width: 18px; height: 18px; accent-color: #B91C1C; }
+
+.tc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.tc-card {
+  background: #fff;
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  padding: 18px;
+}
+
+.tc-card--on { border-color: #B91C1C; box-shadow: inset 4px 0 0 #B91C1C; }
+
+.tc-card h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #03396C;
+  margin: 0 0 10px;
+}
+
+.tc-big { font-size: 20px; font-weight: 800; color: #0B2340; margin: 0 0 8px; }
+
+.tc-muted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #4A6B85;
+  margin: 4px 0;
+}
+
+.tc-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.tc-row--wrap { flex-wrap: wrap; }
+
+.tc-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 8px;
+  font: inherit;
+}
+
+.tc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1.5px solid #BDD4E5;
+  border-radius: 8px;
+  background: #fff;
+  color: #03396C;
+  font: 600 13px 'Inter', system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.tc-btn:hover:not(:disabled) { background: #F7FAFC; border-color: #03396C; }
+.tc-btn:disabled { opacity: 0.55; cursor: default; }
+.tc-btn--primary { background: #03396C; border-color: #03396C; color: #fff; }
+.tc-btn--primary:hover:not(:disabled) { background: #022A50; }
+
+.tc-jobs { margin: 12px 0 0; padding-left: 18px; font-size: 13px; color: #0B2340; }
+.tc-jobs li { margin: 4px 0; }
+.tc-job--failed { color: #9B1C1C; }
+
+.tc-note code { margin: 0 4px; }
+
+.tc-spin { animation: tc-spin 1s linear infinite; }
+@keyframes tc-spin { to { transform: rotate(360deg); } }

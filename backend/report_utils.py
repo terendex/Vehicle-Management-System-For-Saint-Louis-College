@@ -383,6 +383,11 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     brand = colors.HexColor(f'#{REPORT_BRAND_HEX}')
     navy  = colors.HexColor(f'#{REPORT_NAVY_HEX}')
     generated_at = tz.localtime().strftime('%B %d, %Y %I:%M %p')
+    # On the instructor demo's simulated clock (sim_clock.py, local only) the
+    # footer says so, so a printout can never pass for a real report's date.
+    import sim_clock
+    if sim_clock.installed() and sim_clock.offset():
+        generated_at += ' (simulated date)'
 
     def esc(s):
         return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')

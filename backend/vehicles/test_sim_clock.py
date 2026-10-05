@@ -1,0 +1,91 @@
+"""The instructor demo's simulated clock stays out of the real system.
+
+The clock itself is only ever installed by sim_settings.py, on a local demo
+database. These tests pin what must hold everywhere else, and the helpers the
+demo relies on, without installing it in the test process (installing patches
+django.utils.timezone.now for the whole interpreter).
+"""
+import os
+from unittest import mock
+
+from django.core import mail
+from django.core.mail import EmailMessage
+from django.test import SimpleTestCase, TestCase, override_settings
+
+import sim_clock
+import sim_clock_actions
+
+
+class InstallGuardTests(SimpleTestCase):
+
+    def test_refuses_the_live_database(self):
+        for host in ('ep-cool-name-123.ap-southeast-1.aws.neon.tech', '10.0.0.5', ''):
+            with self.assertRaises(sim_clock.SimClockRefused, msg=host):
+                sim_clock.install('unused.json', {'default': {'HOST': host, 'NAME': 'x'}})
+        self.assertFalse(sim_clock.installed())
+
+    def test_refuses_on_railway_even_with_a_local_host(self):
+        with mock.patch.dict(os.environ, {'RAILWAY_ENVIRONMENT': 'production'}):
+            with self.assertRaises(sim_clock.SimClockRefused):
+                sim_clock.install('unused.json', {'default': {'HOST': '127.0.0.1', 'NAME': 'slc_sim_demo'}})
+        self.assertFalse(sim_clock.installed())
+
+    def test_the_real_system_has_no_test_clock(self):
+        self.assertFalse(sim_clock_actions.available())
+        with self.assertRaises(sim_clock.SimClockRefused):
+            sim_clock_actions.status()
+
+
+class RealSystemTests(TestCase):
+
+    def test_no_test_clock_url(self):
+        self.assertEqual(self.client.get('/api/system/test-clock/').status_code, 404)
+
+    def test_deployment_reports_no_simulated_clock(self):
+        self.assertNotIn('sim_clock', self.client.get('/api/deployment/').json())
+
+    def test_two_factor_uses_the_real_time(self):
+        from accounts.twofa import _wall_clock
+        from django.utils import timezone
+        self.assertLess(abs((_wall_clock() - timezone.now()).total_seconds()), 5)
+
+
+class HelperTests(SimpleTestCase):
+
+    def test_offsets_read_plainly(self):
+        self.assertEqual(sim_clock.describe_offset(0), '0')
+        self.assertEqual(sim_clock.describe_offset(4 * 86400 + 2 * 3600), '+4 days 2 h')
+        self.assertEqual(sim_clock.describe_offset(-3600), '-1 h')
+        self.assertEqual(sim_clock.describe_offset(90 * 60), '+1 h 30 min')
+
+    def test_steps_and_dates_parse(self):
+        self.assertEqual(sim_clock_actions.parse_step('3d'), {'days': 3})
+        self.assertEqual(sim_clock_actions.parse_step('2wd'), {'working_days': 2})
+        self.assertEqual(sim_clock_actions.parse_step('-5h'), {'hours': -5})
+        with self.assertRaises(ValueError):
+            sim_clock_actions.parse_step('soon')
+        self.assertEqual(sim_clock_actions.parse_when('2026-10-09 10:00').hour, 10)
+        self.assertEqual(sim_clock_actions.parse_when('2026-10-09').day, 9)
+        with self.assertRaises(ValueError):
+            sim_clock_actions.parse_when('next friday')
+
+
+class RedirectEmailTests(SimpleTestCase):
+
+    @override_settings(SIM_EMAIL_TO='demo-inbox@example.com',
+                       SIM_REAL_EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_every_message_goes_to_the_demo_inbox_only(self):
+        mail.outbox = []
+        backend = sim_clock.RedirectEmailBackend()
+        msg = EmailMessage('Expired', 'body', 'cdso@example.com',
+                           to=['student@slc-sflu.edu.ph'], cc=['parent@example.com'], bcc=['x@example.com'])
+        backend.send_messages([msg])
+        [sent] = mail.outbox
+        self.assertEqual((sent.to, sent.cc, sent.bcc), (['demo-inbox@example.com'], [], []))
+        self.assertIn('student@slc-sflu.edu.ph', sent.extra_headers['X-SLC-Demo-Original-To'])
+
+    @override_settings(SIM_EMAIL_TO='', SIM_REAL_EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_without_a_demo_inbox_nothing_is_sent(self):
+        mail.outbox = []
+        backend = sim_clock.RedirectEmailBackend()
+        self.assertIn('console', type(backend.inner).__module__)

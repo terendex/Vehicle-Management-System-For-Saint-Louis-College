@@ -22,8 +22,10 @@ import {
   Shield,
   ShieldCheck,
   KeyRound,
+  Clock3,
 } from 'lucide-react'
 import useAuthStore from '../../stores/authStore'
+import { useSimClock } from '../../stores/simClockStore'
 import useTwofaStore from '../../stores/twofaStore'
 import SecurityPanel from '../TwoFactor/SecurityPanel'
 import ChangePasswordModal from '../Auth/ChangePasswordModal'
@@ -31,7 +33,7 @@ import NotificationBell from '../NotificationBell'
 import './AdminLayout.css'
 import BrandLogos from '../BrandLogos'
 
-function buildNavGroups(isAdmin) {
+function buildNavGroups(isAdmin, simClock = false) {
   const groups = []
 
   if (isAdmin) {
@@ -72,6 +74,8 @@ function buildNavGroups(isAdmin) {
         { name: 'Rule Constraints', path: '/admin/rules', icon: <FileSliders size={18} />  },
         { name: 'Audit Log',        path: '/admin/audit', icon: <ClipboardList size={18} /> },
         { name: 'System Settings', path: '/admin/settings', icon: <Settings2 size={18} /> },
+        // Instructor demo only (dev.ps1 -SimClock): never listed on the real system.
+        ...(simClock ? [{ name: 'Test Clock', path: '/admin/test-clock', icon: <Clock3 size={18} /> }] : []),
       ],
     })
   }
@@ -123,7 +127,8 @@ export default function AdminLayout({ children, fillHeight = false }) {
   const isAdmin = user?.role === 'admin'
   const mustChangePassword = user?.must_change_password === true
 
-  const navGroups = buildNavGroups(isAdmin)
+  const simClock = useSimClock((s) => !!s.sim)
+  const navGroups = buildNavGroups(isAdmin, simClock)
 
   const [openGroup, setOpenGroup] = useState(() => getGroupForPath(navGroups, location.pathname))
   const [sidebarOpen, setSidebarOpen] = useState(false)

@@ -321,6 +321,20 @@ CODE_INVALID = 'invalid'
 CODE_REPLAYED = 'replayed'
 
 
+def _wall_clock():
+    """The real time, which is what the phone computes its code from.
+
+    Normally timezone.now(). Under the instructor demo's simulated clock
+    (sim_clock.py, local only) timezone.now() is moved on purpose, and a code
+    checked against the moved date would never match the phone's.
+    """
+    try:
+        import sim_clock
+    except ImportError:                                  # pragma: no cover — always present in this repo
+        return timezone.now()
+    return sim_clock.real_now() if sim_clock.installed() else timezone.now()
+
+
 def verify_code(device, code):
     """Check a 6-digit TOTP against `device`, rejecting replays.
 
@@ -342,7 +356,7 @@ def verify_code(device, code):
         return CODE_INVALID
 
     totp = pyotp.TOTP(device.secret)
-    now = int(timezone.now().timestamp())
+    now = int(_wall_clock().timestamp())
     step = now // totp.interval
 
     matched = None

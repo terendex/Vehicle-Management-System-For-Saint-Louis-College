@@ -57,9 +57,30 @@
     auto-detection. Recommended when debugging against the shared database.
     Without this switch they are ON (see DEFAULT above).
 
+.PARAMETER SimClock
+    Start the INSTRUCTOR DEMO instead: a local copy of the system (database
+    slc_sim_demo on this PC's PostgreSQL, never the live one) whose date can
+    be moved from the admin sidebar's Test Clock page. Uses
+    backend/sim_settings.py. The health check is skipped and parking-camera
+    auto-detection is off; the daily scheduler runs, so time-based jobs fire
+    by themselves. Emails go to SIM_EMAIL_TO from backend/.env, or are only
+    printed in the backend window when it is not set.
+
+.PARAMETER SimSetup
+    With -SimClock: create the demo database first (a copy of the screenshot
+    demo database, slc_manual_demo), apply migrations, open a registration
+    period for the current school year and set the clock to the real date.
+    Safe to repeat: an existing demo database is kept.
+
+.PARAMETER Reset
+    With -SimClock -SimSetup: drop the demo database and start over.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\dev.ps1
     # background jobs ON (the default)
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File .\dev.ps1 -SimClock -SimSetup
+    # the instructor demo on its own local database, with the Test Clock
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\dev.ps1 -NoBackgroundJobs
     # background jobs OFF - nothing is backed up, archived, purged or detected by itself
@@ -75,7 +96,10 @@ param(
     [switch]$SkipDoctor,
     [switch]$NoFrontend,
     [switch]$WithCelery,
-    [switch]$NoBackgroundJobs
+    [switch]$NoBackgroundJobs,
+    [switch]$SimClock,
+    [switch]$SimSetup,
+    [switch]$Reset
 )
 
 # Stop at the first unexpected error instead of carrying on half-started.
@@ -116,9 +140,38 @@ function Start-Window([string]$Title, [string]$WorkingDir, [string]$Commands) {
 # Wrap a path in single quotes for use inside those commands (any ' inside is doubled).
 function Quote([string]$Text) { "'" + ($Text -replace "'", "''") + "'" }
 
-# The settings every backend window uses: normal settings plus readable logging.
-$EnvSetup = "`$env:DJANGO_SETTINGS_MODULE = 'debug_settings'; `$env:LOG_LEVEL = '$LogLevel'; " +
+# The settings every backend window uses: normal settings plus readable logging,
+# or for the instructor demo the same on its own local database and moved clock.
+$SettingsModule = if ($SimClock) { 'sim_settings' } else { 'debug_settings' }
+$EnvSetup = "`$env:DJANGO_SETTINGS_MODULE = '$SettingsModule'; `$env:LOG_LEVEL = '$LogLevel'; " +
             "`$env:LOG_SQL = '$(if ($LogSql) { '1' } else { '' })'; "
+
+if ($SimClock) {
+    # The demo's own database never has cameras to watch, and the doctor
+    # checks the normal settings' database, which the demo does not use.
+    $EnvSetup += "`$env:DISABLE_PARKING_AUTODETECT = '1'; "
+    $SkipDoctor = $true
+    Write-Host "`n== INSTRUCTOR DEMO: simulated clock, local database slc_sim_demo ==" -ForegroundColor Red
+    Write-Host "   Nothing here touches the live database. Move the date from the admin" -ForegroundColor Red
+    Write-Host "   sidebar's Test Clock page, or:  python manage.py sim_clock advance 1d" -ForegroundColor Red
+    if ($SimSetup) {
+        Write-Host "`n== Setting up the demo database ==" -ForegroundColor Cyan
+        Push-Location $Backend
+        try {
+            $env:DJANGO_SETTINGS_MODULE = 'sim_settings'
+            $setupArgs = @('manage.py', 'sim_setup')
+            if ($Reset) { $setupArgs += '--reset' }
+            & $Python @setupArgs
+            if ($LASTEXITCODE -ne 0) { Write-Host 'Demo setup failed (see above).' -ForegroundColor Red; exit 1 }
+        } finally {
+            Remove-Item Env:DJANGO_SETTINGS_MODULE -ErrorAction SilentlyContinue
+            Pop-Location
+        }
+    }
+} elseif ($SimSetup -or $Reset) {
+    Write-Host '-SimSetup and -Reset only apply together with -SimClock.' -ForegroundColor Red
+    exit 1
+}
 
 # -- Background jobs: decide ON or OFF, and be truthful about it ----------------------
 # Two switches control them, both read by the backend when it starts:
@@ -147,6 +200,7 @@ if ($NoBackgroundJobs) {
     $schedulerOn  = -not (Test-Disabled (Get-Switch 'DISABLE_DAILY_SCHEDULER'))
     $autodetectOn = -not (Test-Disabled (Get-Switch 'DISABLE_PARKING_AUTODETECT'))
 }
+if ($SimClock) { $autodetectOn = $false }       # switched off for the demo above
 
 # -- Step 1: health check ---------------------------------------------------------
 if (-not $SkipDoctor) {
@@ -178,7 +232,8 @@ if ($schedulerOn -or $autodetectOn) {
     else               { Write-Host "   Daily scheduler: off (DISABLE_DAILY_SCHEDULER=$(Get-Switch 'DISABLE_DAILY_SCHEDULER'))" -ForegroundColor Gray }
     if ($autodetectOn) { Write-Host "   Parking-camera auto-detection WILL run and keep writing bay occupancy." -ForegroundColor Yellow }
     else               { Write-Host "   Parking-camera auto-detection: off (DISABLE_PARKING_AUTODETECT=$(Get-Switch 'DISABLE_PARKING_AUTODETECT'))" -ForegroundColor Gray }
-    Write-Host "   They act on the database named in backend/.env (see the health check above)." -ForegroundColor Yellow
+    if ($SimClock) { Write-Host "   They act on the demo database slc_sim_demo only." -ForegroundColor Yellow }
+    else           { Write-Host "   They act on the database named in backend/.env (see the health check above)." -ForegroundColor Yellow }
     Write-Host "   To start without them:  .\dev.ps1 -NoBackgroundJobs" -ForegroundColor Yellow
 } else {
     Write-Host "`n== Background jobs: OFF ==" -ForegroundColor Green
@@ -186,7 +241,7 @@ if ($schedulerOn -or $autodetectOn) {
 }
 
 Write-Host "`n== Starting backend on http://127.0.0.1:$Port (new window) ==" -ForegroundColor Cyan
-Start-Window 'SLC VMS - backend' $Backend (
+Start-Window $(if ($SimClock) { 'SLC VMS - backend (SIMULATED CLOCK DEMO)' } else { 'SLC VMS - backend' }) $Backend (
     $EnvSetup + "& $(Quote $Python) -m daphne -b 127.0.0.1 -p $Port config.asgi:application")
 
 # -- Step 3: frontend dev server ---------------------------------------------------

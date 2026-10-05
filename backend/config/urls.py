@@ -37,7 +37,13 @@ def deployment(_request):
     view, not DRF: it must answer even when the browser still holds a dead JWT.
     """
     port = settings.CAMPUS_HTTPS_PORT
-    return JsonResponse({'https_port': port or None})
+    payload = {'https_port': port or None}
+    # The instructor demo's simulated clock (sim_settings only): every page
+    # reads this to show the red SIMULATED DATE bar. Absent everywhere else.
+    if getattr(settings, 'SIM_CLOCK_ENABLED', False):
+        import sim_clock_actions
+        payload['sim_clock'] = sim_clock_actions.status()
+    return JsonResponse(payload)
 
 
 urlpatterns = [
@@ -62,6 +68,12 @@ urlpatterns = [
     path('api/scan/',                   include('scanning.urls')),
     path('api/violations/',             include('violations.urls')),
 ]
+
+# The instructor demo's Test Clock. Only registered under sim_settings, so the
+# URL does not exist on Railway, on the campus server or in a normal dev run.
+if getattr(settings, 'SIM_CLOCK_ENABLED', False):
+    from sim_clock_views import TestClockView
+    urlpatterns.append(path('api/system/test-clock/', TestClockView.as_view(), name='test_clock'))
 
 # Local media serving. With USE_R2=true this is a no-op — files are served from
 # R2's public domain instead.

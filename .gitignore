@@ -20,6 +20,12 @@ backend/db.sqlite3
 backend/media/
 backend/staticfiles/
 backend/*.log
+# Instructor demo (dev.ps1 -SimClock): the simulated clock's state and the
+# demo's uploads. Local to this machine.
+backend/sim_clock.json
+backend/sim_clock.json.tmp
+backend/sim_media/
+
 # Debug logs from backend/debug_settings.py (includes rotated copies like server.log.1)
 backend/logs/
 

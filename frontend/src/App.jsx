@@ -1,6 +1,7 @@
 import { useEffect, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, Outlet } from 'react-router-dom'
 import FeedbackHost from './components/Feedback/FeedbackHost'
+import SimClockBanner from './components/SimClockBanner/SimClockBanner'
 import useAuthStore from './stores/authStore'
 import { CameraProvider } from './context/CameraContext'
 import { LiveUpdatesProvider } from './realtime/LiveUpdatesProvider'
@@ -33,6 +34,7 @@ const DeviceManagement        = lazy(() => import('./pages/Admin/DeviceManagemen
 const SystemSettings          = lazy(() => import('./pages/Admin/SystemSettings'))
 const ViolationsManagement    = lazy(() => import('./pages/Admin/ViolationsManagement'))
 const SupplierManagement      = lazy(() => import('./pages/Admin/SupplierManagement'))
+const TestClock               = lazy(() => import('./pages/Admin/TestClock'))
 const HelpPage                = lazy(() => import('./pages/Help/HelpPage'))
 const GuidePage               = lazy(() => import('./pages/Help/GuidePage'))
 const SecurityEntryManagement = lazy(() => import('./pages/Security/SecurityEntryManagement'))
@@ -117,6 +119,9 @@ export default function App() {
     <LiveUpdatesProvider>
     <CameraProvider>
     <BrowserRouter>
+      {/* The instructor demo's SIMULATED DATE bar (dev.ps1 -SimClock only);
+          renders nothing on the real system. */}
+      <SimClockBanner />
       {/* Every confirmation, error and success in the app is raised here as a
           modal the user has to acknowledge. Mounted at the root so any page,
           hook or socket handler can reach it. */}
@@ -169,6 +174,8 @@ export default function App() {
             <Route path="/admin/entries"     element={<OperationsCenter />} />
             <Route path="/admin/parking"     element={<ParkingSpaceManagement />} />
             <Route path="/admin/violations"  element={<ViolationsManagement />} />
+            {/* Instructor demo only: the page says so on any other server. */}
+            <Route path="/admin/test-clock"  element={<TestClock />} />
           </Route>
           {/* Legacy URL — Events now lives inside Parking Space Management.
               Outside the shell: a redirect renders no content. */}
