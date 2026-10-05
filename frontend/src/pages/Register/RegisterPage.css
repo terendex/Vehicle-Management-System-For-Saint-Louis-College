@@ -1071,27 +1071,6 @@
   border-color: rgba(255, 255, 255, 0.28);
 }
 
-/* Student form — sends parents, guardians and drivers to Fetcher */
-.fetcher-redirect-note {
-  margin-bottom: 0;
-}
-
-.fetcher-redirect-switch {
-  display: flex;               /* own line under the sentence it acts on */
-  width: fit-content;
-  margin-top: 8px;
-  padding: 6px 12px;
-  border: 1.5px solid #BDD4E5;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  color: #03396C;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-.fetcher-redirect-switch:hover { background: #F7FAFC; border-color: #03396C; }
-
 /* Chosen-schedule summary */
 .campus-day-summary {
   margin-top: 10px;

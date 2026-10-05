@@ -31,9 +31,14 @@ class CatalogTests(SimpleTestCase):
             'frontend/src/data/collegePrograms.json and vehicles/college_programs.py differ')
 
     def test_the_list_as_given(self):
-        self.assertEqual(len(PROGRAM_YEARS), 23)
+        self.assertEqual(len(PROGRAM_YEARS), 36)
         self.assertEqual(PROGRAM_YEARS['BS Arch'], 5)
-        self.assertTrue(all(y == 4 for code, y in PROGRAM_YEARS.items() if code != 'BS Arch'))
+        two_year = {'JD'} | {code for college, _, programs in COLLEGES if college == 'SAS'
+                             for code, _ in programs}
+        self.assertEqual(len(two_year), 14)
+        self.assertTrue(all(y == 2 for code, y in PROGRAM_YEARS.items() if code in two_year))
+        self.assertTrue(all(y == 4 for code, y in PROGRAM_YEARS.items()
+                            if code != 'BS Arch' and code not in two_year))
         for gone in ('BSCS', 'BSN', 'BSEE', 'BSME', 'AB Communication'):
             self.assertNotIn(gone, PROGRAM_YEARS)
 
@@ -43,17 +48,22 @@ class CatalogTests(SimpleTestCase):
         self.assertEqual(normalize_program_year('  bsit-3 '), 'BSIT - 3')
         self.assertEqual(normalize_program_year('bs  psych 2'), 'BS Psych - 2')
         self.assertEqual(normalize_program_year('BS Arch - 5'), 'BS Arch - 5')
+        self.assertEqual(normalize_program_year('maed  em 2'), 'MAEd EM - 2')
+        self.assertEqual(normalize_program_year('MBA - 1'), 'MBA - 1')
 
     def test_refusing(self):
         for bad in ('', 'BSIT', 'BSIT - 0', 'BSIT - 5', 'BSIT 12', 'BS Arch - 6',
-                    'BSCS - 2', 'Info Tech - 1', 'SHS - STEM - Grade 11'):
+                    'BSCS - 2', 'Info Tech - 1', 'SHS - STEM - Grade 11',
+                    'JD - 3', 'JD - 4', 'MBA - 3', 'MAEd - 1'):
             self.assertIsNone(normalize_program_year(bad), bad)
 
     def test_program_list_endpoint_serves_the_official_list(self):
         names = all_program_years()
         self.assertIn('BS Arch - 5', names)
         self.assertNotIn('BSIT - 5', names)
-        self.assertEqual(len(names), 22 * 4 + 5)
+        self.assertIn('JD - 2', names)
+        self.assertNotIn('JD - 3', names)
+        self.assertEqual(len(names), 21 * 4 + 5 + 14 * 2)
 
 
 class SubmitTests(PaymentTestCase):

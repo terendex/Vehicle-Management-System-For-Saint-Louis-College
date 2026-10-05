@@ -530,14 +530,39 @@ export default function RegisterPage() {
     }
   }, [])
 
+  /* Only a licensed driver registers as a student: the pass is issued to the
+     person behind the wheel. Asked every time Student is picked, before the
+     form opens; a "No" goes to Fetcher / Drop & Go / Driver, where a parent,
+     guardian or hired driver registers the vehicle that brings the student. */
+  const chooseRegistrantType = useCallback(async (type) => {
+    if (type !== 'student') {
+      setRegistrantType(type)
+      return
+    }
+    const drives = await notify.confirm({
+      title: 'Are you a registered or licensed driver?',
+      message: "The student vehicle pass is only for a student who holds a valid driver's license and drives the vehicle themselves.",
+      confirmLabel: 'Yes, I drive',
+      cancelLabel: 'No',
+    })
+    if (drives) {
+      setRegistrantType('student')
+      fetchScheduleSlots()
+      return
+    }
+    await notify.info(
+      'A parent, guardian or driver who brings a student to campus, including Junior High School, Elementary and SpEd students, registers the vehicle under Fetcher / Drop & Go / Driver.',
+      { title: 'Register as Fetcher / Driver', confirmLabel: 'Continue as Fetcher / Driver' },
+    )
+    setRegistrantType('fetcher')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [fetchScheduleSlots])
+
   useEffect(() => {
     fetchRegStatus()
-    if (directType) {
-      setRegistrantType(directType)
-      if (directType === 'student') fetchScheduleSlots()
-    }
+    if (directType) chooseRegistrantType(directType)
     setLoading(false)
-  }, [directType, fetchScheduleSlots, fetchRegStatus])
+  }, [directType, chooseRegistrantType, fetchRegStatus])
 
   /* Which email rule this applicant falls under. Employees and College
      students are the only ones the school issues an address to; fetchers and
@@ -1074,7 +1099,7 @@ export default function RegisterPage() {
               Dates are tentative and subject to change.
             </p>
             <p className="reg-modal-note">
-              <strong>After you submit, you have 3 days</strong> to pay the Vehicle Pass fee at the
+              <strong>After you submit, you have 3 working days</strong> (Monday to Friday) to pay the Vehicle Pass fee at the
               Accounting Office and file your Official Receipt through the link we email you.
               Otherwise, the application expires and you will need to apply again.
             </p>
@@ -1173,7 +1198,7 @@ export default function RegisterPage() {
                       Open the link in the email we just sent and enter the OR number printed on
                       your receipt. Keep the paper receipt, because the CDSO checks it at the
                       counter. Your application is not reviewed until this is done, and it{' '}
-                      <strong>expires</strong> if this is not done within 3 days.
+                      <strong>expires</strong> if this is not done within 3 working days.
                     </IllustratedStep>
                   </>
                 )}
@@ -1199,7 +1224,7 @@ export default function RegisterPage() {
   const regOpen = regStatus?.is_open ?? true
 
   // The official program list (utils/collegePrograms) decides the year levels
-  // on offer: 1–4, or 1–5 for BS Arch.
+  // on offer: 1–4, 1–5 for BS Arch, 1–2 for JD and the masteral programs.
   const yearOptions = yearsFor(formData.student_program)
   const selectedProgram = findProgram(formData.student_program)
 
@@ -1258,13 +1283,6 @@ export default function RegisterPage() {
       </div>
     </div>
   )
-
-  /* A parent, guardian or hired driver who opened the student form is sent to
-     Fetcher / Drop & Go / Driver, where they pick their own classification. */
-  const switchToFetcher = () => {
-    setRegistrantType('fetcher')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
 
   /* ─── Form ─── */
   return (
@@ -1394,10 +1412,7 @@ export default function RegisterPage() {
                   key={t.id}
                   type="button"
                   className={`reg-type-inline-btn${registrantType === t.id ? ' selected' : ''}`}
-                  onClick={() => {
-                    setRegistrantType(t.id)
-                    if (t.id === 'student') fetchScheduleSlots()
-                  }}
+                  onClick={() => { if (registrantType !== t.id) chooseRegistrantType(t.id) }}
                 >
                   <span className="reg-type-inline-icon">{t.icon}</span>
                   <span className="reg-type-inline-label">{t.label}</span>
@@ -1659,21 +1674,6 @@ export default function RegisterPage() {
                     </div>
                   </div>
 
-                  <div className="form-group col-span-2">
-                    <div className="schedule-note fetcher-redirect-note">
-                      <Info size={13} />
-                      <span>
-                        This form is for a student who <strong>drives the vehicle themselves</strong>.
-                        A parent, guardian or driver who brings a student to campus, including
-                        Junior High School, Elementary and SpEd students, should register under{' '}
-                        <strong>Fetcher / Drop &amp; Go / Driver</strong>.
-                        <button type="button" className="fetcher-redirect-switch" onClick={switchToFetcher}>
-                          Register as Fetcher / Driver
-                        </button>
-                      </span>
-                    </div>
-                  </div>
-
                   {/* College: separate program + year level fields */}
                   {formData.student_level === 'college' && (
                     <>
@@ -1705,8 +1705,8 @@ export default function RegisterPage() {
                         </select>
                         {selectedProgram?.requires_bachelors && (
                           <span className="field-hint">
-                            Juris Doctor is a graduate law program. It admits only students who
-                            have already finished a bachelor's degree.
+                            {selectedProgram.name} is a graduate program. It admits only students
+                            who have already finished a bachelor's degree.
                           </span>
                         )}
                       </div>
@@ -1933,10 +1933,10 @@ export default function RegisterPage() {
                   {feeExempt ? (
                     <li>To settle the Vehicle Pass fee assessed for your department at the
                       <strong> Accounting Office</strong>, where one applies, and to upload the
-                      Official Receipt (OR) using the link sent to my email <strong>within 3 days
-                      of submitting</strong>, failing which this application expires.</li>
+                      Official Receipt (OR) using the link sent to my email <strong>within 3 working
+                      days of submitting</strong>, failing which this application expires.</li>
                   ) : (
-                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong>, and to upload the Official Receipt (OR) using the link sent to my email <strong>within 3 days of submitting</strong>, failing which this application expires and must be submitted again.</li>
+                    <li>To pay the Vehicle Pass fee of <strong>₱{vehiclePassFee.toFixed(2)}</strong>{isEmployee && ' (50% employee discount applied)'} at the <strong>Accounting Office</strong>, and to upload the Official Receipt (OR) using the link sent to my email <strong>within 3 working days of submitting</strong>, failing which this application expires and must be submitted again.</li>
                   )}
                   <li>As a responsible individual, I promise to:</li>
                 </ul>
@@ -2027,7 +2027,7 @@ export default function RegisterPage() {
                   <p className="pay-deadline-when">
                     <strong>Payment deadline:</strong> After you submit, pay
                     ₱{vehiclePassFee.toFixed(2)} at the Accounting Office and enter your Official
-                    Receipt number through the link we email you within <strong>3 days</strong>.
+                    Receipt number through the link we email you within <strong>3 working days</strong>.
                     Otherwise, this application expires and you will need to apply again.
                   </p>
                 </div>

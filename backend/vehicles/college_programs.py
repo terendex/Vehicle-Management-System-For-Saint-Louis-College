@@ -10,7 +10,8 @@ The registration form bundles an identical copy
 (frontend/src/data/collegePrograms.json) so the picker never waits on the
 network; test_college_programs fails if the two differ.
 
-Stored as one string, "<code> - <year>" (e.g. "BSIT - 3", "BS Arch - 5"),
+Stored as one string, "<code> - <year>" (e.g. "BSIT - 3", "BS Arch - 5",
+"MAEd EM - 1"),
 which is the shape program_year has always had.
 """
 from __future__ import annotations
@@ -33,9 +34,19 @@ COLLEGES = (
     )),
     # JD (Juris Doctor) admits only students who already hold a bachelor's
     # degree. That is the College of Law's admission rule, not something a
-    # vehicle pass can check; the form says so beside the choice.
+    # vehicle pass can check; the form says so beside the choice. The pass
+    # offers Year 1 and Year 2 only.
     ('CLCJE', 'College of Law and Criminal Justice Education', (
-        ('BS Crim', 4), ('JD', 4),
+        ('BS Crim', 4), ('JD', 2),
+    )),
+    # Graduate (Masteral) programs, Year 1 and Year 2. Master of Arts in
+    # Education is one entry per major so the major is on file. Codes carry
+    # no hyphen: the stored value is "<code> - <year>".
+    ('SAS', 'School of Advanced Studies (Masteral)', (
+        ('MAEd EM', 2), ('MAEd English', 2), ('MAEd Filipino', 2), ('MAEd RVE', 2),
+        ('MAEd Science', 2), ('MAEd Math', 2), ('MAEd PE', 2), ('MAEd SocSci', 2),
+        ('MAEd SpEd', 2),
+        ('MAGC', 2), ('MLIS', 2), ('MBA', 2), ('MPA', 2),
     )),
 )
 

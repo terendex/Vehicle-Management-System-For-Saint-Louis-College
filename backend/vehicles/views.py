@@ -3221,7 +3221,7 @@ def _payment_link_dead(token, generic_message):
 
     The generic 404 deliberately hides which of "wrong token" and "already
     reviewed" it was. Expiry is different: the token is an unguessable UUID, so
-    whoever holds one is the applicant, and "your 3 days ran out, apply again"
+    whoever holds one is the applicant, and "your 3 working days ran out, apply again"
     is the one answer they can act on.
     """
     registration = None
@@ -3233,14 +3233,14 @@ def _payment_link_dead(token, generic_message):
     expired_unpaid = registration is not None and (
         registration.payment_overdue()               # overdue, but a receipt upload held the row as the sweep passed
         or (registration.status == VehicleRegistration.Status.EXPIRED
-            and registration.rejection_reason == VehicleRegistration.EXPIRED_UNPAID_REASON))
+            and registration.rejection_reason in VehicleRegistration.EXPIRED_UNPAID_REASONS))
     if not expired_unpaid:
         return Response({"error": generic_message}, status=status.HTTP_404_NOT_FOUND)
     deadline = registration.payment_deadline()
     when = f" (the deadline was {format_deadline(deadline)})" if deadline else ""
     return Response({
         "error": (f"This application has expired because the Official Receipt was not filed "
-                  f"within {VehicleRegistration.PAYMENT_WINDOW.days} days of applying{when}. "
+                  f"within {VehicleRegistration.PAYMENT_WINDOW_DAYS} working days of applying{when}. "
                   f"Please submit a new application. If you already paid, bring your "
                   f"Official Receipt to the CDSO Office."),
         "expired": True,

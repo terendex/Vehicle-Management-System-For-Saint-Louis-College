@@ -1,4 +1,4 @@
-"""The 3-day payment deadline on online registrations.
+"""The 3-working-day payment deadline on online registrations.
 
 The rule lives on the model (VehicleRegistration.payment_deadline and friends);
 this module is what acts on it:
@@ -53,13 +53,13 @@ def deadline_payload(registration, now=None) -> dict:
     if deadline is None or not registration.on_payment_clock():
         return {'payment_deadline': None, 'payment_deadline_display': None,
                 'payment_seconds_left': None,
-                'payment_window_days': registration.PAYMENT_WINDOW.days}
+                'payment_window_days': registration.PAYMENT_WINDOW_DAYS}
     now = now or timezone.now()
     return {
         'payment_deadline': deadline.isoformat(),
         'payment_deadline_display': format_deadline(deadline),
         'payment_seconds_left': max(0, int((deadline - now).total_seconds())),
-        'payment_window_days': registration.PAYMENT_WINDOW.days,
+        'payment_window_days': registration.PAYMENT_WINDOW_DAYS,
     }
 
 
@@ -193,7 +193,7 @@ def _announce(rows):
     notify(
         'registration', 'registration_expired',
         f'{len(rows)} unpaid application(s) expired',
-        f'Not paid within 3 days of applying: {names}{more}. Their plates and '
+        f'Not paid within 3 working days of applying: {names}{more}. Their plates and '
         f'schedule slots are free again. Find them under the Expired filter.',
         severity='info', link='/admin/vehicles',
     )

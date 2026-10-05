@@ -75,3 +75,50 @@ def filter_local_date_range(qs, field, date_from=None, date_to=None):
         qs = qs.filter(**{f'{field}__lt': day_end(end)})
 
     return qs
+
+
+# ── Working days (Monday to Friday) ─────────────────────────────────
+# Office deadlines count working days only: Saturday and Sunday never use one
+# up. There is no holiday calendar; a holiday counts as a working day.
+
+def _is_weekend(local_dt):
+    return local_dt.weekday() >= 5
+
+
+def add_business_days(moment, n):
+    """``moment`` plus ``n`` working days, at the same local time of day.
+
+    A moment on a weekend starts counting from Monday 00:00, so an application
+    filed on Saturday is due Thursday 00:00 (three full working days), the
+    same as one filed in the first minute of Monday. Friday 3 PM plus 3 is
+    Wednesday 3 PM.
+    """
+    local = timezone.localtime(moment)
+    if _is_weekend(local):
+        local = day_start(local.date() + timedelta(days=7 - local.weekday()))
+    for _ in range(n):
+        local += timedelta(days=1)
+        while _is_weekend(local):
+            local += timedelta(days=1)
+    return local
+
+
+def business_days_before(moment, n):
+    """The latest start whose ``add_business_days(start, n)`` is <= ``moment``.
+
+    The exact inverse of add_business_days, which never decreases as its start
+    moves later; so "deadline passed" turns into one plain comparison on the
+    start column (``created_at <= business_days_before(now, 3)``) that a sweep
+    can run as a single UPDATE. A deadline never falls on a weekend, so a
+    weekend ``moment`` answers the same as the last instant of the Friday
+    before it.
+    """
+    local = timezone.localtime(moment)
+    if _is_weekend(local):
+        local = day_start(local.date() - timedelta(days=local.weekday() - 4)) \
+            + timedelta(days=1) - timedelta(microseconds=1)
+    for _ in range(n):
+        local -= timedelta(days=1)
+        while _is_weekend(local):
+            local -= timedelta(days=1)
+    return local

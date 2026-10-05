@@ -461,8 +461,9 @@ class VehicleRegistration(models.Model):
         """What this applicant owes — see fee_for, which this delegates to."""
         return self.fee_for(self.registrant_type, self.department_type, settings_obj)
 
-    # ── The 3-day payment deadline ──
-    # An online applicant has PAYMENT_WINDOW from submitting to pay at the
+    # ── The 3-working-day payment deadline ──
+    # An online applicant has PAYMENT_WINDOW_DAYS working days (Monday to
+    # Friday; see time_utils.add_business_days) from submitting to pay at the
     # Accounting Office and file their Official Receipt. Miss it and the
     # application expires (vehicles/registration_deadline.py), which frees the
     # plate, email, licence and schedule slot it was holding for somebody who
@@ -473,25 +474,35 @@ class VehicleRegistration(models.Model):
     # Derived from created_at rather than stored, so it needed no migration —
     # Railway migrates on deploy but the campus clone never does, and both
     # share one database.
-    PAYMENT_WINDOW = datetime.timedelta(days=3)
+    PAYMENT_WINDOW_DAYS = 3
+    # The shortest calendar span PAYMENT_WINDOW_DAYS working days can take
+    # (submitted Monday to Wednesday, no weekend inside). A cheap lower bound
+    # for prefilters; the deadline itself is always payment_deadline().
+    PAYMENT_WINDOW = datetime.timedelta(days=PAYMENT_WINDOW_DAYS)
     # Enforced this long after the deadline the applicant is shown. A receipt
     # photo can take minutes to upload on slow mobile data, and an applicant who
     # pressed Submit before the deadline must not lose to their own connection.
-    # Never advertised: every screen and email states PAYMENT_WINDOW alone.
+    # Never advertised: every screen and email states the deadline alone.
     PAYMENT_GRACE = datetime.timedelta(hours=1)
     # One reminder email goes out once the deadline is this close (see
     # registration_deadline.remind_due), never after the deadline itself.
     PAYMENT_REMINDER_LEAD = datetime.timedelta(days=1)
     # Applications filed before the deadline existed were never told about it,
-    # so their three days run from the rollout instead of from submission.
-    # 5 PM Friday, Asia/Manila: their deadline is 5 PM Monday, within office
-    # hours and with a full working day at the Accounting Office to spare.
+    # so their three working days run from the rollout instead of from
+    # submission. 5 PM Friday, Asia/Manila: their deadline is 5 PM Wednesday.
     PAYMENT_DEADLINE_ROLLOUT = datetime.datetime(
         2026, 10, 2, 17, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=8)))
 
     EXPIRED_UNPAID_REASON = (
         "Expired automatically: the Vehicle Pass fee was not paid and the Official "
-        "Receipt was not filed within 3 days of applying."
+        "Receipt was not filed within 3 working days of applying."
+    )
+    # Every wording EXPIRED_UNPAID_REASON has had. Rows keep the text they
+    # expired with, and the dead-link answer must still recognise them.
+    EXPIRED_UNPAID_REASONS = (
+        EXPIRED_UNPAID_REASON,
+        "Expired automatically: the Vehicle Pass fee was not paid and the Official "
+        "Receipt was not filed within 3 days of applying.",
     )
 
     def on_payment_clock(self) -> bool:
@@ -512,7 +523,9 @@ class VehicleRegistration(models.Model):
                 or self.payment_status != self.PaymentStatus.UNPAID
                 or self.created_at is None):
             return None
-        return max(self.created_at, self.PAYMENT_DEADLINE_ROLLOUT) + self.PAYMENT_WINDOW
+        from time_utils import add_business_days
+        return add_business_days(max(self.created_at, self.PAYMENT_DEADLINE_ROLLOUT),
+                                 self.PAYMENT_WINDOW_DAYS)
 
     def payment_overdue(self, now=None) -> bool:
         """Past the deadline AND its grace — the point it actually expires."""
@@ -525,18 +538,24 @@ class VehicleRegistration(models.Model):
     def overdue_q(cls, now=None):
         """payment_overdue() as a filter, so a sweep is one UPDATE.
 
-        max(created_at, ROLLOUT) + window + grace < now splits into two plain
-        comparisons; the ROLLOUT half does not depend on the row, so it is
-        answered here, and until it has passed nothing at all is overdue.
+        Exact, not a superset: the slot and plate checks exclude these rows,
+        so a row matched here early would free a hold that is still live.
+        add_business_days(max(created_at, ROLLOUT), N) + grace <= now becomes
+        created_at <= business_days_before(now - grace, N), its exact inverse.
+        The ROLLOUT half does not depend on the row, so it is answered here,
+        and until its own deadline has passed nothing at all is overdue.
         """
+        from time_utils import add_business_days, business_days_before
         now = now or timezone.now()
-        if now < cls.PAYMENT_DEADLINE_ROLLOUT + cls.PAYMENT_WINDOW + cls.PAYMENT_GRACE:
+        if now < (add_business_days(cls.PAYMENT_DEADLINE_ROLLOUT, cls.PAYMENT_WINDOW_DAYS)
+                  + cls.PAYMENT_GRACE):
             return models.Q(pk__in=[])
         return models.Q(
             status=cls.Status.PENDING,
             payment_status=cls.PaymentStatus.UNPAID,
             source=cls.Source.PUBLIC,
-            created_at__lte=now - cls.PAYMENT_WINDOW - cls.PAYMENT_GRACE,
+            created_at__lte=business_days_before(now - cls.PAYMENT_GRACE,
+                                                 cls.PAYMENT_WINDOW_DAYS),
         )
 
     @classmethod

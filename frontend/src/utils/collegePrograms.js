@@ -16,7 +16,7 @@ const BY_CODE = new Map(COLLEGES.flatMap(c => c.programs.map(p => [p.code, { ...
 
 export const findProgram = (code) => BY_CODE.get(code) || null
 
-/* The year levels a program offers: 1–4, or 1–5 for BS Arch. */
+/* The year levels a program offers: 1–4, 1–5 for BS Arch, 1–2 for JD and the masteral programs. */
 export const yearsFor = (code) => {
   const p = findProgram(code)
   return p ? Array.from({ length: p.years }, (_, i) => String(i + 1)) : []

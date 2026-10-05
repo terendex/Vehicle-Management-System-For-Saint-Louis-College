@@ -17,7 +17,7 @@ def general_terms(fee, window_days):
     if fee:
         fee_line = (f'To pay the Vehicle Pass fee of **PHP {fee:,.2f}** at the **Accounting Office**, '
                     f'and to upload the Official Receipt (OR) using the link sent to my email '
-                    f'**within {window_days} days of submitting**, failing which this application '
+                    f'**within {window_days} working days of submitting**, failing which this application '
                     f'expires and must be submitted again.')
     else:
         fee_line = ('To settle the Vehicle Pass fee assessed for my department at the '

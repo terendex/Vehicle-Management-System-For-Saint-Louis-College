@@ -1,6 +1,6 @@
-"""The 3-day payment deadline on online registrations.
+"""The 3-working-day payment deadline on online registrations.
 
-An applicant has three days from submitting to pay at the Accounting Office and
+An applicant has three working days (Monday to Friday) from submitting to pay at the Accounting Office and
 file their Official Receipt. Past that (plus an unadvertised grace hour for a
 slow upload), the application expires and releases what it was holding. These
 tests pin:
@@ -12,14 +12,17 @@ tests pin:
   * expiry frees the plate for a fresh application, mails the applicant, and
     the dead link says why instead of a generic "invalid link";
   * an upload that arrives inside the grace hour is still accepted;
-  * applications filed before the rollout get three days from the rollout;
+  * applications filed before the rollout get three working days from the rollout;
+  * weekends never count: Friday is due Wednesday, Saturday is due Thursday;
   * one reminder goes out in the last day, never twice, never after the
     deadline, and a slow mail connection can never deliver it late.
 
-Time is moved by backdating created_at, not by patching the clock, so the
-tests do not depend on what time of day the suite runs.
+Time is moved by backdating created_at against a clock pinned to a known
+weekday (FixedClock), so the tests do not depend on the day or time the suite
+runs: a working-day deadline backdated from a real Friday would cross a weekend
+that the same backdating from a Tuesday would not.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_tz
 from unittest import mock
 
 from django.core import mail
@@ -32,10 +35,30 @@ from vehicles.models import DailyJobRun, EmailOutbox, VehicleRegistration
 from vehicles.registration_deadline import expire_overdue, remind_due
 from vehicles.test_email_outbox import OUTBOX, FlakyTransport
 from vehicles.test_registration_payment import PaymentTestCase
+from time_utils import add_business_days
 
 R = VehicleRegistration
 PS = R.PaymentStatus
-LONG_AGO = timezone.now() - timedelta(days=365)
+MANILA = dt_tz(timedelta(hours=8))
+MONDAY = datetime(2026, 10, 12, 10, 0, tzinfo=MANILA)
+THURSDAY = datetime(2026, 10, 15, 10, 0, tzinfo=MANILA)
+LONG_AGO = MONDAY - timedelta(days=365)
+
+
+class FixedClock:
+    """Pin timezone.now() for setUp and the test alike.
+
+    THURSDAY by default: every backdating below (up to four days) then lands
+    on Sunday to Tuesday, so a "three days ago" application is due today and
+    the arithmetic reads the same as calendar days.
+    """
+    NOW = THURSDAY
+
+    def setUp(self):
+        patcher = mock.patch('django.utils.timezone.now', return_value=self.NOW)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
 
 
 def age(reg, delta):
@@ -47,7 +70,8 @@ def age(reg, delta):
 
 # A rollout a year back, so only the 3-day rule itself is in play.
 @mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', LONG_AGO)
-class DeadlineIsStatedTests(PaymentTestCase):
+class DeadlineIsStatedTests(FixedClock, PaymentTestCase):
+    NOW = MONDAY            # Monday's three working days are exactly three days
 
     def test_submit_response_carries_the_deadline(self):
         res = self.client.post('/api/vehicles/register/open/', dict(
@@ -86,7 +110,7 @@ class DeadlineIsStatedTests(PaymentTestCase):
 
 
 @mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', LONG_AGO)
-class ExpiryTests(PaymentTestCase):
+class ExpiryTests(FixedClock, PaymentTestCase):
 
     def test_unpaid_application_expires_after_three_days(self):
         reg = age(self.submit(), timedelta(days=3, hours=2))
@@ -145,7 +169,7 @@ class ExpiryTests(PaymentTestCase):
             res = self.client.get(url, {'token': str(reg.payment_token)})
             self.assertEqual(res.status_code, 410, (url, res.data))
             self.assertTrue(res.data['expired'])
-            self.assertIn('3 days', res.data['error'])
+            self.assertIn('3 working days', res.data['error'])
         self.assertEqual(R.objects.get(pk=reg.pk).status, R.Status.EXPIRED)
 
     def test_late_upload_is_refused_as_expired(self):
@@ -193,21 +217,89 @@ class ExpiryTests(PaymentTestCase):
         self.assertTrue(row['payment_deadline_display'])
 
 
-class RolloutTests(PaymentTestCase):
-    """Applications filed before the rule existed get three days from rollout."""
+class RolloutTests(FixedClock, PaymentTestCase):
+    """Applications filed before the rule existed get three working days from rollout."""
 
-    def test_old_application_gets_three_days_from_rollout(self):
+    def test_old_application_gets_three_working_days_from_rollout(self):
         reg = self.submit()
         R.objects.filter(pk=reg.pk).update(created_at=R.PAYMENT_DEADLINE_ROLLOUT - timedelta(days=20))
         reg.refresh_from_db()
-        self.assertEqual(reg.payment_deadline(), R.PAYMENT_DEADLINE_ROLLOUT + R.PAYMENT_WINDOW)
-        # Just past the rollout itself, nothing is overdue yet.
+        # Friday 5 PM rollout: due Wednesday 5 PM, the weekend not counted.
+        self.assertEqual(reg.payment_deadline(),
+                         datetime(2026, 10, 7, 17, 0, tzinfo=MANILA))
+        # Monday evening (three calendar days on) is not overdue any more.
+        for not_yet in (timedelta(days=1), timedelta(days=3, hours=2)):
+            with mock.patch('django.utils.timezone.now',
+                            return_value=R.PAYMENT_DEADLINE_ROLLOUT + not_yet):
+                self.assertEqual(expire_overdue(), [])
         with mock.patch('django.utils.timezone.now',
-                        return_value=R.PAYMENT_DEADLINE_ROLLOUT + timedelta(days=1)):
-            self.assertEqual(expire_overdue(), [])
-        with mock.patch('django.utils.timezone.now',
-                        return_value=R.PAYMENT_DEADLINE_ROLLOUT + timedelta(days=3, hours=2)):
+                        return_value=R.PAYMENT_DEADLINE_ROLLOUT + timedelta(days=5, hours=2)):
             self.assertEqual([r.pk for r in expire_overdue()], [reg.pk])
+
+
+@mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', LONG_AGO)
+class WorkingDayTests(FixedClock, PaymentTestCase):
+    """Saturday and Sunday never use up a working day."""
+
+    def submitted_at(self, when):
+        reg = self.submit()
+        R.objects.filter(pk=reg.pk).update(created_at=when)
+        reg.refresh_from_db()
+        return reg
+
+    def test_deadlines_skip_the_weekend(self):
+        cases = (
+            (datetime(2026, 10, 9, 15, 0, tzinfo=MANILA),    # Friday 3 PM
+             datetime(2026, 10, 14, 15, 0, tzinfo=MANILA)),  # Wednesday 3 PM
+            (datetime(2026, 10, 10, 10, 0, tzinfo=MANILA),   # Saturday
+             datetime(2026, 10, 15, 0, 0, tzinfo=MANILA)),   # Thursday 00:00
+            (datetime(2026, 10, 11, 23, 0, tzinfo=MANILA),   # Sunday
+             datetime(2026, 10, 15, 0, 0, tzinfo=MANILA)),   # Thursday 00:00
+            (datetime(2026, 10, 7, 10, 0, tzinfo=MANILA),    # Wednesday
+             datetime(2026, 10, 12, 10, 0, tzinfo=MANILA)),  # Monday
+        )
+        for submitted, due in cases:
+            self.assertEqual(add_business_days(submitted, 3), due, submitted)
+            self.assertEqual(self.submitted_at(submitted).payment_deadline(), due, submitted)
+
+    def test_friday_application_is_still_pending_on_monday(self):
+        reg = self.submitted_at(datetime(2026, 10, 9, 15, 0, tzinfo=MANILA))
+        monday_evening = datetime(2026, 10, 12, 18, 0, tzinfo=MANILA)   # 3 calendar days on
+        with mock.patch('django.utils.timezone.now', return_value=monday_evening):
+            self.assertFalse(reg.payment_overdue())
+            self.assertEqual(expire_overdue(), [])
+        # Wednesday 3 PM is the deadline; the hour of grace after it, then expired.
+        for moment, overdue in ((datetime(2026, 10, 14, 15, 30, tzinfo=MANILA), False),
+                                (datetime(2026, 10, 14, 16, 0, tzinfo=MANILA), True)):
+            with mock.patch('django.utils.timezone.now', return_value=moment):
+                self.assertEqual(reg.payment_overdue(), overdue, moment)
+                self.assertEqual(R.objects.filter(R.overdue_q(), pk=reg.pk).exists(), overdue, moment)
+
+    def test_filter_and_row_check_agree_hour_by_hour(self):
+        """overdue_q() is exact: the slot and plate checks exclude what it matches."""
+        # Submit every row first and backdate afterwards: each submission
+        # sweeps overdue rows, which would expire the ones backdated before it.
+        regs = [self.submit() for _ in range(0, 24 * 14, 7)]
+        for reg, h in zip(regs, range(0, 24 * 14, 7)):
+            R.objects.filter(pk=reg.pk).update(
+                created_at=datetime(2026, 10, 1, 0, 0, tzinfo=MANILA) + timedelta(hours=h))
+            reg.refresh_from_db()
+        pks = [r.pk for r in regs]
+        for h in range(0, 24 * 21, 5):
+            moment = datetime(2026, 10, 3, 0, 0, tzinfo=MANILA) + timedelta(hours=h)
+            with mock.patch('django.utils.timezone.now', return_value=moment):
+                by_filter = set(R.objects.filter(R.overdue_q(), pk__in=pks)
+                                .values_list('pk', flat=True))
+                by_row = {r.pk for r in regs if r.payment_overdue()}
+                self.assertEqual(by_filter, by_row, moment)
+
+    def test_the_payment_page_counts_to_the_working_day_deadline(self):
+        reg = self.submitted_at(datetime(2026, 10, 13, 15, 0, tzinfo=MANILA))   # Tuesday
+        res = self.client.get('/api/vehicles/register/payment/', {'token': str(reg.payment_token)})
+        self.assertEqual(res.status_code, 200, res.data)
+        due = datetime(2026, 10, 16, 15, 0, tzinfo=MANILA)                        # Friday
+        self.assertEqual(res.data['payment_seconds_left'], int((due - THURSDAY).total_seconds()))
+        self.assertEqual(res.data['payment_window_days'], 3)
 
 
 class SchedulerTests(PaymentTestCase):
@@ -227,7 +319,7 @@ class SchedulerTests(PaymentTestCase):
 
 
 @mock.patch.object(R, 'PAYMENT_DEADLINE_ROLLOUT', LONG_AGO)
-class ReminderTests(PaymentTestCase):
+class ReminderTests(FixedClock, PaymentTestCase):
     """One "deadline is close" email in the last day before the deadline."""
 
     def reminders(self):
