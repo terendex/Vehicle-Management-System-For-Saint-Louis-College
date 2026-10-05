@@ -9,13 +9,18 @@ database is created and migrated instead.
 
 Then: migrations are applied, a registration period for the current school
 year is made the active one, and the simulated clock is switched on at the
-real time (offset 0).
+real time (offset 0). A copied campus also gets a copy of the screenshot
+demo's uploads (parking reference images, receipts), which its rows point at.
 """
+import os
+import shutil
+
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
 TEMPLATE_DB = 'slc_manual_demo'
+TEMPLATE_MEDIA = os.path.join(settings.BASE_DIR, '..', 'docs', 'user-manual', 'capture', 'demo_media')
 
 
 class Command(BaseCommand):
@@ -35,6 +40,11 @@ class Command(BaseCommand):
             raise CommandError(f'Refusing to set up {name!r} on {db["HOST"]!r}.')
 
         created = self._create(db, name, reset)
+        if created == 'copied' and os.path.isdir(TEMPLATE_MEDIA):
+            if reset and os.path.isdir(settings.MEDIA_ROOT):
+                shutil.rmtree(settings.MEDIA_ROOT)
+            shutil.copytree(TEMPLATE_MEDIA, settings.MEDIA_ROOT, dirs_exist_ok=True)
+            self.stdout.write(f'Copied the demo uploads to {settings.MEDIA_ROOT}.')
         self.stdout.write('Applying migrations...')
         call_command('migrate', interactive=False, verbosity=0)
         self._active_period()

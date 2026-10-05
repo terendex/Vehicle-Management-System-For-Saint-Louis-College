@@ -80,7 +80,9 @@ def _violations(user):
 
 
 def _visits(user, date_from='', date_to=''):
+    from datetime import timedelta
     from scanning.models import AccessLog, Gate
+    from scanning.occupancy import STALE_ENTRY_HOURS
     from scanning.views import _merge_access_log_visits, _visit_duration_minutes
     from time_utils import filter_local_date_range
 
@@ -94,9 +96,16 @@ def _visits(user, date_from='', date_to=''):
     visible, exit_by_entry = _merge_access_log_visits(logs)
     gates = dict(Gate.objects.values_list('gate_id', 'label'))
     statuses = dict(AccessLog.Status.choices)
+    now, today = timezone.now(), timezone.localdate()
     out = []
     for log in visible:
         exit_log = exit_by_entry.get(log.id)
+        # "Still inside" is the occupancy ledger's rule (scanning/occupancy.py):
+        # an entry of today, not older than STALE_ENTRY_HOURS. An older entry
+        # with no exit is a missed exit scan, not a car that never left.
+        open_entry = log.status == AccessLog.Status.AUTHORIZED and exit_log is None
+        inside = (open_entry and timezone.localdate(log.scanned_at) == today
+                  and log.scanned_at >= now - timedelta(hours=STALE_ENTRY_HOURS))
         if log.status == AccessLog.Status.EXITED:          # a lone exit: its entry is outside the list
             entered = log.paired_entry.scanned_at if log.paired_entry_id else None
             exited, exit_gate = log.scanned_at, log.gate_id
@@ -115,7 +124,8 @@ def _visits(user, date_from='', date_to=''):
             'gate':             gates.get(gate, gate),
             'exit_gate':        gates.get(exit_gate, exit_gate),
             'duration_minutes': (_visit_duration_minutes(log, exit_log) if exit_log else None),
-            'still_inside':     log.status == AccessLog.Status.AUTHORIZED and exit_log is None,
+            'still_inside':     inside,
+            'no_exit':          open_entry and not inside,
             'denied_reason':    log.denied_reason,
         })
     return out

@@ -69,6 +69,14 @@ class UserActivityTests(TestCase):
         self.assertEqual(visits[0]['duration_minutes'], 90)
         self.assertFalse(visits[0]['still_inside'])
 
+    def test_an_old_entry_without_an_exit_is_not_still_inside(self):
+        entry = AccessLog.objects.create(vehicle=self.vehicle, plate_number='ACT 1234',
+                                         status=AccessLog.Status.AUTHORIZED, gate_id='main')
+        AccessLog.objects.filter(pk=entry.pk).update(scanned_at=timezone.now() - timedelta(days=3))
+        [visit] = self.get().data['visits']
+        self.assertFalse(visit['still_inside'])
+        self.assertTrue(visit['no_exit'])
+
     def test_a_date_range_narrows_the_visits(self):
         entry = AccessLog.objects.create(vehicle=self.vehicle, plate_number='ACT 1234',
                                          status=AccessLog.Status.AUTHORIZED, gate_id='main')

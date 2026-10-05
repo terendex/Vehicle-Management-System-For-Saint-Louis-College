@@ -2009,10 +2009,11 @@ export default function ParkingManagement({ embedded = false }) {
                       onClick={e => {
                         if (mode === 'live') { onSpaceClick(s); return }
                         // Selecting a slot is not a pen point — unless a shape
-                        // is already being traced over it, or a row is being
-                        // drawn across it.
+                        // is already being traced over it. With the Row tool a
+                        // click is always a row point: rows are drawn along
+                        // the bays already there.
                         if (tool === 'pen' && penPoints.length > 0) return
-                        if (tool === 'row' && rowStart) return
+                        if (tool === 'row') return
                         e.stopPropagation()
                         if (!sel) { commitLabel(); setSelDraft(id); setDraftLabel(s.space_number) }
                       }}

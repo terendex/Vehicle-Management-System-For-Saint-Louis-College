@@ -560,9 +560,20 @@ export default function RegisterPage() {
 
   useEffect(() => {
     fetchRegStatus()
-    if (directType) chooseRegistrantType(directType)
+    // A student link asks the driver question below, once the privacy
+    // notice is out of the way; the other types open their form at once.
+    if (directType && directType !== 'student') chooseRegistrantType(directType)
     setLoading(false)
   }, [directType, chooseRegistrantType, fetchRegStatus])
+
+  // Asked once, after the Data Privacy Notice: a question stacked on top of
+  // the notice would be answered before the applicant had agreed to anything.
+  const driverAsked = useRef(false)
+  useEffect(() => {
+    if (directType !== 'student' || privacyOpen || driverAsked.current) return
+    driverAsked.current = true
+    chooseRegistrantType('student')
+  }, [directType, privacyOpen, chooseRegistrantType])
 
   /* Which email rule this applicant falls under. Employees and College
      students are the only ones the school issues an address to; fetchers and

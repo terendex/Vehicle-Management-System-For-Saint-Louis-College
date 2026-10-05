@@ -71,14 +71,12 @@
 .tc-big { font-size: 20px; font-weight: 800; color: #0B2340; margin: 0 0 8px; }
 
 .tc-muted {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   font-size: 13px;
   color: #4A6B85;
   margin: 4px 0;
 }
+
+.tc-muted svg { vertical-align: -2px; margin-right: 4px; }
 
 .tc-row { display: flex; gap: 8px; margin-bottom: 10px; }
 .tc-row--wrap { flex-wrap: wrap; }

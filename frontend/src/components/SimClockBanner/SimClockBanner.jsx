@@ -4,13 +4,15 @@ import './SimClockBanner.css'
 
 const PREFIX = '[SIM] '
 
-/* The red bar on every page of the instructor demo while the simulated clock
-   is on, and "[SIM]" in front of the tab title. It cannot be dismissed: a
-   screen showing a moved date must never be mistaken for the real system.
-   Renders nothing anywhere the server has no simulated clock. */
+/* The red bar on every page of the instructor demo while the date is moved,
+   and "[SIM]" in front of the tab title. It cannot be dismissed: a screen
+   showing a moved date must never be mistaken for the real system. With the
+   clock off, or on at the real time (offset 0), there is nothing to warn
+   about and it renders nothing, as everywhere the server has no simulated
+   clock at all. */
 export default function SimClockBanner() {
   const sim = useSimClock((s) => s.sim)
-  const on = !!sim?.enabled
+  const on = !!sim?.enabled && Math.round(sim.offset_seconds || 0) !== 0
 
   useEffect(() => { startSimClockWatch() }, [])
 

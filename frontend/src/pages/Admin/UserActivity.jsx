@@ -201,6 +201,7 @@ export function UserActivityModal({ user, onClose }) {
                           {item.v.duration_minutes != null && <> · {minutesText(item.v.duration_minutes)}</>}</>
                       )}
                       {item.v.still_inside && <> · <strong>still inside</strong></>}
+                      {item.v.no_exit && <> · no exit recorded</>}
                       {item.v.denied_reason && <> · {item.v.denied_reason}</>}
                     </div>
                   </div>
