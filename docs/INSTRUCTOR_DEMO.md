@@ -55,8 +55,9 @@ database that is not on this PC.
 ## Script: registration closing
 
 1. Rule Constraints → Registration Period → New Period: choose a school year.
-   The dates fill in by themselves, August 1 to July 31, and cannot be typed.
-   A school year that already has a period is greyed out.
+   The dates fill in as August 1 to July 31 and can be moved only inside it;
+   a date outside is refused. A school year that already has a period is
+   greyed out.
 2. Test Clock: set **Thursday, July 29** of the school year's second year and
    submit an application. Its deadline is the close, **July 31**, not three
    working days later.

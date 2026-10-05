@@ -374,10 +374,11 @@ class ScheduledVisitTableTests(TestCase):
             build.return_value = HttpResponse(b'%PDF')
             self.client.get('/api/vehicles/scheduled-visits/report/pdf/', {'status': 'archived'})
         kw = build.call_args.kwargs
+        col = lambda h: kw['rows'][0][kw['headers'].index(h)]   # by heading, not position
         self.assertEqual(len(kw['rows']), 1)
-        self.assertEqual(kw['rows'][0][1], f'SV-{self.archived.pk}')
+        self.assertNotIn('Ref', kw['headers'])                  # trimmed from the printed report
         # Archived before its day: Cancelled is the outcome, archiving said after it.
-        self.assertEqual(kw['rows'][0][7], 'Cancelled — Archived: Postponed')
+        self.assertEqual(col('Status'), 'Cancelled — Archived: Postponed')
         self.assertIn('Status: Archived', kw['subtitle'])
         self.assertEqual(sum(kw['col_widths_mm']), 267)
         self.assertEqual(len(kw['col_widths_mm']), len(kw['headers']))
@@ -661,5 +662,6 @@ class AutoArchiveTests(TestCase):
             from django.http import HttpResponse
             build.return_value = HttpResponse(b'%PDF')
             self.client.get('/api/vehicles/scheduled-visits/report/pdf/', {'status': 'archived'})
-        self.assertEqual(build.call_args.kwargs['rows'][0][7],
+        kw = build.call_args.kwargs
+        self.assertEqual(kw['rows'][0][kw['headers'].index('Status')],
                          'Arrived — Archived: Auto-archived after the visit day')

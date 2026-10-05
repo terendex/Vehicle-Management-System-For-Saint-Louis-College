@@ -1263,6 +1263,11 @@ class RegistrationPeriod(models.Model):
     end_date   = models.DateField()
     is_active  = models.BooleanField(default=False)  # exactly one row should carry this
     created_at = models.DateTimeField(auto_now_add=True)
+    # The school year this period belongs to, by its first year (2026 for
+    # S.Y. 2026–2027; see vehicles/school_year.py). Unique: one period per
+    # school year, enforced by the database itself. Null only on a period saved
+    # before periods belonged to a school year, kept as history.
+    school_year = models.PositiveSmallIntegerField(null=True, blank=True, unique=True)
 
     class Meta:
         db_table = 'tbl_registration_period'

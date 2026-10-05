@@ -97,9 +97,9 @@ class Command(BaseCommand):
         label = sy.label
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period, _ = RegistrationPeriod.objects.update_or_create(
-            label=label(year), start_date=start,
-            defaults={'end_date': end, 'is_active': True})
-        self.stdout.write(f'Active registration period: {period.label}, {start} to {end}.')
+            school_year=year,
+            defaults={'label': label(year), 'start_date': start, 'end_date': end, 'is_active': True})
+        self.stdout.write(f'Active registration period: {period.label}, {period.start_date} to {period.end_date}.')
 
     def _summary(self, created):
         from accounts.models import TwoFactorDevice, User
