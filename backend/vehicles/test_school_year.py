@@ -255,3 +255,51 @@ class RegistrationCloseTests(PaymentTestCase):
                 by_filter = set(R.objects.filter(R.overdue_q(), pk__in=pks).values_list('pk', flat=True))
                 by_row = {r.pk for r in regs if r.payment_overdue()}
                 self.assertEqual(by_filter, by_row, moment)
+
+
+class LegacyDataMigrationTests(PaymentTestCase):
+    """vehicles/migrations/0099: old periods and expiry dates onto the school year."""
+
+    def setUp(self):
+        clock = mock.patch('django.utils.timezone.now', return_value=at(2026, 10, 5, 12, 0))
+        clock.start()
+        self.addCleanup(clock.stop)
+        super().setUp()
+        RegistrationPeriod.objects.all().delete()
+
+    def migrate(self):
+        import importlib
+        from django.apps import apps
+        m = importlib.import_module('vehicles.migrations.0099_school_year_periods_and_expiry')
+        m.convert_legacy_periods(apps, None)
+        m.move_owner_expiry_to_july_31(apps, None)
+
+    def test_the_newest_old_period_becomes_the_school_year_and_the_other_stays(self):
+        older = RegistrationPeriod.objects.create(label='S.Y. August 2026 – May 2027', is_active=False,
+                                                  start_date=date(2026, 9, 29), end_date=date(2026, 10, 13))
+        newer = RegistrationPeriod.objects.create(label='S.Y. August 2026 – May 2027', is_active=False,
+                                                  start_date=date(2026, 10, 5), end_date=date(2026, 10, 30))
+        RegistrationPeriod.objects.filter(pk=older.pk).update(created_at=at(2026, 9, 29, 9, 0))
+        self.migrate()
+        newer.refresh_from_db()
+        older.refresh_from_db()
+        self.assertEqual((newer.start_date, newer.end_date, newer.label),
+                         (date(2026, 8, 1), date(2027, 7, 31), 'S.Y. 2026–2027'))
+        self.assertFalse(newer.is_active)
+        self.assertEqual((older.start_date, older.end_date), (date(2026, 9, 29), date(2026, 10, 13)))
+        self.migrate()                                   # a second run changes nothing
+        self.assertEqual(RegistrationPeriod.objects.filter(start_date=date(2026, 8, 1)).count(), 1)
+
+    def test_owner_expiry_moves_to_july_31_of_their_school_year(self):
+        owner = User.objects.create_user(email='old-expiry@slc.edu.ph', last_name='Old', first_name='Expiry',
+                                         password='pw', role='vehicle_owner', owner_type='student')
+        User.objects.filter(pk=owner.pk).update(expires_at=date(2027, 9, 10))
+        past = User.objects.create_user(email='past-expiry@slc.edu.ph', last_name='Past', first_name='Expiry',
+                                        password='pw', role='vehicle_owner', owner_type='student')
+        User.objects.filter(pk=past.pk).update(expires_at=date(2026, 12, 1),
+                                               date_joined=at(2025, 12, 1, 9, 0))
+        self.migrate()
+        owner.refresh_from_db()
+        past.refresh_from_db()
+        self.assertEqual(owner.expires_at, date(2027, 7, 31))
+        self.assertEqual(past.expires_at, date(2026, 12, 1))   # July 31, 2026 is past: left alone
