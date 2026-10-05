@@ -122,7 +122,7 @@ def _summarise(outcome):
 
 def parse_when(text):
     """'2026-10-09 10:00' or '2026-10-09' (00:00) as naive campus time."""
-    text = (text or '').strip()
+    text = str(text or '').strip()
     for fmt in ('%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
         try:
             return datetime.strptime(text, fmt)
@@ -133,7 +133,7 @@ def parse_when(text):
 
 def parse_step(text):
     """'3d', '5h', '2wd' (working days), '-1d' as advance() keyword arguments."""
-    text = (text or '').strip().lower()
+    text = str(text or '').strip().lower()
     for suffix, key in (('wd', 'working_days'), ('d', 'days'), ('h', 'hours')):
         if text.endswith(suffix):
             try:

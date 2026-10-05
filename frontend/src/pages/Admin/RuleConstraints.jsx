@@ -419,9 +419,13 @@ export default function RuleConstraints() {
         toast.success(`${data.school_year_label} dates changed.`)
       } else {
         const { data } = await createRegistrationPeriod({ school_year: chosen.value, ...dates })
-        setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
+        // A later school year waits while the current one is open; only an
+        // active new period stands the others down.
+        setPeriods(prev => [data, ...prev.map(p => (data.is_active ? { ...p, is_active: false } : p))])
         setSchoolYears(prev => prev.map(y => (y.value === data.school_year ? { ...y, taken: true } : y)))
-        toast.success(`${data.school_year_label} created and set as active.`)
+        toast.success(data.is_active
+          ? `${data.school_year_label} created and set as active.`
+          : `${data.school_year_label} created. The current school year stays open; set it active when its registration should start.`)
       }
       closePeriodEditor()
     } catch (err) {

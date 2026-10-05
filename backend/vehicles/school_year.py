@@ -103,17 +103,12 @@ def long_date(day: date) -> str:
 
 
 def pass_expiry_date(on: date | None = None) -> date:
-    """The expires_at an owner account accepted ``on`` (default: today) gets.
+    """The expires_at an owner account accepted ``on`` (default: today) gets:
+    July 31 at the end of the school year ``on`` falls in.
 
-    July 31 at the end of the active registration period's school year while
-    that school year is running; otherwise the end of the school year ``on``
-    falls in. Never a date already past.
+    A registration period is always inside its school year, so this is the
+    open period's school year too. Not read from the active period: a period
+    created early for next school year must not hand today's accounts a
+    pass that runs to the July 31 after next. Never a date already past.
     """
-    from .models import RegistrationPeriod
-    on = on or today()
-    period = RegistrationPeriod.get_active()
-    if period is not None:
-        until = valid_until(year_of(period))
-        if until >= on:
-            return until
-    return valid_until(school_year_of(on))
+    return valid_until(school_year_of(on or today()))

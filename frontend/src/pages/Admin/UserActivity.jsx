@@ -223,8 +223,8 @@ export function UserActivityModal({ user, onClose }) {
               ))}
             </ol>
           )}
-          {data && data.counts.visits >= data.counts.visit_limit && (
-            <p className="ua-muted">Showing the latest {data.counts.visit_limit} visits. Narrow the dates to see older ones.</p>
+          {data?.counts.visits_truncated && (
+            <p className="ua-muted">Only the latest gate records are shown. Narrow the dates to see older ones.</p>
           )}
         </div>
         <div className="um-modal-footer">

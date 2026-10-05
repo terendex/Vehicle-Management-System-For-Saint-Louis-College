@@ -62,3 +62,12 @@ class InsideCampusTests(TestCase):
                                          password='pw', role='security')
         self.client.force_authenticate(guard)
         self.assertEqual(self.client.get('/api/scan/inside/').status_code, 403)
+
+    def test_a_plateless_vehicle_never_takes_a_walk_in_visitors_name(self):
+        from scanning.models import VisitorPass
+        walk_in = Vehicle.objects.create(plate_number='WALKIN 1', vehicle_type='car')
+        VisitorPass.objects.create(vehicle=walk_in, plate_number='', visitor_name='JUAN CRUZ',
+                                   status='active', valid_date=timezone.localdate())
+        self.enter('', 'unknown', is_unrecognized=True, driver_name='PEDRO')
+        [row] = self.client.get('/api/scan/inside/').data['results']
+        self.assertEqual(row['name'], 'PEDRO')

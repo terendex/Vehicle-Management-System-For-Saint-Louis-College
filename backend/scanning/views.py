@@ -3653,6 +3653,7 @@ class InsideCampusView(APIView):
             VisitorPass.objects
             .filter(valid_date=timezone.localdate(), status=VisitorPass.Status.ACTIVE)
             .exclude(visitor_name='')
+            .exclude(plate_number='')                     # a walk-in with no plate names nobody's car
             .values_list('plate_number', 'visitor_name'))
         gates = dict(Gate.objects.values_list('gate_id', 'label'))
         categories = dict(AccessLog.Category.choices)
@@ -3671,7 +3672,8 @@ class InsideCampusView(APIView):
                 'id':             log.pk,
                 'plate':          log.plate_number or f'NP-{log.pk}',
                 'name':           (owner.full_name if owner else '')
-                                  or visitor_names.get(log.plate_number, '') or log.driver_name or '',
+                                  or (visitor_names.get(log.plate_number, '') if log.plate_number else '')
+                                  or log.driver_name or '',
                 'category':       log.entrant_category or 'unknown',
                 'category_label': categories.get(log.entrant_category or 'unknown', 'Unregistered'),
                 'group':          group,

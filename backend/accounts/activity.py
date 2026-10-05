@@ -92,7 +92,9 @@ def _visits(user, date_from='', date_to=''):
           .select_related('paired_entry')
           .order_by('-scanned_at'))
     qs = filter_local_date_range(qs, 'scanned_at', date_from, date_to)
-    logs = list(qs[:VISIT_LIMIT])
+    logs = list(qs[:VISIT_LIMIT + 1])
+    truncated = len(logs) > VISIT_LIMIT            # older rows exist beyond the cap
+    logs = logs[:VISIT_LIMIT]
     visible, exit_by_entry = _merge_access_log_visits(logs)
     gates = dict(Gate.objects.values_list('gate_id', 'label'))
     statuses = dict(AccessLog.Status.choices)
@@ -128,12 +130,12 @@ def _visits(user, date_from='', date_to=''):
             'no_exit':          open_entry and not inside,
             'denied_reason':    log.denied_reason,
         })
-    return out
+    return out, truncated
 
 
 def user_activity(user, date_from='', date_to=''):
     violations = _violations(user)
-    visits = _visits(user, date_from, date_to)
+    visits, truncated = _visits(user, date_from, date_to)
     return {
         'user': {
             'id':        user.pk,
@@ -153,6 +155,7 @@ def user_activity(user, date_from='', date_to=''):
             'violations_active': sum(1 for v in violations if not v['settled']),
             'visits':            len(visits),
             'visit_limit':       VISIT_LIMIT,
+            'visits_truncated':  truncated,
         },
         'generated_at': timezone.now().isoformat(),
     }

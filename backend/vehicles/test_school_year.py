@@ -331,3 +331,67 @@ class LegacyDataMigrationTests(PaymentTestCase):
         past.refresh_from_db()
         self.assertEqual(owner.expires_at, date(2027, 7, 31))
         self.assertEqual(past.expires_at, date(2026, 12, 1))   # July 31, 2026 is past: left alone
+
+
+class ReviewFixTests(PaymentTestCase):
+    """Bugs found in review, 2026-10-05."""
+
+    def setUp(self):
+        clock = mock.patch('django.utils.timezone.now', return_value=at(2026, 10, 5, 12, 0))
+        clock.start()
+        self.addCleanup(clock.stop)
+        super().setUp()
+        self.client.force_authenticate(self.admin)
+
+    def post(self, **data):
+        return self.client.post('/api/vehicles/registration-periods/', data, format='json')
+
+    def test_preparing_next_school_year_keeps_this_one_open(self):
+        current = self.post(school_year='2026-2027').data
+        nxt = self.post(school_year='2027-2028')
+        self.assertEqual(nxt.status_code, 201, nxt.data)
+        self.assertFalse(nxt.data['is_active'])
+        self.assertTrue(RegistrationPeriod.objects.get(pk=current['id']).is_active)
+        self.assertTrue(self.client.get('/api/vehicles/register/status/').data['is_open'])
+
+    def test_accounts_accepted_now_never_run_past_this_school_year(self):
+        RegistrationPeriod.objects.update(is_active=False)
+        RegistrationPeriod.objects.create(label='next', school_year=2027, is_active=True,
+                                          start_date=date(2027, 8, 1), end_date=date(2028, 7, 31))
+        self.assertEqual(pass_expiry_date(), date(2027, 7, 31))
+
+    def test_a_close_date_already_past_is_refused(self):
+        res = self.post(school_year='2026-2027', start_date='2026-08-01', end_date='2026-09-30')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('end_date', res.data)
+
+    def test_settings_backfill_never_gives_a_past_expiry(self):
+        owner = User.objects.create_user(email='backfill@slc.edu.ph', last_name='Back', first_name='Fill',
+                                         password='pw', role='vehicle_owner', owner_type='student')
+        User.objects.filter(pk=owner.pk).update(expires_at=None, date_joined=at(2026, 6, 15, 9, 0))
+        res = self.client.put('/api/vehicles/system-settings/', {
+            'retention_years': 5, 'scan_dedup_seconds': 60, 'vehicle_pass_fee': 300,
+            'vehicle_pass_fee_employee': 150, 'account_expiry_months': 12, 'account_expiry_days': 0,
+        }, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        owner.refresh_from_db()
+        self.assertEqual(owner.expires_at, date(2027, 7, 31))
+
+    def test_a_late_sweep_still_names_the_deadline_that_applied(self):
+        # Filed Monday; registration closes Tuesday, before 3 working days.
+        RegistrationPeriod.objects.filter(is_active=True).update(end_date=date(2026, 10, 6))
+        reg = self.submit()
+        with mock.patch('django.utils.timezone.now', return_value=at(2026, 10, 9, 12, 0)):   # both passed
+            expire_overdue()
+        reg.refresh_from_db()
+        self.assertEqual(reg.rejection_reason, R.EXPIRED_CLOSED_REASON)
+
+
+class TestClockInputTests(SimpleTestCase):
+
+    def test_numbers_are_a_400_not_a_500(self):
+        import sim_clock_actions
+        with self.assertRaises(ValueError):
+            sim_clock_actions.parse_step(3)
+        with self.assertRaises(ValueError):
+            sim_clock_actions.parse_when(20261009)

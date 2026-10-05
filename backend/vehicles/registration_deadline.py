@@ -90,12 +90,16 @@ def expire_overdue(now=None, pk=None) -> list:
             return []
         # Which of the two deadlines ran out decides the reason the applicant
         # is given: their working days, or the registration period closing.
-        grace = VehicleRegistration.PAYMENT_GRACE
+        # The deadline they were told is the earlier of the two; compared
+        # with each other, not with `now`, so a late sweep (both passed by
+        # then) still names the one that applied, as the email and the dead
+        # link do.
+        periods = VehicleRegistration.registration_periods()
         for row in rows:
             row.rejection_reason = (
-                VehicleRegistration.EXPIRED_UNPAID_REASON
-                if row.working_day_deadline() + grace <= now
-                else VehicleRegistration.EXPIRED_CLOSED_REASON)
+                VehicleRegistration.EXPIRED_CLOSED_REASON
+                if row.payment_deadline(periods) < row.working_day_deadline()
+                else VehicleRegistration.EXPIRED_UNPAID_REASON)
         # One UPDATE per reason, filtered again on the status it expects, so a
         # row the CDSO decided between the SELECT and here is left as they
         # decided it.

@@ -4600,7 +4600,7 @@ class SystemSettingsView(APIView):
         # Runs on every save, not just the first: an owner with no expires_at is
         # an account that would live forever, which is the state expiration is
         # meant to make impossible.
-        from .school_year import school_year_of, valid_until
+        from .school_year import school_year_of, today as campus_today, valid_until
         from accounts.models import User as _User          # aliased to stay clear of any local name in this long method
         # Only owners, only live ones, and only those with no date yet — the
         # `expires_at__isnull=True` filter is what makes this leave existing
@@ -4611,7 +4611,10 @@ class SystemSettingsView(APIView):
         for owner in owners:
             # Counted from when they joined, not from today: a settings save is
             # not meant to hand anybody a fresh term they did not have.
-            owner.expires_at = valid_until(school_year_of(timezone.localdate(owner.date_joined)))
+            # Never a date already past: that would archive a working account
+            # on the next daily run just because a setting was saved.
+            owner.expires_at = max(valid_until(school_year_of(timezone.localdate(owner.date_joined))),
+                                   valid_until(school_year_of(campus_today())))
         if owners:
             # batch_size matters here: Postgres' default is one CASE statement
             # covering every row, which stops being a query at a few thousand
@@ -5188,6 +5191,8 @@ class RegistrationPeriodListCreateView(APIView):
         dates, errors = _period_dates_from(request.data, year)
         if errors:
             return Response(errors, status=400)
+        if dates['end_date'] < sy.today():
+            return Response({'end_date': 'Registration must close today or later.'}, status=400)
         duplicate = {'school_year': f'{sy.label(year)} already has a registration period. '
                                     'Change its dates from the list instead.'}
         if RegistrationPeriod.objects.filter(school_year=year).exists():
@@ -5195,12 +5200,19 @@ class RegistrationPeriodListCreateView(APIView):
         try:
             with transaction.atomic():
                 # Creating a period activates it, which means standing the
-                # previous one down first. The unique school_year column is
+                # previous one down first; except a period for a LATER school
+                # year, which waits (inactive) while the current school year's
+                # period is still active, so preparing next year early never
+                # closes registration now. The unique school_year column is
                 # the final word on duplicates: two admins saving the same
                 # school year at once cannot both succeed.
-                RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
+                running = RegistrationPeriod.objects.filter(is_active=True).first()
+                activate = not (running and year > sy.school_year_of(sy.today())
+                                and running.end_date >= sy.today())
+                if activate:
+                    RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
                 period = RegistrationPeriod.objects.create(
-                    label=sy.label(year), school_year=year, is_active=True, **dates)
+                    label=sy.label(year), school_year=year, is_active=activate, **dates)
         except IntegrityError:
             return Response(duplicate, status=400)
         audit(request, AuditLog.Action.RECORD_CREATED,
