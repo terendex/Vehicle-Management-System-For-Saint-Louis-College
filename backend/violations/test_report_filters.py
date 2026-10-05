@@ -158,3 +158,24 @@ class ReportLayoutTests(TestCase):
             self.assertTrue(res.content.startswith(b'%PDF'))
         res = client.get('/api/violations/report/excel/')
         self.assertEqual(res.status_code, 200)
+
+    def test_all_statuses_show_a_status_column(self):
+        from violations.views import (_filter_violations_report, _violation_report_rows,
+                                      _violation_report_sections)
+        request = self.request()
+        qs, _ = _filter_violations_report(request)
+        sections = _violation_report_sections(request, _violation_report_rows(qs))
+        for section in sections:
+            self.assertEqual(section['headers'][-1], 'Status')
+            self.assertEqual(sum(section['col_widths_mm']), 267)
+        status = {row[2]: row[5] for section in sections for row in section['rows']}
+        self.assertEqual(status, {'WRN111': 'Warning (1st offence)', 'OVR222': 'Warning (2nd offence)',
+                                  'CNF333': 'Confiscated (3rd offence)', 'OLD444': 'Cleared'})
+
+    def test_one_status_needs_no_status_column(self):
+        from violations.views import (_filter_violations_report, _violation_report_rows,
+                                      _violation_report_sections)
+        request = self.request(status='warning')
+        qs, _ = _filter_violations_report(request)
+        [section] = _violation_report_sections(request, _violation_report_rows(qs))
+        self.assertNotIn('Status', section['headers'])

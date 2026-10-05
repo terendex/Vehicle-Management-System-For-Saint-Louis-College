@@ -467,6 +467,12 @@ class MyViolationsView(APIView):
 VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation']
 # 267mm of printable width on landscape A4.
 VIOLATION_REPORT_WIDTHS_MM = [10, 45, 35, 80, 97]
+# With the status filter on All the rows mix warnings, confiscations and
+# cleared ones, so each row says which it is. Filtered to one status the
+# column would only repeat the section heading, and is left out.
+VIOLATION_REPORT_ALL_HEADERS = VIOLATION_REPORT_HEADERS + ['Status']
+VIOLATION_REPORT_ALL_WIDTHS_MM = [10, 42, 32, 68, 70, 45]
+_OFFENCE = {1: '1st', 2: '2nd', 3: '3rd'}
 
 
 # A violation stops counting in three different ways, because three endpoints
@@ -578,6 +584,19 @@ def _filter_violations_report(request):
 
 # Turns rows into (group, cells) pairs both report formats take; the cells
 # carry no row number, which each format adds in its own order.
+def _report_status(v):
+    """'Warning (2nd offence)', 'Confiscated (3rd offence)', 'Cleared', ..."""
+    group = _report_group(v)
+    if group == 'confiscated':
+        return 'Confiscated (3rd offence)'
+    if group == 'resolved':
+        if v.status in (Violation.Status.CLEARED, Violation.Status.LIFTED):
+            return v.get_status_display()
+        return 'Resolved'
+    offence = _OFFENCE.get(v.offense_number)
+    return f'Warning ({offence} offence)' if offence else 'Warning'
+
+
 def _violation_report_rows(qs):
     from django.utils import timezone as tz
     from report_utils import name_case
@@ -603,7 +622,7 @@ def _violation_report_rows(qs):
         rows.append((_report_group(v), [
             tz.localtime(v.issued_at).strftime('%b %d, %Y %I:%M %p'),
             plate, owner, violation,
-        ]))
+        ], _report_status(v)))
     return rows
 
 
@@ -619,14 +638,21 @@ def _violation_report_sections(request, rows):
     the one section, so it prints exactly the rows the screen listed.
     """
     status_f = request.query_params.get('status', '').strip()
-    def section(title, cells):
-        return {'title': f'{title} ({len(cells)})', 'headers': VIOLATION_REPORT_HEADERS,
-                'rows': _numbered(cells), 'col_widths_mm': VIOLATION_REPORT_WIDTHS_MM}
     if status_f:
+        def section(title, picked):
+            return {'title': f'{title} ({len(picked)})', 'headers': VIOLATION_REPORT_HEADERS,
+                    'rows': _numbered([cells for _, cells, _ in picked]),
+                    'col_widths_mm': VIOLATION_REPORT_WIDTHS_MM}
         label = _STATUS_GROUPS[status_f][1] if status_f in _STATUS_GROUPS else \
             dict(Violation.Status.choices).get(status_f, status_f)
-        return [section(label, [cells for _, cells in rows])]
-    sections = [section(label, [cells for g, cells in rows if g == key])
+        return [section(label, rows)]
+
+    # All statuses: grouped as before, and each row carries its status.
+    def section(title, picked):
+        return {'title': f'{title} ({len(picked)})', 'headers': VIOLATION_REPORT_ALL_HEADERS,
+                'rows': _numbered([cells + [status] for _, cells, status in picked]),
+                'col_widths_mm': VIOLATION_REPORT_ALL_WIDTHS_MM}
+    sections = [section(label, [row for row in rows if row[0] == key])
                 for key, label in _REPORT_GROUPS]
     return [sec for sec in sections if sec['rows']] or [section('Violations', [])]
 
@@ -665,18 +691,17 @@ class ViolationReportExcelView(APIView):
                     f"by {getattr(request.user, 'full_name', '')} · "
                     + ' · '.join(([period] if period else [])
                                  + [_violation_report_subtitle(desc, len(rows))]))
-        # A spreadsheet has no sections, so the group is a column instead, and
-        # the rows come in the PDF's group order so the two read alike.
-        group_labels = dict(_REPORT_GROUPS)
+        # A spreadsheet has no sections, so every row carries its status (a
+        # column Excel can filter on), in the PDF's group order.
         order = {key: i for i, (key, _) in enumerate(_REPORT_GROUPS)}
-        ordered = sorted(rows, key=lambda gc: order[gc[0]])          # stable: newest first within a group
+        ordered = sorted(rows, key=lambda row: order[row[0]])        # stable: newest first within a group
         return branded_excel_response(
             filename=report_filename('Violations Report', 'xlsx'),
             sheet_title='Violations',
             report_title=_violation_report_title(request),
             subtitle=subtitle,
-            headers=VIOLATION_REPORT_HEADERS + ['Group'],
-            rows=_numbered([cells + [group_labels[g]] for g, cells in ordered]),
+            headers=VIOLATION_REPORT_ALL_HEADERS,
+            rows=_numbered([cells + [status] for _, cells, status in ordered]),
             col_widths=[5, 21, 16, 26, 30, 22],
         )
 
