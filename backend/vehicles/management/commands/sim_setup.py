@@ -89,15 +89,12 @@ class Command(BaseCommand):
 
     # ── A registration window for the school year now running ──────────────
     def _active_period(self):
-        from datetime import date
-        from django.utils import timezone
+        from vehicles import school_year as sy
         from vehicles.models import RegistrationPeriod
-        from vehicles.school_year import label, school_year_of
 
-        today = timezone.localdate()
-        year = school_year_of(today)
-        start = max(date(year, 6, 1), today.replace(day=1))
-        end = date(year, 12, 31) if today <= date(year, 12, 31) else date(year + 1, 7, 31)
+        year = sy.school_year_of(sy.today())
+        start, end = sy.period_dates(year)
+        label = sy.label
         RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
         period, _ = RegistrationPeriod.objects.update_or_create(
             label=label(year), start_date=start,

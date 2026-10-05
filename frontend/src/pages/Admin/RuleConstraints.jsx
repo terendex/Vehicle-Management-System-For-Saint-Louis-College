@@ -9,7 +9,7 @@ import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
 import {
   getRuleConstraints, createRuleConstraint, updateRuleConstraint, getSystemSettings,
-  getRegistrationPeriods, createRegistrationPeriod, updateRegistrationPeriod,
+  getRegistrationPeriodOptions, createRegistrationPeriod,
   activateRegistrationPeriod, deactivateRegistrationPeriod,
 } from '../../api/vehicles'
 import api from '../../api/axios'
@@ -18,43 +18,12 @@ import './RuleConstraints.css'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/* The school year runs August 1 to July 31, and registration for it may open
-   two months early, from June 1. Nobody types or picks the school year: it is
-   read off the "Opens on" date, and "Closes on" has to stay inside it. The
-   same rules run on the server (vehicles/school_year.py), which has the final
-   say; they run here as well so the admin sees the problem before saving. */
-const EARLY_OPEN_MONTH = 6
-
-function schoolYearOf(iso) {
-  const [y, m] = iso.split('-').map(Number)
-  return m >= EARLY_OPEN_MONTH ? y : y - 1
-}
-
+/* A registration period is a school year: August 1 to July 31, always. The
+   admin picks the school year and the dates follow from it; they are shown,
+   never typed. The server derives and enforces the same dates
+   (vehicles/school_year.py), so this screen cannot be bypassed. */
 function longDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-}
-
-function schoolYearInfo(startIso) {
-  const year = schoolYearOf(startIso)
-  return {
-    label: `S.Y. ${year}–${year + 1}`,
-    first: `${year}-0${EARLY_OPEN_MONTH}-01`,
-    last:  `${year + 1}-07-31`,          // also the day every pass for this school year ends
-  }
-}
-
-/* The server's checks, word for word, keyed by the field they belong to. */
-function periodDateProblems(startIso, endIso, todayIso) {
-  if (!startIso || !endIso) return {}
-  const sy = schoolYearInfo(startIso)
-  if (endIso < startIso) return { end_date: 'Closes on must be on or after Opens on.' }
-  if (endIso > sy.last) {
-    return { end_date: `Closes on must be within ${sy.label} (${longDate(sy.first)} to ${longDate(sy.last)}).` }
-  }
-  if (sy.last < todayIso) {
-    return { start_date: `${sy.label} has already ended. Choose dates in the current or coming school year.` }
-  }
-  return {}
 }
 
 const DAY_LABELS = [
@@ -294,7 +263,9 @@ export default function RuleConstraints() {
   const [periodsLoading, setPeriodsLoading] = useState(true)
   // null when closed, { mode: 'add' } or { mode: 'edit', id } while open
   const [periodEditor,   setPeriodEditor]   = useState(null)
-  const EMPTY_PERIOD = { start_date: '', end_date: '' }
+  const EMPTY_PERIOD = { school_year: '' }
+  // The school years the form offers, with their fixed dates (from the server).
+  const [schoolYears,    setSchoolYears]    = useState([])
   const [periodForm,     setPeriodForm]     = useState(EMPTY_PERIOD)
   const [periodErrors,   setPeriodErrors]   = useState({})
   const [savingPeriod,   setSavingPeriod]   = useState(false)
@@ -323,8 +294,8 @@ export default function RuleConstraints() {
       })
       .catch(() => { if (!cancelled) setSsLoading(false) })
 
-    getRegistrationPeriods()
-      .then(({ data }) => { if (!cancelled) setPeriods(data) })
+    getRegistrationPeriodOptions()
+      .then(({ data }) => { if (!cancelled) { setPeriods(data.periods); setSchoolYears(data.school_years) } })
       .catch(() => {})
       .finally(() => { if (!cancelled) setPeriodsLoading(false) })
 
@@ -344,8 +315,8 @@ export default function RuleConstraints() {
     getSystemSettings()
       .then(({ data }) => setSs({ open_campus_mode: data.open_campus_mode ?? false }))
       .catch(() => {})
-    getRegistrationPeriods()
-      .then(({ data }) => setPeriods(data))
+    getRegistrationPeriodOptions()
+      .then(({ data }) => { setPeriods(data.periods); setSchoolYears(data.school_years) })
       .catch(() => {})
   }
   useLiveUpdates(reloadRuleData, ['ruleconstraint', 'systemsettings', 'registrationperiod'])
@@ -399,12 +370,6 @@ export default function RuleConstraints() {
     setPeriodErrors({})
   }
 
-  const openEditPeriod = (p) => {
-    setPeriodEditor({ mode: 'edit', id: p.id })
-    setPeriodForm({ start_date: p.start_date, end_date: p.end_date })
-    setPeriodErrors({})
-  }
-
   const closePeriodEditor = () => {
     setPeriodEditor(null)
     setPeriodForm(EMPTY_PERIOD)
@@ -412,30 +377,26 @@ export default function RuleConstraints() {
   }
 
   const handleSavePeriod = async () => {
-    const editing = periodEditor?.mode === 'edit'
-    const errors = periodDateProblems(periodForm.start_date, periodForm.end_date,
-                                      new Date().toLocaleDateString('en-CA'))
-    if (!periodForm.start_date)      errors.start_date = 'Pick the date registration opens.'
-    if (!periodForm.end_date)          errors.end_date   = 'Pick the date registration closes.'
+    const chosen = schoolYears.find(y => y.value === periodForm.school_year)
+    const errors = {}
+    if (!chosen) errors.school_year = 'Choose the school year.'
+    else if (chosen.taken) errors.school_year = `${chosen.label} already has a registration period.`
     setPeriodErrors(errors)
     if (await notify.validation(errors)) return
 
-    // No label: the server names the period after its school year.
+    // The dates go along only so the server can confirm them: it derives
+    // them from the school year itself and refuses any others.
     const payload = {
-      start_date: periodForm.start_date,
-      end_date:   periodForm.end_date,
+      school_year: chosen.value,
+      start_date:  chosen.start_date,
+      end_date:    chosen.end_date,
     }
     setSavingPeriod(true)
     try {
-      if (editing) {
-        const { data } = await updateRegistrationPeriod(periodEditor.id, payload)
-        setPeriods(prev => prev.map(p => (p.id === data.id ? data : p)))
-        toast.success('Registration period updated.')
-      } else {
-        const { data } = await createRegistrationPeriod(payload)
-        setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
-        toast.success('Registration period created and set as active.')
-      }
+      const { data } = await createRegistrationPeriod(payload)
+      setPeriods(prev => [data, ...prev.map(p => ({ ...p, is_active: false }))])
+      setSchoolYears(prev => prev.map(y => (y.value === data.school_year ? { ...y, taken: true } : y)))
+      toast.success(`${data.school_year_label} created and set as active.`)
       closePeriodEditor()
     } catch (err) {
       /* Only a payload that actually names form fields can be shown against
@@ -445,15 +406,13 @@ export default function RuleConstraints() {
          leaving the save looking like it silently did nothing. */
       const d = err.response?.data
       const fieldErrors = d && typeof d === 'object' && !Array.isArray(d)
-        ? Object.fromEntries(Object.entries(d).filter(([k]) => k in EMPTY_PERIOD))
+        ? Object.fromEntries(Object.entries(d).filter(([k]) => ['school_year', 'start_date', 'end_date'].includes(k)))
         : {}
       if (Object.keys(fieldErrors).length) {
         setPeriodErrors(fieldErrors)
-        notify.validation(fieldErrors, {
-          title: `Period not ${editing ? 'updated' : 'created'}`,
-        })
+        notify.validation(fieldErrors, { title: 'Period not created' })
       } else {
-        toast.error(d?.detail || `Failed to ${editing ? 'update' : 'create'} registration period.`)
+        toast.error(d?.detail || 'Failed to create the registration period.')
       }
     } finally {
       setSavingPeriod(false)
@@ -625,74 +584,60 @@ export default function RuleConstraints() {
             <div className="rc-section-body">
               {/* Add / edit form */}
               {periodEditor && (() => {
-                const editing = periodEditor.mode === 'edit'
-                const fmtDate = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-                const sy = periodForm.start_date ? schoolYearInfo(periodForm.start_date) : null
-                // Checked as the dates change, so a date outside the school
-                // year is flagged before Save rather than refused after it.
-                const live = periodDateProblems(periodForm.start_date, periodForm.end_date,
-                                                new Date().toLocaleDateString('en-CA'))
-                const problem = live.start_date || live.end_date
+                const chosen = schoolYears.find(y => y.value === periodForm.school_year)
                 return (
                   <div className="rc-period-form">
-                    <p className="rc-period-form-title">
-                      {editing
-                        ? <><CalendarDays size={13} /> Extending period</>
-                        : <><Plus size={13} /> New registration period</>}
-                    </p>
+                    <p className="rc-period-form-title"><Plus size={13} /> New registration period</p>
                     <div className="rc-period-groups">
                       <fieldset className="rc-period-group">
                         <legend className="rc-period-group-title">
-                          Registration window <span style={{ color: '#D93B3B' }}>*</span>
+                          School year <span style={{ color: '#D93B3B' }}>*</span>
                         </legend>
                         <p className="rc-field-hint rc-period-group-hint">
-                          Students can submit vehicle registrations only between these two dates.
-                          The school year (August 1 to July 31) is set from the date registration opens,
-                          which may be up to two months early, from June 1.
+                          A registration period always covers its whole school year, August 1 to July 31.
+                          Choose the school year; the dates follow from it and cannot be changed.
                         </p>
                         <div className="rc-period-form-fields">
                           <div className="rc-reg-field">
-                            <label className="rc-field-label">Opens on</label>
-                            <input
-                              type="date"
-                              className={`rc-field-input ${periodErrors.start_date || live.start_date ? 'rc-input-error' : ''}`}
-                              value={periodForm.start_date}
-                              min={editing ? undefined : new Date().toLocaleDateString('en-CA')}
-                              onChange={e => setPeriodForm(f => ({ ...f, start_date: e.target.value }))}
-                            />
+                            <label className="rc-field-label" htmlFor="rc-school-year">School year</label>
+                            <select
+                              id="rc-school-year"
+                              className={`rc-field-select ${periodErrors.school_year ? 'rc-input-error' : ''}`}
+                              value={periodForm.school_year}
+                              onChange={e => setPeriodForm({ school_year: e.target.value })}
+                            >
+                              <option value="">Choose…</option>
+                              {schoolYears.map(y => (
+                                <option key={y.value} value={y.value} disabled={y.taken}>
+                                  {y.value}{y.taken ? ' (already created)' : ''}
+                                </option>
+                              ))}
+                            </select>
                           </div>
                           <div className="rc-reg-field">
-                            <label className="rc-field-label">Closes on</label>
-                            <input
-                              type="date"
-                              className={`rc-field-input ${periodErrors.end_date || live.end_date ? 'rc-input-error' : ''}`}
-                              value={periodForm.end_date}
-                              min={periodForm.start_date || undefined}
-                              max={sy?.last}
-                              onChange={e => setPeriodForm(f => ({ ...f, end_date: e.target.value }))}
-                            />
+                            <label className="rc-field-label">Registration opens</label>
+                            <input className="rc-field-input" readOnly tabIndex={-1}
+                              value={chosen ? longDate(chosen.start_date) : ''} placeholder="August 1" />
+                          </div>
+                          <div className="rc-reg-field">
+                            <label className="rc-field-label">Registration closes</label>
+                            <input className="rc-field-input" readOnly tabIndex={-1}
+                              value={chosen ? longDate(chosen.end_date) : ''} placeholder="July 31" />
                           </div>
                         </div>
                       </fieldset>
                     </div>
-                    {sy && (
-                      <p className={`rc-period-summary${problem ? ' rc-period-summary--bad' : ''}`}>
-                        School year <strong>{sy.label}</strong>
-                        {problem
-                          ? <> · {problem}</>
-                          : <>
-                              {periodForm.end_date && <> · registration open {fmtDate(periodForm.start_date)} to {fmtDate(periodForm.end_date)}</>}
-                              {' '}· passes valid until <strong>{longDate(sy.last)}</strong>
-                            </>}
+                    {chosen && (
+                      <p className="rc-period-summary">
+                        <strong>{chosen.label}</strong>: registration open {longDate(chosen.start_date)} to{' '}
+                        {longDate(chosen.end_date)} · passes valid until <strong>{longDate(chosen.end_date)}</strong>
                       </p>
                     )}
                     <div className="rc-period-form-actions">
                       <button className="rc-btn rc-btn-secondary" onClick={closePeriodEditor}>Cancel</button>
                       <button className="rc-btn rc-btn-primary" disabled={savingPeriod} onClick={handleSavePeriod}>
-                        {savingPeriod
-                          ? <Loader2 size={14} className="rc-spin" />
-                          : editing ? <CalendarDays size={14} /> : <Plus size={14} />}
-                        {savingPeriod ? 'Saving…' : editing ? 'Save New Dates' : 'Save & Activate'}
+                        {savingPeriod ? <Loader2 size={14} className="rc-spin" /> : <Plus size={14} />}
+                        {savingPeriod ? 'Saving…' : 'Save & Activate'}
                       </button>
                     </div>
                   </div>
@@ -721,12 +666,18 @@ export default function RuleConstraints() {
                     <tbody>
                       {periods.map(p => {
                         const fmt = (d) => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })
-                        const todayIso = new Date().toLocaleDateString('en-CA')
-                        const ended = p.end_date < todayIso
+                        const ended = p.ended                  // by the server's date, the one every rule uses
                         const isActive = p.is_active && !ended
                         return (
                           <tr key={p.id} className={isActive ? 'rc-period-row--active' : ''}>
-                            <td className="rc-period-label">{p.school_year || p.label}</td>
+                            <td className="rc-period-label">
+                              {p.legacy ? p.label : p.school_year_label}
+                              {p.legacy && (
+                                <span className="rc-period-legacy" title="Saved with its own dates before periods followed the school year. Kept as history; it cannot be set active.">
+                                  manual dates
+                                </span>
+                              )}
+                            </td>
                             <td>{fmt(p.start_date)}</td>
                             <td>{fmt(p.end_date)}</td>
                             <td>
@@ -736,21 +687,7 @@ export default function RuleConstraints() {
                             </td>
                             <td>
                               <div className="rc-period-actions">
-                                {/* Open while it is still running, and named for the
-                                    one thing it is really for: a deadline that has to
-                                    move. Archiving to re-create the window instead
-                                    only leaves a duplicate row behind. It was called
-                                    "Edit", which described the form rather than the
-                                    decision anyone actually comes here to make. */}
-                                {!ended && (
-                                  <button
-                                    className="rc-btn rc-btn-secondary rc-btn-sm"
-                                    onClick={() => openEditPeriod(p)}
-                                  >
-                                    <CalendarDays size={12} /> Extend Duration
-                                  </button>
-                                )}
-                                {ended ? null : isActive ? (
+                                {ended || (p.legacy && !isActive) ? null : isActive ? (
                                   <button
                                     className="rc-btn rc-btn-secondary rc-btn-sm"
                                     disabled={togglingId === p.id}
@@ -852,13 +789,13 @@ export default function RuleConstraints() {
           onConfirm: () => { setConfirmAction(null); toggleMode('open_campus_mode') },
         } : isActivate ? {
           title:   'Set as Active Period?',
-          body:    `"${confirmAction.period.school_year || confirmAction.period.label}" will become the active registration period. The current active period (if any) will be archived.`,
+          body:    `"${confirmAction.period.school_year_label || confirmAction.period.label}" will become the active registration period. The current active period (if any) will be archived.`,
           confirm: 'Set Active',
           cls:     'rc-confirm-btn rc-confirm-btn--primary',
           onConfirm: () => { setConfirmAction(null); handleActivatePeriod(confirmAction.id) },
         } : {
           title:   'Deactivate Period?',
-          body:    `"${confirmAction.period.school_year || confirmAction.period.label}" will be archived. No registration period will be active — new vehicle registrations will be closed.`,
+          body:    `"${confirmAction.period.school_year_label || confirmAction.period.label}" will be archived. No registration period will be active — new vehicle registrations will be closed.`,
           confirm: 'Deactivate',
           cls:     'rc-confirm-btn rc-confirm-btn--warning',
           onConfirm: () => { setConfirmAction(null); handleDeactivatePeriod(confirmAction.id) },

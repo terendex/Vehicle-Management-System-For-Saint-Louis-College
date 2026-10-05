@@ -2622,7 +2622,8 @@ def _registration_window():
     }
     period = RegistrationPeriod.get_active()         # the period an admin flagged active, or None
     if period:
-        today = timezone.localdate()                 # campus-local date, so "today" means today here
+        from .school_year import today as campus_today
+        today = campus_today()                       # the one "today" every period check uses (vehicles/school_year.py)
         is_open = period.start_date <= today <= period.end_date   # inclusive at both ends: the closing day still counts
         return {
             "is_open": is_open,
@@ -4190,7 +4191,7 @@ class ParkingAvailabilityView(APIView):
 def _pass_expiry_today():
     """The expires_at an owner account accepted today would get."""
     from .school_year import pass_expiry_date
-    return pass_expiry_date(timezone.localdate())
+    return pass_expiry_date()
 
 
 # The one row that configures the whole system, and the three ways it is
@@ -5094,68 +5095,61 @@ class ParkingNoticeDetailView(APIView):
 
 # One shape for a period, used by every method below.
 def _serialize_period(p):
-    from .school_year import label as sy_label, school_year_of, valid_until
-    year = school_year_of(p.start_date)      # the school year is read off the open date, never typed
+    from . import school_year as sy
+    year = sy.school_year_of(p.start_date)
+    legacy = sy.is_legacy(p)
     return {
-        'id':         p.id,
-        'label':      p.label,               # e.g. "S.Y. 2026–2027"
-        'start_date': p.start_date.isoformat(),   # ISO text: the form shows these, it does no date maths
-        'end_date':   p.end_date.isoformat(),
-        'is_active':  p.is_active,           # the one flag that decides whether registration is open at all
-        'created_at': p.created_at.isoformat(),
-        'school_year': sy_label(year),
-        'valid_until': valid_until(year).isoformat(),   # every pass accepted for this school year ends here
+        'id':          p.id,
+        'label':       p.label,               # e.g. "S.Y. 2026–2027"
+        'start_date':  p.start_date.isoformat(),   # ISO text: the form shows these, it does no date maths
+        'end_date':    p.end_date.isoformat(),
+        'is_active':   p.is_active,           # the one flag that decides whether registration is open at all
+        'created_at':  p.created_at.isoformat(),
+        'school_year': sy.as_text(year),      # "2026-2027"
+        'school_year_label': sy.label(year),
+        'valid_until': sy.valid_until(year).isoformat(),   # every pass accepted under this period ends here
+        # Saved with dates of its own before periods were fixed to the school
+        # year. Kept as history; it cannot be activated (see the activate view).
+        'legacy':      legacy,
+        'ended':       p.end_date < sy.today(),   # by the server's date, the one every rule uses
     }
 
 
-# Validation for both the create and the edit, so a period cannot be created
-# under one set of rules and then edited under another.
-def _clean_period_payload(data, *, partial=False, current=None):
-    """Validate a registration-period payload for create (all fields) or edit.
+def _period_for_school_year(data):
+    """Validate a create request. Returns (year, errors).
 
-    `partial` keeps any field the caller left out at its `current` value, so a
-    PATCH that only moves the end date does not have to resend the other.
-    Returns (cleaned, errors) — cleaned is only complete when errors is empty.
-
-    The label is never taken from the caller: it is the school year the open
-    date falls in ("S.Y. 2026–2027", see vehicles/school_year.py), and the
-    close date has to stay inside that same school year.
+    The request names a school year ("2026-2027") and nothing else is needed:
+    the period is August 1 to July 31 of it (vehicles/school_year.py). Dates
+    may be sent as well, but only the school year's own: any other date is
+    refused, so the rule holds for a client that skips the form.
     """
-    from .school_year import label as sy_label, school_year_of, validate_period
     from datetime import datetime as _dt
+    from . import school_year as sy
 
-    # Strict: one format, and it raises on anything else. The callers below
-    # catch that and turn it into a field message.
-    def _as_date(raw):
-        return _dt.strptime(str(raw), '%Y-%m-%d').date()
+    try:
+        year = sy.parse(data.get('school_year'))
+    except ValueError as exc:
+        return None, {'school_year': str(exc)}
 
-    errors = {}                                  # field -> message, collected so the form gets every problem at once
-    cleaned = {}                                 # only trustworthy once errors is empty
-
-    # The condition each field below repeats: take what was sent if it was
-    # sent, and on a PATCH fall back to what the row already holds. `not
-    # partial` makes a create demand every field, since there is nothing to
-    # fall back to.
-    for field in ('start_date', 'end_date'):
-        if field in data or not partial:
-            try:
-                cleaned[field] = _as_date(data.get(field))
-            except (ValueError, TypeError):      # TypeError as well: a missing key reaches str(None), which is not a date either
-                errors[field] = 'Required. Use YYYY-MM-DD.'   # one message for both "absent" and "unparseable", since the fix is the same
-        else:
-            cleaned[field] = getattr(current, field)
-
-    # Returns None for `cleaned` on failure rather than a half-filled dict, so
-    # a caller that forgets to check `errors` cannot write partial values.
+    first, last = sy.period_dates(year)
+    errors = {}
+    for field, expected, word in (('start_date', first, 'start'), ('end_date', last, 'end')):
+        raw = data.get(field)
+        if raw in (None, ''):
+            continue
+        try:
+            sent = _dt.strptime(str(raw), '%Y-%m-%d').date()
+        except ValueError:
+            errors[field] = 'Use YYYY-MM-DD.'
+            continue
+        if sent != expected:
+            errors[field] = (f'The registration period of {sy.label(year)} must {word} on '
+                             f'{sy.long_date(expected)}. No other dates can be set.')
     if errors:
         return None, errors
-    # Only reachable once both dates parsed. A one-day window that opens and
-    # closes on the same date is legitimate.
-    errors = validate_period(cleaned['start_date'], cleaned['end_date'], timezone.localdate())
-    if errors:
-        return None, errors
-    cleaned['label'] = sy_label(school_year_of(cleaned['start_date']))
-    return cleaned, {}
+    if last < sy.today():
+        return None, {'school_year': f'{sy.label(year)} has already ended.'}
+    return year, {}
 
 
 # List the periods, and open a new one.
@@ -5170,56 +5164,60 @@ class RegistrationPeriodListCreateView(APIView):
     def get(self, request):
         # Every period, archived ones included — this is the history as well as
         # the current window. Newest first, from the model's own ordering.
-        return Response([_serialize_period(p) for p in RegistrationPeriod.objects.all()])
+        # `school_years` is what the form's selector offers.
+        from . import school_year as sy
+        periods = [_serialize_period(p) for p in RegistrationPeriod.objects.all()]
+        if request.query_params.get('with_options'):
+            taken = {p['school_year'] for p in periods if not p['legacy']}
+            return Response({
+                'periods': periods,
+                'school_years': [{
+                    'value': sy.as_text(y), 'label': sy.label(y),
+                    'start_date': sy.period_dates(y)[0].isoformat(),
+                    'end_date': sy.period_dates(y)[1].isoformat(),
+                    'taken': sy.as_text(y) in taken,
+                } for y in sy.selectable_years()],
+            })
+        return Response(periods)
 
     def post(self, request):
-        cleaned, errors = _clean_period_payload(request.data)
+        from django.db import connection, transaction
+        from . import school_year as sy
+        year, errors = _period_for_school_year(request.data)
         if errors:
             return Response(errors, status=400)
-        label, start, end = cleaned['label'], cleaned['start_date'], cleaned['end_date']
+        start, end = sy.period_dates(year)
 
-        # Creating a period activates it, which means standing the previous one
-        # down first. .update() rather than a loop: one statement, and it
-        # covers however many rows are wrongly active, not just the one.
-        #
-        # Not wrapped in a transaction — if the create below failed, no period
-        # would be active and registration would read as closed until an admin
-        # activated one by hand. Recorded, not changed: this pass comments code.
-        RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
-        period = RegistrationPeriod.objects.create(label=label, start_date=start, end_date=end, is_active=True)
+        with transaction.atomic():
+            # One school year, one period. The advisory lock makes the check
+            # and the insert one step, so two admins pressing Save at the
+            # same moment cannot both create S.Y. 2026–2027.
+            with connection.cursor() as cur:
+                cur.execute('SELECT pg_advisory_xact_lock(%s)', [7406_0001])
+            if RegistrationPeriod.objects.filter(start_date=start, end_date=end).exists():
+                return Response({'school_year': f'{sy.label(year)} already has a registration period. '
+                                                'Set it active from the list instead.'}, status=400)
+            # Creating a period activates it, which means standing the
+            # previous one down first.
+            RegistrationPeriod.objects.filter(is_active=True).update(is_active=False)
+            period = RegistrationPeriod.objects.create(
+                label=sy.label(year), start_date=start, end_date=end, is_active=True)
         audit(request, AuditLog.Action.RECORD_CREATED,
               f"Registration period added | {period.label} ({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
         return Response(_serialize_period(period), status=201)
 
 
 class RegistrationPeriodDetailView(APIView):
-    """Edit a registration period in place — including the active one.
+    """A period's dates are its school year's, so there is nothing to edit.
 
-    A window that is already running is the one most likely to need a change:
-    the deadline gets extended, or the label was picked wrong. Editing it beats
-    archiving and re-creating, which would leave a duplicate row behind.
+    Kept as an endpoint so an older client gets a reason rather than a 404.
     """
     permission_classes = [IsAdminOrCdso]
 
     def patch(self, request, pk):
-        period = get_object_or_404(RegistrationPeriod, pk=pk)
-        before = f"{period.label} ({period.start_date} to {period.end_date})"   # captured before the write, for the audit line's left-hand side
-        # partial=True with the row as `current`, so a request naming only the
-        # end date keeps the label and start date it already had.
-        cleaned, errors = _clean_period_payload(request.data, partial=True, current=period)
-        if errors:
-            return Response(errors, status=400)
-
-        period.label      = cleaned['label']
-        period.start_date = cleaned['start_date']
-        period.end_date   = cleaned['end_date']
-        # is_active is deliberately not in this list: whether a period is the
-        # live one is the activate endpoint's decision, not an edit's.
-        period.save(update_fields=['label', 'start_date', 'end_date'])
-        audit(request, AuditLog.Action.RECORD_UPDATED,
-              f"Registration period edited | {before} -> {period.label} "
-              f"({period.start_date} to {period.end_date}) | By: {request.user.full_name}")
-        return Response(_serialize_period(period))
+        get_object_or_404(RegistrationPeriod, pk=pk)
+        return Response({'detail': 'A registration period runs August 1 to July 31 of its school '
+                                   'year and cannot be edited.'}, status=400)
 
 
 # The switch: which period registration currently runs against. POST turns one
@@ -5229,7 +5227,16 @@ class RegistrationPeriodActivateView(APIView):
 
     def post(self, request, pk):
         """Set this period as the active one (deactivates all others)."""
+        from . import school_year as sy
         period = get_object_or_404(RegistrationPeriod, pk=pk)
+        # A period saved with its own dates (before the school year rule)
+        # would reopen registration on dates no school year has.
+        if sy.is_legacy(period):
+            return Response({'detail': 'This period was saved with its own dates before periods '
+                                       'followed the school year. Create the school year instead.'},
+                            status=400)
+        if period.end_date < sy.today():
+            return Response({'detail': f'{period.label} has already ended.'}, status=400)
         # Stand the others down first, then raise this one. The same
         # one-at-a-time rule the create path keeps, and the reason `get_active()`
         # can settle for .first().

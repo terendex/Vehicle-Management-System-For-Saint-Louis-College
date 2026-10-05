@@ -1411,11 +1411,19 @@
   margin: 0 0 12px;
 }
 
-/* A date outside the school year, flagged as it is picked. */
-.rc-period-summary--bad {
-  color: #9B1C1C;
-  background: #FDECEC;
+/* A period saved with its own dates before periods followed the school year. */
+.rc-period-legacy {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #FDF0BE;
+  color: #8A6B00;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
 }
+
+.rc-field-input[readonly] { background: #F4F7FA; color: #0B2340; cursor: default; }
 
 .rc-period-form-actions {
   display: flex;

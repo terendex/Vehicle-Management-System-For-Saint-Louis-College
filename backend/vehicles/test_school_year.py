@@ -1,8 +1,11 @@
 """The school year (August 1 to July 31) and what is derived from it.
 
-  * a registration period's school year is read off its open date, and both
-    dates must fall in it (June 1 of Y to July 31 of Y+1);
-  * a school year that is over cannot be given a new window;
+  * the admin picks a school year ("2026-2027") and the registration period is
+    August 1 of its first year to July 31 of its second; no other dates can
+    be set, on the form or through the API;
+  * a school year has at most one period, and one that is over gets none;
+  * a period saved with its own dates before this rule ("legacy") stays as
+    history but cannot be made active;
   * an owner account accepted for a school year expires on its July 31;
   * once a registration period closes, no unpaid application filed in it is
     left pending: its deadline is the close, and it expires at the close
@@ -10,7 +13,8 @@
     for the CDSO as before.
 
 The clock is pinned (timezone.now patched), so none of this depends on the
-day the suite runs.
+day the suite runs. The same patch is how localhost testing works: every
+check reads school_year.today().
 """
 from datetime import date, datetime, timedelta, timezone as dt_tz
 from unittest import mock
@@ -20,10 +24,10 @@ from django.test import SimpleTestCase
 from django.utils import timezone
 
 from accounts.models import User
+from vehicles import school_year as sy
 from vehicles.models import RegistrationPeriod, VehicleRegistration
 from vehicles.registration_deadline import expire_overdue
-from vehicles.school_year import (label, pass_expiry_date, school_year_of,
-                                  validate_period, valid_until)
+from vehicles.school_year import label, pass_expiry_date, school_year_of, valid_until
 from vehicles.test_registration_payment import PaymentTestCase
 
 R = VehicleRegistration
@@ -36,46 +40,37 @@ def at(*args):
 
 class SchoolYearRuleTests(SimpleTestCase):
 
-    def test_school_year_comes_from_the_open_date(self):
-        self.assertEqual(school_year_of(date(2026, 6, 1)), 2026)     # early registration
-        self.assertEqual(school_year_of(date(2026, 8, 1)), 2026)     # first semester
-        self.assertEqual(school_year_of(date(2026, 12, 31)), 2026)
-        self.assertEqual(school_year_of(date(2027, 1, 15)), 2026)    # second semester
-        self.assertEqual(school_year_of(date(2027, 5, 31)), 2026)
-        self.assertEqual(school_year_of(date(2027, 6, 1)), 2027)     # next year's early window
-        self.assertEqual(label(2026), 'S.Y. 2026–2027')
+    def test_a_school_year_is_august_to_july(self):
+        self.assertEqual(sy.period_dates(2026), (date(2026, 8, 1), date(2027, 7, 31)))
         self.assertEqual(valid_until(2026), date(2027, 7, 31))
+        self.assertEqual(label(2026), 'S.Y. 2026–2027')
+        self.assertEqual(sy.as_text(2026), '2026-2027')
 
-    def test_dates_inside_the_school_year_pass(self):
-        today = date(2026, 5, 20)
-        for start, end in ((date(2026, 6, 1), date(2026, 9, 30)),
-                           (date(2026, 6, 1), date(2027, 7, 31)),     # both boundary days
-                           (date(2026, 8, 3), date(2026, 8, 3))):     # a one-day window
-            self.assertEqual(validate_period(start, end, today), {}, (start, end))
+    def test_which_school_year_a_date_is_in(self):
+        self.assertEqual(school_year_of(date(2026, 8, 1)), 2026)
+        self.assertEqual(school_year_of(date(2026, 12, 31)), 2026)
+        self.assertEqual(school_year_of(date(2027, 7, 31)), 2026)
+        self.assertEqual(school_year_of(date(2027, 8, 1)), 2027)
 
-    def test_close_outside_the_school_year_is_refused(self):
-        errors = validate_period(date(2026, 6, 1), date(2027, 8, 15), date(2026, 5, 20))
-        self.assertEqual(errors, {'end_date': 'Closes on must be within S.Y. 2026–2027 '
-                                              '(June 1, 2026 to July 31, 2027).'})
+    def test_only_consecutive_years_parse(self):
+        self.assertEqual(sy.parse('2026-2027'), 2026)
+        self.assertEqual(sy.parse(' 2026 – 2027 '), 2026)
+        for bad in ('2026-2028', '2026', '2027-2026', 'next year', None):
+            with self.assertRaises(ValueError, msg=bad):
+                sy.parse(bad)
 
-    def test_may_belongs_to_the_previous_school_year(self):
-        # Opening on May 31 is the tail of S.Y. 2025-2026, so closing in
-        # August is past that year's July 31.
-        errors = validate_period(date(2026, 5, 31), date(2026, 8, 31), date(2026, 5, 1))
-        self.assertIn('S.Y. 2025–2026', errors['end_date'])
+    def test_legacy_periods_are_recognised(self):
+        aug, jul = sy.period_dates(2026)
+        self.assertEqual(sy.year_of_period(aug, jul), 2026)
+        self.assertIsNone(sy.year_of_period(date(2026, 9, 29), date(2026, 10, 13)))
 
-    def test_close_before_open_is_refused(self):
-        errors = validate_period(date(2026, 9, 1), date(2026, 8, 31), date(2026, 5, 20))
-        self.assertIn('end_date', errors)
-
-    def test_a_finished_school_year_is_refused(self):
-        errors = validate_period(date(2025, 6, 1), date(2025, 9, 30), date(2026, 10, 5))
-        self.assertEqual(errors, {'start_date': 'S.Y. 2025–2026 has already ended. '
-                                                'Choose dates in the current or coming school year.'})
+    def test_the_form_offers_this_school_year_and_the_next_two(self):
+        self.assertEqual(sy.selectable_years(date(2026, 10, 5)), [2026, 2027, 2028])
+        self.assertEqual(sy.selectable_years(date(2027, 7, 31)), [2026, 2027, 2028])
 
 
 class PeriodEndpointTests(PaymentTestCase):
-    """The same rules, through the API the admin's form uses."""
+    """The same rules through the API, so the form cannot be bypassed."""
 
     def setUp(self):
         clock = mock.patch('django.utils.timezone.now', return_value=at(2026, 10, 5, 12, 0))
@@ -84,31 +79,70 @@ class PeriodEndpointTests(PaymentTestCase):
         super().setUp()
         self.client.force_authenticate(self.admin)
 
-    def post(self, start, end):
-        return self.client.post('/api/vehicles/registration-periods/',
-                                {'start_date': start, 'end_date': end}, format='json')
+    def post(self, **data):
+        return self.client.post('/api/vehicles/registration-periods/', data, format='json')
 
-    def test_a_date_outside_the_school_year_is_refused(self):
-        res = self.post('2026-10-05', '2027-08-15')
-        self.assertEqual(res.status_code, 400)
-        self.assertIn('S.Y. 2026–2027', res.data['end_date'])
-
-    def test_a_past_school_year_is_refused(self):
-        res = self.post('2025-06-01', '2025-09-30')
-        self.assertEqual(res.status_code, 400)
-        self.assertIn('already ended', res.data['start_date'])
-
-    def test_an_edit_cannot_push_the_close_past_july(self):
-        period = RegistrationPeriod.get_active()
-        res = self.client.patch(f'/api/vehicles/registration-periods/{period.pk}/',
-                                {'end_date': '2027-08-01'}, format='json')
-        self.assertEqual(res.status_code, 400)
-
-    def test_accepted_dates_are_named_for_their_school_year(self):
-        res = self.post('2026-10-05', '2026-12-31')
+    def test_selecting_a_school_year_fills_in_august_to_july(self):
+        res = self.post(school_year='2026-2027')
         self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual((res.data['start_date'], res.data['end_date']), ('2026-08-01', '2027-07-31'))
         self.assertEqual(res.data['label'], 'S.Y. 2026–2027')
         self.assertEqual(res.data['valid_until'], '2027-07-31')
+        self.assertTrue(res.data['is_active'])
+        self.assertFalse(res.data['legacy'])
+
+    def test_the_form_options_carry_the_fixed_dates(self):
+        res = self.client.get('/api/vehicles/registration-periods/', {'with_options': 1})
+        first = res.data['school_years'][0]
+        self.assertEqual((first['value'], first['start_date'], first['end_date']),
+                         ('2026-2027', '2026-08-01', '2027-07-31'))
+
+    def test_dates_outside_august_to_july_are_refused(self):
+        for dates in ({'start_date': '2026-06-01'}, {'end_date': '2027-05-31'},
+                      {'start_date': '2026-08-01', 'end_date': '2027-08-15'}):
+            res = self.post(school_year='2026-2027', **dates)
+            self.assertEqual(res.status_code, 400, dates)
+            self.assertIn('No other dates can be set', str(res.data), dates)
+        self.assertFalse(RegistrationPeriod.objects.filter(start_date=date(2026, 6, 1)).exists())
+
+    def test_matching_dates_may_be_sent_along(self):
+        res = self.post(school_year='2026-2027', start_date='2026-08-01', end_date='2027-07-31')
+        self.assertEqual(res.status_code, 201, res.data)
+
+    def test_the_same_school_year_cannot_be_created_twice(self):
+        self.assertEqual(self.post(school_year='2026-2027').status_code, 201)
+        res = self.post(school_year='2026-2027')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('already has a registration period', res.data['school_year'])
+        self.assertEqual(RegistrationPeriod.objects.filter(start_date=date(2026, 8, 1)).count(), 1)
+        options = self.client.get('/api/vehicles/registration-periods/', {'with_options': 1}).data
+        self.assertTrue(options['school_years'][0]['taken'])
+
+    def test_a_school_year_is_required_and_must_be_consecutive(self):
+        self.assertIn('school_year', self.post().data)
+        self.assertIn('school_year', self.post(school_year='2026-2028').data)
+
+    def test_a_school_year_that_is_over_is_refused(self):
+        res = self.post(school_year='2025-2026')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('already ended', res.data['school_year'])
+
+    def test_a_period_cannot_be_edited(self):
+        period = self.post(school_year='2026-2027').data
+        res = self.client.patch(f'/api/vehicles/registration-periods/{period["id"]}/',
+                                {'end_date': '2027-08-31'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(RegistrationPeriod.objects.get(pk=period['id']).end_date, date(2027, 7, 31))
+
+    def test_a_legacy_period_stays_but_cannot_be_activated(self):
+        legacy = RegistrationPeriod.objects.create(label='S.Y. August 2026 – May 2027', is_active=False,
+                                                   start_date=date(2026, 9, 29), end_date=date(2026, 10, 13))
+        rows = self.client.get('/api/vehicles/registration-periods/').data
+        self.assertTrue(next(r for r in rows if r['id'] == legacy.pk)['legacy'])
+        res = self.client.post(f'/api/vehicles/registration-periods/{legacy.pk}/activate/')
+        self.assertEqual(res.status_code, 400)
+        # It does not take the school year from the real period either.
+        self.assertEqual(self.post(school_year='2026-2027').status_code, 201)
 
 
 class PassValidityTests(PaymentTestCase):
@@ -130,10 +164,10 @@ class PassValidityTests(PaymentTestCase):
     def test_without_an_active_period_the_date_decides(self):
         RegistrationPeriod.objects.update(is_active=False)
         self.assertEqual(pass_expiry_date(date(2027, 3, 1)), date(2027, 7, 31))
-        self.assertEqual(pass_expiry_date(date(2027, 6, 15)), date(2028, 7, 31))
+        self.assertEqual(pass_expiry_date(date(2027, 8, 15)), date(2028, 7, 31))
 
     def test_a_stale_active_period_never_gives_a_date_already_past(self):
-        RegistrationPeriod.objects.update(start_date=date(2025, 6, 1), end_date=date(2025, 9, 30))
+        RegistrationPeriod.objects.update(start_date=date(2025, 8, 1), end_date=date(2026, 7, 31))
         self.assertEqual(pass_expiry_date(date(2026, 10, 5)), date(2027, 7, 31))
 
     def test_the_settings_page_states_the_date(self):

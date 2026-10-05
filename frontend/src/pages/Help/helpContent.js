@@ -508,7 +508,7 @@ export const HELP_TOPICS = [
       { type: 'p', text: 'System › Rule Constraints decides when vehicles may enter and when applications are accepted.' },
       { type: 'p', text: 'Entry Rules — one rule per registrant type, with its allowed days, hours and any maximum stay.' },
       { type: 'figure', id: 'cdso-rule-constraints' },
-      { type: 'p', text: 'Registration Period — the dates the online application form is open. Only one period can be active. Extend Duration on a running period opens it to move the end date; the editor is headed “Extending period” and saves with Save New Dates. (Edit on an entry-type rule is a different thing — that one opens allowed days, hours and the maximum stay.)' },
+      { type: 'p', text: 'Registration Period — when the online application form is open. A period is always a whole school year, August 1 to July 31: choose the school year under New Period and the dates follow from it; they cannot be changed. Each school year can have one period, and only one period can be active. Every pass accepted under a school year is valid until its July 31.' },
       { type: 'figure', id: 'cdso-registration-period' },
       { type: 'p', text: 'Access Mode — Open Campus lets every vehicle in regardless of rules. Use it for open events or graduation and switch it off afterwards.' },
       { type: 'figure', id: 'cdso-access-mode' },

@@ -1106,8 +1106,8 @@ export default function RegisterPage() {
             </div>
 
             <p className="reg-modal-note">
-              Registration opens 2 months before the school year and closes during the first semester.
-              Dates are tentative and subject to change.
+              Registration runs for the school year, August 1 to July 31, and a vehicle pass is
+              valid until July 31 of the school year it was issued for.
             </p>
             <p className="reg-modal-note">
               <strong>After you submit, you have 3 working days</strong> (Monday to Friday) to pay the Vehicle Pass fee at the

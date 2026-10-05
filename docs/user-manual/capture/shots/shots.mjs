@@ -405,9 +405,9 @@ export const SHOTS = [
     caption: 'Set when the online application form accepts submissions.',
     prepare: async (p) => { await clickTab(p, /Registration Period/) },
     marks: [
-      m(1, 'New Period', 'Create a registration window with a label, start date and end date.', btn(/New Period/)),
-      m(2, 'Period', 'Label, start and end dates. Only one period can be Active; the public form accepts applications only while it is open.', (p) => p.locator('main table tbody tr').first()),
-      m(3, 'Extend Duration / Deactivate', 'Open a running period to move its end date, or close the window early. The editor is headed "Extending period" and saves with Save New Dates.', union(btn(/Extend Duration/, 'main'), btn(/Deactivate/, 'main'))),
+      m(1, 'New Period', 'Create the registration period of a school year. Choose the school year; it runs August 1 to July 31 and the dates cannot be changed.', btn(/New Period/)),
+      m(2, 'Period', 'School year and its dates, August 1 to July 31. Only one period can be Active; the public form accepts applications only while it is open. A period marked "manual dates" was saved before periods followed the school year.', (p) => p.locator('main table tbody tr').first()),
+      m(3, 'Deactivate / Set Active', 'Close the window early, or make another school year the active one.', btn(/Deactivate/, 'main')),
     ],
   }),
   fig(AD, '19-access-mode', {

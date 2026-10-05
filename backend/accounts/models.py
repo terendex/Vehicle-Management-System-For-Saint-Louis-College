@@ -78,8 +78,7 @@ class UserManager(BaseUserManager):
         cfg = SystemSettings.get()                       # the single settings row
         if not cfg.account_expiry_enabled:
             return None                                  # expiry switched off
-        from django.utils import timezone
-        return pass_expiry_date(timezone.localdate())    # every pass ends with its school year, July 31
+        return pass_expiry_date()                        # every pass ends with its school year, July 31
 
     # Django calls this to find the account behind a login identifier.
     def get_by_natural_key(self, username):
