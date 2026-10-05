@@ -1335,8 +1335,9 @@ class VehicleLogReportAPITests(TestCase):
             self.assertEqual(rows[0]['gate_id'], 'gate1')
             self.assertEqual(rows[0]['exit_gate_id'], 'gate4')
             report, _ = self._rows(gate_id=gate)
-            self.assertEqual(self._col(report[0], 'Entry Gate'), label.get('gate1', 'gate1'))
-            self.assertEqual(self._col(report[0], 'Exit Gate'), label.get('gate4', 'gate4'))
+            # The printed report names the entry gate only (Exit Gate was
+            # dropped from it); the screen above still carries both.
+            self.assertEqual(self._col(report[0], 'Gate'), label.get('gate1', 'gate1'))
 
     def test_an_exit_whose_entry_is_another_day_names_the_entry_gate(self):
         entry = self._log('ABC 1234', AccessLog.Status.AUTHORIZED, vehicle=self.vehicle, gate_id='gate1',
@@ -1411,7 +1412,29 @@ class VehicleLogReportAPITests(TestCase):
         self.assertIn('Gate:', joined)
         self.assertIn("Search: 'ABC'", joined)
         self.assertIn('Status: Authorized', joined)
-        self.assertIn('Period:', joined)
+        # The dates are not a filter line: they are the period printed under
+        # the report's title (test_the_period_is_written_out_in_words).
+        self.assertNotIn('Period:', joined)
+
+    def test_the_period_is_written_out_in_words(self):
+        from django.test import RequestFactory
+        from scanning.views import _vehicle_log_period
+        from report_utils import report_period
+
+        def period(**params):
+            request = RequestFactory().get('/x', params)
+            request.query_params = request.GET
+            return _vehicle_log_period(request)
+
+        self.assertEqual(period(), '')                     # unfiltered: no date at all
+        self.assertEqual(period(date_from='2026-10-01', date_to='2026-10-05'),
+                         'Period: October 1, 2026 to October 5, 2026')
+        self.assertEqual(period(date_from='2025-12-30', date_to='2026-01-02'),
+                         'Period: December 30, 2025 to January 2, 2026')
+        self.assertEqual(period(date='2026-10-05'), 'Date: October 5, 2026')
+        # A start with no end runs to today's campus date, in words.
+        self.assertEqual(period(date_from='2026-01-01'),
+                         report_period('2026-01-01', timezone.localdate().isoformat()))
 
     def test_unfiltered_reports_say_so(self):
         _, desc = self._rows()

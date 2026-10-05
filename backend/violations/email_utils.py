@@ -8,7 +8,8 @@ from vehicles.email_utils import esc
 VIOLATION_TYPE_LABELS = {
     'unauthorized_entry':   'Unauthorized Entry',
     'double_parking':       'Double Parking',
-    'time_exceed':          'Time Exceed',
+    'time_exceed':          'Overstaying',
+    'confiscated_activity': 'Activity While Confiscated',
     'no_sticker':           'No Sticker',
     'expired_registration': 'Expired Registration',
     'unauthorized':         'Unauthorized (Legacy)',
@@ -16,6 +17,15 @@ VIOLATION_TYPE_LABELS = {
 }
 
 OFFENSE_LABELS = {1: '1st', 2: '2nd', 3: '3rd'}
+
+
+def _type_label(violation):
+    """'Overstaying (1 hr 25 min)', or the plain type label."""
+    from .models import format_overstay
+    label = VIOLATION_TYPE_LABELS.get(violation.violation_type, violation.violation_type)
+    if violation.overstay_minutes:
+        label = f'{label} ({format_overstay(violation.overstay_minutes)})'
+    return label
 
 _BASE_STYLE = """
   font-family: Arial, sans-serif;
@@ -67,7 +77,7 @@ def send_confiscation_email(violation, penalty):
     reason = (penalty or {}).get('reason') or ''
     until  = (penalty or {}).get('until')
 
-    vtype_label   = VIOLATION_TYPE_LABELS.get(violation.violation_type, violation.violation_type)
+    vtype_label   = _type_label(violation)
     offense_label = OFFENSE_LABELS.get(level, f'{level}th')
     issued_str    = violation.issued_at.strftime('%B %d, %Y') if violation.issued_at else '-'
     plate         = violation.identifier or (vehicle.plate_number if vehicle else '')
@@ -166,7 +176,7 @@ def send_violation_notified_email(violation):
     if not owner.email:
         return
 
-    vtype_label = VIOLATION_TYPE_LABELS.get(violation.violation_type, violation.violation_type)
+    vtype_label = _type_label(violation)
     issued_str  = violation.issued_at.strftime('%B %d, %Y') if violation.issued_at else '—'
     fine        = float(violation.fine_amount or 0)
     fine_row = (
@@ -239,7 +249,7 @@ def send_violation_resolved_email(violation):
     if not recipient:
         return
 
-    vtype_label  = VIOLATION_TYPE_LABELS.get(violation.violation_type, violation.violation_type)
+    vtype_label  = _type_label(violation)
     notes_section = (
         f'<tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;width:130px;">Notes</td>'
         f'<td style="padding:8px 0;font-weight:600;">{esc(violation.notes)}</td></tr>'

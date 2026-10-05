@@ -1411,6 +1411,12 @@
   margin: 0 0 12px;
 }
 
+/* A date outside the school year, flagged as it is picked. */
+.rc-period-summary--bad {
+  color: #9B1C1C;
+  background: #FDECEC;
+}
+
 .rc-period-form-actions {
   display: flex;
   justify-content: flex-end;

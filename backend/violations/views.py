@@ -461,7 +461,12 @@ class MyViolationsView(APIView):
 # so two files downloaded from one screen describe the same set of rows and
 # state the same thing about what was excluded. The same arrangement is used by
 # the registration and audit reports.
-VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation', 'Fee (PHP)', 'Status', 'Issued By']
+#
+# Only what the reader needs: the fee (the fine system is gone), the status
+# (the report is grouped by it instead) and who issued it are not columns.
+VIOLATION_REPORT_HEADERS = ['#', 'Date & Time', 'Plate', 'Owner', 'Violation']
+# 267mm of printable width on landscape A4.
+VIOLATION_REPORT_WIDTHS_MM = [10, 45, 35, 80, 97]
 
 
 # A violation stops counting in three different ways, because three endpoints
@@ -487,6 +492,34 @@ _STATUS_GROUPS = {
 }
 
 
+# The sections an unfiltered report is grouped into, in print order. Every
+# violation falls in exactly one (_report_group), unlike the screen's buttons,
+# where a standing 3rd offence counts as a warning and as confiscated.
+_REPORT_GROUPS = (
+    ('warning',     'Warnings'),
+    ('confiscated', 'Confiscated (3rd offence)'),
+    ('resolved',    'Cleared / Resolved'),
+)
+
+
+def _report_group(v):
+    if v.is_resolved or v.status in (Violation.Status.CLEARED, Violation.Status.LIFTED):
+        return 'resolved'
+    if v.offense_number == 3 or v.status == Violation.Status.FEE_IMPOSED:
+        return 'confiscated'
+    return 'warning'
+
+
+def _violation_report_title(request):
+    """Named for what is in it: warnings alone, violations alone, or both."""
+    status_f = request.query_params.get('status', '').strip()
+    if status_f == 'warning':
+        return 'WARNINGS REPORT'
+    if status_f == 'confiscated':
+        return 'VIOLATIONS REPORT'
+    return 'VIOLATIONS REPORT / WARNINGS'
+
+
 def _filter_violations_report(request):
     """Filter the violations for a report — same knobs as the management page.
 
@@ -505,9 +538,9 @@ def _filter_violations_report(request):
     type_labels   = dict(Violation.Type.choices)
     desc = []
 
+    # The dates are the report's period line, printed under its title
+    # (report_utils.report_period), not a filter line here.
     qs = filter_local_date_range(qs, 'issued_at', date_from, date_to)
-    if date_from or date_to:
-        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
 
     if status_f:
         group = _STATUS_GROUPS.get(status_f)
@@ -522,7 +555,9 @@ def _filter_violations_report(request):
         desc.append(f"Status: {label}")
 
     if type_f:
-        qs = qs.filter(violation_type=type_f)
+        # A legacy "unauthorized" row is the same offence as Unauthorized Entry.
+        types = [type_f, Violation.Type.UNAUTHORIZED] if type_f == Violation.Type.UNAUTHORIZED_ENTRY else [type_f]
+        qs = qs.filter(violation_type__in=types)
         desc.append(f"Type: {type_labels.get(type_f, type_f)}")
 
     if search:
@@ -541,16 +576,18 @@ def _filter_violations_report(request):
     return qs.order_by('-issued_at'), desc
 
 
-# Turns rows into the flat cells both report formats take.
+# Turns rows into (group, cells) pairs both report formats take; the cells
+# carry no row number, which each format adds in its own order.
 def _violation_report_rows(qs):
     from django.utils import timezone as tz
     from report_utils import name_case
+    from .models import format_overstay
     # Built once outside the loop: get_..._display() per row would repeat this
     # lookup for every violation in the file.
     type_labels   = dict(Violation.Type.choices)
-    status_labels = dict(Violation.Status.choices)
+    type_labels[Violation.Type.UNAUTHORIZED] = type_labels[Violation.Type.UNAUTHORIZED_ENTRY]
     rows = []
-    for i, v in enumerate(qs, start=1):
+    for v in qs:
         # Snapshot first, live record second, dash last - in that order on
         # purpose. A violation outlives the vehicle and the account it was
         # issued against (both FKs are SET_NULL), so the name and plate written
@@ -560,36 +597,51 @@ def _violation_report_rows(qs):
         plate     = v.identifier or '—'
         owner     = name_case(v.owner_name or (v.vehicle.user.full_name
                                                if (v.vehicle and v.vehicle.user) else '')) or '—'
-        # 'System' rather than a dash: a row with no issuer was written by the
-        # detector, not by a person, and a reader should not be left wondering
-        # whose name went missing.
-        issued_by = name_case(v.issued_by.full_name) if v.issued_by else 'System'
-        rows.append([
-            i,
+        violation = type_labels.get(v.violation_type, v.violation_type)
+        if v.overstay_minutes:
+            violation = f'{violation} ({format_overstay(v.overstay_minutes)})'
+        rows.append((_report_group(v), [
             tz.localtime(v.issued_at).strftime('%b %d, %Y %I:%M %p'),
-            plate, owner,
-            type_labels.get(v.violation_type, v.violation_type),
-            f"{v.fine_amount:.2f}",
-            status_labels.get(v.status, v.status),
-            issued_by,
-        ])
+            plate, owner, violation,
+        ]))
     return rows
 
 
-# The one line under the report title that says what is in it. 'All records'
-# rather than an empty string when nothing was filtered: the subtitle should
-# still assert something, and the count is what a reader checks the table
-# against.
-#
-# Noted, with no code changed: `request` is never read and the `tz` import is
-# never used. Both are left over from when this line carried "Generated <when>
-# by <who>" itself; branded_pdf_response takes generated_by as its own argument
-# and prints it, and the Excel builder composes its own. Harmless, but the
-# signature promises a dependency this function does not have.
-def _violation_report_subtitle(request, desc, count):
-    from django.utils import timezone as tz
-    body = ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
-    return body
+def _numbered(cells_list):
+    return [[i, *cells] for i, cells in enumerate(cells_list, start=1)]
+
+
+def _violation_report_sections(request, rows):
+    """The PDF's titled tables: one per status group, or one for the filter.
+
+    Unfiltered, the report is grouped (Warnings, Confiscated, Cleared) and an
+    empty group is left out. Filtered to a status, the screen's own bucket is
+    the one section, so it prints exactly the rows the screen listed.
+    """
+    status_f = request.query_params.get('status', '').strip()
+    def section(title, cells):
+        return {'title': f'{title} ({len(cells)})', 'headers': VIOLATION_REPORT_HEADERS,
+                'rows': _numbered(cells), 'col_widths_mm': VIOLATION_REPORT_WIDTHS_MM}
+    if status_f:
+        label = _STATUS_GROUPS[status_f][1] if status_f in _STATUS_GROUPS else \
+            dict(Violation.Status.choices).get(status_f, status_f)
+        return [section(label, [cells for _, cells in rows])]
+    sections = [section(label, [cells for g, cells in rows if g == key])
+                for key, label in _REPORT_GROUPS]
+    return [sec for sec in sections if sec['rows']] or [section('Violations', [])]
+
+
+# The line above the tables: the filters other than the dates (those are the
+# period, under the title) and the count a reader checks the tables against.
+# No date at all on an unfiltered report.
+def _violation_report_subtitle(desc, count):
+    return ' · '.join(desc + [f"{count} entries"])
+
+
+def _violation_report_period(request):
+    from report_utils import report_period
+    return report_period(request.query_params.get('date_from', '').strip(),
+                         request.query_params.get('date_to', '').strip())
 
 
 class ViolationReportExcelView(APIView):
@@ -608,17 +660,24 @@ class ViolationReportExcelView(APIView):
         # The Excel subtitle carries who generated it and when; the PDF below
         # does not, because branded_pdf_response takes generated_by as its own
         # argument and prints it into the letterhead itself.
+        period = _violation_report_period(request)
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "
-                    + _violation_report_subtitle(request, desc, len(rows)))
+                    + ' · '.join(([period] if period else [])
+                                 + [_violation_report_subtitle(desc, len(rows))]))
+        # A spreadsheet has no sections, so the group is a column instead, and
+        # the rows come in the PDF's group order so the two read alike.
+        group_labels = dict(_REPORT_GROUPS)
+        order = {key: i for i, (key, _) in enumerate(_REPORT_GROUPS)}
+        ordered = sorted(rows, key=lambda gc: order[gc[0]])          # stable: newest first within a group
         return branded_excel_response(
             filename=report_filename('Violations Report', 'xlsx'),
             sheet_title='Violations',
-            report_title='Violations Report',
+            report_title=_violation_report_title(request),
             subtitle=subtitle,
-            headers=VIOLATION_REPORT_HEADERS,
-            rows=rows,
-            col_widths=[5, 21, 16, 26, 22, 12, 14, 22],
+            headers=VIOLATION_REPORT_HEADERS + ['Group'],
+            rows=_numbered([cells + [group_labels[g]] for g, cells in ordered]),
+            col_widths=[5, 21, 16, 26, 30, 22],
         )
 
 
@@ -633,15 +692,14 @@ class ViolationReportPdfView(APIView):
         rows = _violation_report_rows(qs[:5000])
         return branded_pdf_response(
             filename=report_filename('Violations Report', 'pdf'),
-            report_title='Violations Report',
-            subtitle=_violation_report_subtitle(request, desc, len(rows)),
+            report_title=_violation_report_title(request),
+            period=_violation_report_period(request),
+            subtitle=_violation_report_subtitle(desc, len(rows)),
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
-            headers=VIOLATION_REPORT_HEADERS,
-            rows=rows,
-            # Owner names ran past their column while Issued By sat mostly
-            # empty (27pt used of 146pt). 6mm moves across; total unchanged.
-            col_widths_mm=[10, 34, 26, 56, 40, 22, 30, 49],
+            # Grouped by status: each group is its own titled table.
+            headers=None, rows=None, col_widths_mm=None,
+            extra_tables=_violation_report_sections(request, rows),
         )
 
 

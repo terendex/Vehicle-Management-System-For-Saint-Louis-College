@@ -24,10 +24,14 @@ export function confirmPdfExport({ label = 'This report', summary = '', from = '
   const details = []
 
   if (from || to) {
-    // 'the earliest record' / 'today' rather than a blank: an open-ended bound
-    // is a real choice, and printing "Period:  to 2026-09-23" reads as a value
-    // that failed to load.
-    details.push(`Period: ${from || 'the earliest record'} to ${to || 'today'}`)
+    // Written out the way the PDF prints it under its title ("October 1, 2026
+    // to October 5, 2026"); an open end reads as the earliest record, or today.
+    const words = (iso) => new Date(iso + 'T00:00:00')
+      .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    const end = to || new Date().toLocaleDateString('en-CA')
+    details.push(from
+      ? `Period: ${words(from)} to ${words(end)}`
+      : `Period: up to ${words(end)}`)
   }
   if (summary) details.push(`Filters: ${summary}`)
 

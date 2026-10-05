@@ -569,6 +569,7 @@ def _check_stay_limit(plate_number: str, vehicle, constraint_type: str,
             f'(rule: {rule.name})',
             gate_id,
             vtype=Violation.Type.TIME_EXCEED,
+            overstay_minutes=overstay,
         )
     except Exception:
         # Swallowed so a failure to record the violation cannot block the exit
@@ -598,7 +599,8 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
     Mark today's ACTIVE visitor pass for this plate as exited — called from every
     exit path (camera toggle, manual Record Exit, QR scan) so passes don't stay
     open after the visitor leaves. Returns overstay in minutes (0 if none).
-    An overstay also auto-issues a 'time_exceed' violation (once per day).
+    An overstay also auto-issues an Overstaying ('time_exceed') violation (once
+    per day) that records how long the overstay was.
     """
     now = timezone.now()                         # read once, so the close and the overstay maths use the same instant
     # The same query _active_visitor_pass runs, repeated rather than called —
@@ -626,6 +628,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
+                overstay_minutes=overstay,
             )
         except Exception:
             # Same rule as everywhere on this path: the visitor is leaving, and
@@ -639,7 +642,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
 # is about NOT issuing too many: one car in front of a camera generates scans
 # continuously, and each one would otherwise be another offence.
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
-                        entry_status: str = '', issued_by=None):
+                        entry_status: str = '', issued_by=None, overstay_minutes=None):
     """
     Auto-issue a violation at the gate — at most ONE violation of each type per
     vehicle per calendar day, no matter how often it is scanned or detected that
@@ -661,6 +664,9 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     `issued_by` is the guard, when a person reported it rather than the gate or
     a camera deciding: the row then names them and keeps `message` as written,
     without the "Auto-logged at gate" prefix. Every rule above still applies.
+
+    `overstay_minutes` is how long past the allowed stay an Overstaying
+    violation's vehicle was; it is stored so every screen and report can say so.
     """
     from .models import active_guard_for_gate
 
@@ -733,6 +739,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         registration_blocked = offense_num >= 3,
         is_released          = True,  # visible to the owner immediately
         on_duty_guard        = active_guard_for_gate(gate_id),   # who was on the gate, so the record is attributable even though no human issued it
+        overstay_minutes     = overstay_minutes,
     )
     # Impose the ladder, then tell the owner. Both are best-effort: the
     # violation itself is already recorded and must not be rolled back by a
@@ -1677,6 +1684,7 @@ def _record_visitor_exit(request, pass_, gate_id):
                 f'Visitor overstay: exceeded allowed {pass_.allowed_duration} min by {overstay_minutes} min',
                 gate_id,
                 vtype=Violation.Type.TIME_EXCEED,
+                overstay_minutes=overstay_minutes,
             )
         except Exception:
             pass
@@ -1995,7 +2003,8 @@ def _filter_access_logs(request):
             # __date lookup the index cannot serve.
             _start, _end = day_range(datetime.strptime(date, '%Y-%m-%d').date())
             qs = qs.filter(scanned_at__gte=_start, scanned_at__lt=_end)
-            filters_desc.append(f'Date: {date}')
+            # No filters_desc entry: the dates are the report's period line,
+            # printed under its title (_vehicle_log_period), not a filter.
         except Exception:
             pass  # ignore malformed dates rather than 500
 
@@ -2004,8 +2013,6 @@ def _filter_access_logs(request):
     date_from = (request.query_params.get('date_from') or '').strip()
     date_to   = (request.query_params.get('date_to') or '').strip()
     qs = filter_local_date_range(qs, 'scanned_at', date_from, date_to)
-    if date_from or date_to:
-        filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
 
     search = (request.query_params.get('search') or '').strip()
     if search:
@@ -2145,10 +2152,11 @@ VEHICLE_LOG_REPORT_HEADERS = [
     # 'Category' is who came through, which 'Status' (what was decided about
     # them) cannot answer: a report asked for "how many students entered in
     # September" could not be produced from the old columns at all.
-    # Two gate columns, because a visit can come in at one gate and leave by
-    # another, and the gate log reports both halves.
-    '#', 'Date & Time', 'Plate', 'Owner', 'Category', 'Type', 'Entry Gate',
-    'Status', 'Guard on Duty', 'Exit Time', 'Exit Gate', 'Duration', 'Remarks',
+    # Only what a reader of the log needs: the vehicle type, the guard on duty
+    # and the exit gate were dropped from the printed report (they stay on
+    # the screen's own table).
+    '#', 'Date & Time', 'Plate', 'Owner', 'Category', 'Gate',
+    'Status', 'Exit Time', 'Duration', 'Remarks',
 ]
 
 # Rows are capped rather than streamed, the same way the audit report is: a year
@@ -2213,14 +2221,13 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
         if not exit_log and log.status == AccessLog.Status.AUTHORIZED:
             remarks.append('Still inside')
 
-        # A lone exit row (its entry is outside the report) IS the exit: its
-        # own gate is the exit gate, and the entry gate is its pair's.
+        # A lone exit row (its entry is outside the report) IS the exit: the
+        # entry gate is its pair's.
         if log.status == AccessLog.Status.EXITED:
             entry_gate = gate_label(log.paired_entry.gate_id) if log.paired_entry else ''
-            exit_gate, exit_time = gate_label(log.gate_id), log.scanned_at
+            exit_time = log.scanned_at
         else:
             entry_gate = gate_label(log.gate_id)
-            exit_gate = gate_label(exit_log.gate_id) if exit_log else ''
             exit_time = exit_log.scanned_at if exit_log else None
 
         rows.append([
@@ -2231,20 +2238,27 @@ def _vehicle_log_report_rows(logs, exit_by_entry_id):
             log.plate_number or (f'NP-{log.id}' if log.is_unrecognized else ''),
             owner,
             category_labels.get(log.entrant_category, ''),
-            (log.vehicle_type or '').title(),
             entry_gate,
             # Stored as authorized; the booking is what makes it a scheduled one.
             ('Scheduled Entry' if log.scheduled_visit_id and log.status == AccessLog.Status.AUTHORIZED
              else status_labels.get(log.status, log.status)),
-            name_case(getattr(log.on_duty_guard, 'full_name', '')),
             # Time only, no date: the entry column already carries the date,
             # and a visit that crosses midnight is rare enough to read from it.
             tz.localtime(exit_time).strftime('%I:%M %p') if exit_time else '',
-            exit_gate,
             duration_text(minutes),
             ' · '.join(remarks),                 # a middle dot, so remarks stay legible run together in one cell
         ])
     return rows
+
+
+def _vehicle_log_period(request):
+    """The report's period line (report_utils.report_period), '' if undated."""
+    from report_utils import report_period
+    date = (request.query_params.get('date') or '').strip()
+    if date:
+        return report_period(date, date, label='Date')
+    return report_period((request.query_params.get('date_from') or '').strip(),
+                         (request.query_params.get('date_to') or '').strip())
 
 
 def _vehicle_log_report_data(request):
@@ -2268,10 +2282,10 @@ class VehicleLogExportView(APIView):
         from django.utils import timezone as tz
         from report_utils import branded_excel_response, report_filename
         rows, filters_desc = _vehicle_log_report_data(request)
+        period = _vehicle_log_period(request)
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "
-                    + ('; '.join(filters_desc) if filters_desc else 'All records')
-                    + f" · {len(rows)} entries")
+                    + '; '.join(([period] if period else []) + filters_desc + [f"{len(rows)} entries"]))
         return branded_excel_response(
             filename=report_filename('Vehicle Log Report', 'xlsx'),
             sheet_title='Vehicle Log',
@@ -2279,7 +2293,7 @@ class VehicleLogExportView(APIView):
             subtitle=subtitle,
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 22, 14, 26, 16, 12, 18, 14, 22, 12, 18, 10, 40],   # characters, not millimetres — widest for Remarks, the free-text column
+            col_widths=[5, 22, 14, 26, 16, 18, 14, 12, 10, 40],   # characters, not millimetres — widest for Remarks, the free-text column
         )
 
 
@@ -2290,22 +2304,23 @@ class VehicleLogPdfExportView(APIView):
     def get(self, request):
         from report_utils import branded_pdf_response, report_filename
         rows, filters_desc = _vehicle_log_report_data(request)
-        subtitle = (('; '.join(filters_desc) if filters_desc else 'All records')
-                    + f" · {len(rows)} entries")
+        # The period sits directly under the title; the subtitle keeps the
+        # other filters and the count.
+        subtitle = '; '.join(filters_desc + [f"{len(rows)} entries"])
         return branded_pdf_response(
             filename=report_filename('Vehicle Log Report', 'pdf'),
             report_title='Vehicle Log Report',
+            period=_vehicle_log_period(request),
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=VEHICLE_LOG_REPORT_HEADERS,
             rows=rows,
-            # 267mm of printable width on landscape A4, and it must still total
-            # 267 now that Category and Exit Gate have been added. Date & Time
-            # gets enough to stay on one line (the audit report learned that the
-            # hard way); Remarks gives up most of the room, being the only
-            # free-text column.
-            col_widths_mm=[8, 31, 21, 28, 18, 15, 20, 21, 25, 16, 20, 14, 30],
+            # 267mm of printable width on landscape A4, and the columns must
+            # total it. Date & Time gets enough to stay on one line (the audit
+            # report learned that the hard way); Remarks keeps the most room,
+            # being the only free-text column.
+            col_widths_mm=[8, 42, 24, 38, 22, 26, 24, 20, 17, 46],
         )
 
 
@@ -3660,6 +3675,7 @@ class AcknowledgeOverstayView(APIView):
             f"(rule: {match['rule_name']})",
             gate_id,
             vtype=Violation.Type.TIME_EXCEED,
+            overstay_minutes=match['over_minutes'],
         )
 
         _audit(request, AuditLog.Action.RECORD_UPDATED,

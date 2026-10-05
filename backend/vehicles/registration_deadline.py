@@ -3,7 +3,9 @@
 The rule lives on the model (VehicleRegistration.payment_deadline and friends);
 this module is what acts on it:
 
-  * expire_overdue()    moves overdue applications to EXPIRED, mails each
+  * expire_overdue()    moves overdue applications to EXPIRED (their working
+                        days ran out, or the registration period they were
+                        filed in closed first), mails each
                         applicant, and tells the CDSO. Run hourly by the
                         in-process scheduler, on every submission (so an
                         abandoned application never blocks a fresh one), and
@@ -86,18 +88,26 @@ def expire_overdue(now=None, pk=None) -> list:
         rows = list(qs.select_for_update(skip_locked=True))
         if not rows:
             return []
-        # One UPDATE, filtered again on the status it expects, so a row the
-        # CDSO decided between the SELECT and here is left as they decided it.
-        VehicleRegistration.objects.filter(
-            pk__in=[r.pk for r in rows],
-            status=VehicleRegistration.Status.PENDING,
-            payment_status=VehicleRegistration.PaymentStatus.UNPAID,
-        ).update(status=VehicleRegistration.Status.EXPIRED,
-                 rejection_reason=VehicleRegistration.EXPIRED_UNPAID_REASON)
+        # Which of the two deadlines ran out decides the reason the applicant
+        # is given: their working days, or the registration period closing.
+        grace = VehicleRegistration.PAYMENT_GRACE
+        for row in rows:
+            row.rejection_reason = (
+                VehicleRegistration.EXPIRED_UNPAID_REASON
+                if row.working_day_deadline() + grace <= now
+                else VehicleRegistration.EXPIRED_CLOSED_REASON)
+        # One UPDATE per reason, filtered again on the status it expects, so a
+        # row the CDSO decided between the SELECT and here is left as they
+        # decided it.
+        for reason in {row.rejection_reason for row in rows}:
+            VehicleRegistration.objects.filter(
+                pk__in=[r.pk for r in rows if r.rejection_reason == reason],
+                status=VehicleRegistration.Status.PENDING,
+                payment_status=VehicleRegistration.PaymentStatus.UNPAID,
+            ).update(status=VehicleRegistration.Status.EXPIRED, rejection_reason=reason)
 
     for row in rows:
         row.status = VehicleRegistration.Status.EXPIRED
-        row.rejection_reason = VehicleRegistration.EXPIRED_UNPAID_REASON
 
     _announce(rows)
     log.info("[registration-deadline] expired %d unpaid application(s): %s",
@@ -128,19 +138,20 @@ def remind_due(now=None) -> list:
     R = VehicleRegistration
     now = now or timezone.now()
     lead = R.PAYMENT_REMINDER_LEAD
-    # A superset (an application filed before the rollout passes this test
-    # early); the exact window is checked per row below. Only unpaid online
-    # applications are pending at once, so this stays a handful of rows.
+    # Every application still on the clock; the exact window is checked per
+    # row below. No created_at cut: a registration period closing can bring a
+    # deadline forward to any time after submission. Unpaid online
+    # applications are only ever a handful of rows.
     candidates = R.objects.filter(
         status=R.Status.PENDING,
         payment_status=R.PaymentStatus.UNPAID,
         source=R.Source.PUBLIC,
-        created_at__lte=now - (R.PAYMENT_WINDOW - lead),
     )
 
     sent = []
+    periods = R.registration_periods()
     for row in candidates:
-        deadline = row.payment_deadline()
+        deadline = row.payment_deadline(periods)
         if deadline is None or not (deadline - lead <= now < deadline):
             continue
         try:
@@ -188,12 +199,16 @@ def _announce(rows):
         except Exception:                               # noqa: BLE001
             log.exception("[registration-deadline] could not send the expiry notice for REG-%06d", row.pk)
 
+    from .models import VehicleRegistration
     names = ', '.join(f'{r.full_name} (REG-{r.pk:06d})' for r in rows[:5])
     more = f' and {len(rows) - 5} more' if len(rows) > 5 else ''
+    closed = all(r.rejection_reason == VehicleRegistration.EXPIRED_CLOSED_REASON for r in rows)
+    why = ('Registration closed before they paid' if closed
+           else 'Not paid within 3 working days of applying, or before registration closed')
     notify(
         'registration', 'registration_expired',
         f'{len(rows)} unpaid application(s) expired',
-        f'Not paid within 3 working days of applying: {names}{more}. Their plates and '
+        f'{why}: {names}{more}. Their plates and '
         f'schedule slots are free again. Find them under the Expired filter.',
         severity='info', link='/admin/vehicles',
     )

@@ -47,6 +47,12 @@ export function printSlipInBrowser(slip, { reprint = false } = {}) {
         `<div class="label">${escapeHtml(label)}:</div>` + '<div class="blank"></div>'.repeat(lines || 1),
       ).join('\n') + '\n<hr/>'
     : ''
+  // The visited office signs or stamps here (VISITOR_SIGNATURE in slips.py).
+  const signature = slip.signature
+    ? `<div class="warn">${escapeHtml(slip.signature.toUpperCase())}</div>\n<div class="sign"></div>\n<hr/>`
+    : ''
+  // A form adds ~45mm, the signature box ~20mm (see the @page note below).
+  const pageLength = 130 + (form ? 50 : 0) + (signature ? 20 : 0)
   w.document.write(`<!DOCTYPE html><html><head>
 <meta charset="utf-8"/><title>${escapeHtml(slip.title)}</title>
 <style>
@@ -57,9 +63,13 @@ export function printSlipInBrowser(slip, { reprint = false } = {}) {
      custom sizes); the slip runs ~121mm, leaving room for a wrapped line or
      two. A size the driver does not list gets shrunk and centred on its page,
      so this must match that form exactly. */
-  @page { size: 48mm ${form ? 180 : 130}mm; margin: 0; }
+  @page { size: 48mm ${pageLength}mm; margin: 0; }
   /* A slip with the visitor's write-in form runs ~45mm longer, on a matching
-     "Visitor Slip 48x180mm" form. */
+     "Visitor Slip 48x180mm" form; a visitor slip's signature box adds 20mm
+     more, so a PC printing visitor slips this way also needs "Visitor Slip
+     48x150mm" and "Visitor Slip 48x200mm" forms. The campus thermal printer
+     is fed by the server (slip_printer.py) and needs none of these. */
+  .sign { border: 1px solid #000; height: 15mm; margin: 2px 0 4px; }
   .blank { border-bottom: 1px solid #000; height: 6mm; margin: 0 0 2px; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #fff; }
@@ -101,6 +111,7 @@ ${reprint ? '<div class="sub reprint">** REPRINT **</div>' : ''}
 ${sections}
 <hr/>
 ${form}
+${signature}
 <div class="qr">${qrSvg}</div>
 ${footer}
 <div class="footer">Unauthorized possession is subject to penalty.</div>

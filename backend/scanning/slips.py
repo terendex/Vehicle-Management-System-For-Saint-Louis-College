@@ -197,6 +197,10 @@ def _scheduled_rows(visit, purpose_shown=''):
 VISITOR_FORM = [['Visitor Name', 1], ['Conduction/Plate Number', 1], ['Office to Visit', 1], ['Purpose of Visit', 2]]
 VISITOR_FORM_FOOTER = ['FILL IN THIS FORM', 'RETURN THIS SLIP UPON EXIT']
 
+# A blank box on every visitor slip for the office being visited to sign or
+# stamp, so the slip that comes back to the gate shows the visit took place.
+VISITOR_SIGNATURE = 'Signature / Stamp of Person Visited'
+
 
 def visitor_recorded(pass_):
     """True once the visitor's details are in the system. A walk-in let in on
@@ -243,6 +247,7 @@ def visitor_slip(pass_):
         'minutes_inside':   _minutes(pass_.entered_at, end),
         'overstay_minutes': overstay,
         'recorded':         recorded,
+        'signature':        VISITOR_SIGNATURE,
         # The pass's own fields, so the guard's Record Visitor Slip form opened
         # from this slip starts from what is already on it.
         'details': {

@@ -2,7 +2,7 @@
 
 Every report carries a text reconstruction of the Saint Louis College
 letterhead — the college seal and the CDSO emblem flanking "Saint Louis
-College", then "of San Fernando, La Union", the "Beacon of Wisdom" tagline and
+College", then "City of San Fernando, La Union", the "Beacon of Wisdom" tagline and
 the accreditation line — followed by the brand-coloured table and a footer with
 generation stamp + page numbers.
 """
@@ -21,7 +21,7 @@ REPORT_CDSO_LOGO_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'cdsolo
 
 # Letterhead text (reconstruction of the official SLC letterhead).
 LH_INSTITUTION = 'Saint Louis College'
-LH_LOCATION    = 'of San Fernando, La Union'
+LH_LOCATION    = 'City of San Fernando, La Union'
 LH_TAGLINE     = 'The Beacon of Wisdom in the North'
 LH_ACCRED      = ('•  ISO 9001: 2015 Quality Management System Certified        '
                   '•  CHED Deregulated Status')
@@ -67,6 +67,32 @@ def name_case(value):
     return ' '.join(w if w in _NAME_KEEP_UPPER else w.title() for w in text.split())
 
 
+def _long_date(day):
+    """'October 5, 2026'. Built by hand: Windows strftime has no %-d."""
+    return f'{day:%B} {day.day}, {day.year}'
+
+
+def report_period(date_from='', date_to='', *, label='Period'):
+    """The period line printed under a report's title, or '' when unfiltered.
+
+    Written out in words from the dates the server actually filtered on, so
+    the year printed is always the year of the records: "Period: October 1,
+    2026 to October 5, 2026". A start with no end runs to today's campus date;
+    one day reads as a single date. Nothing is printed for an unfiltered
+    report, which covers every record whatever its date.
+    """
+    from time_utils import parse_local_date
+    start, end = parse_local_date(date_from), parse_local_date(date_to)
+    if start is None and end is None:
+        return ''
+    if start is None:
+        return f'{label}: up to {_long_date(end)}'
+    end = end or tz.localdate()
+    if start == end:
+        return f'{label}: {_long_date(start)}'
+    return f'{label}: {_long_date(start)} to {_long_date(end)}'
+
+
 def report_filename(report_name, ext):
     """Filesystem-safe, human-readable report filename with date + time.
 
@@ -80,7 +106,7 @@ def report_filename(report_name, ext):
 # ── Letterhead fonts ────────────────────────────────────────────────
 # Each letterhead line has its own face, matching the official letterhead:
 #   "Saint Louis College"               → Old English Text MT (blackletter)
-#   "of San Fernando, La Union"         → Century Gothic
+#   "City of San Fernando, La Union"    → Century Gothic
 #   "The Beacon of Wisdom in the North" → Bookman Old Style (italic)
 # The PDF registers the TTF and *embeds* the glyphs so the file renders
 # correctly on any viewer. Each line falls back to a built-in Times face when
@@ -89,12 +115,17 @@ def report_filename(report_name, ext):
 # it is a plain data table.)
 _WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
 
-# (reportlab name, TTF filename, fallback built-in) per letterhead line.
+# (reportlab name, TTF filenames in order of preference, fallback built-in)
+# per letterhead line. The institution name always gets a blackletter face:
+# Old English Text MT where Windows has it (the campus server), otherwise
+# UnifrakturMaguntia, an Old English style face bundled in report_assets/
+# under the SIL Open Font License (UnifrakturMaguntia-OFL.txt), for Linux
+# hosts such as Railway that have no Windows fonts.
 _LETTERHEAD_FACES = (
-    ('SLC-OldEnglish',   'OLDENGL.TTF', 'Times-Bold'),      # institution
-    ('SLC-Gothic',       'GOTHIC.TTF',  'Times-Roman'),     # location
-    ('SLC-BookmanItal',  'BOOKOSI.TTF', 'Times-Italic'),    # tagline
-    ('SLC-Bookman',      'BOOKOS.TTF',  'Times-Roman'),     # accreditation
+    ('SLC-OldEnglish',   ('OLDENGL.TTF', 'UnifrakturMaguntia-Book.ttf'), 'Times-Bold'),   # institution
+    ('SLC-Gothic',       ('GOTHIC.TTF',),  'Times-Roman'),     # location
+    ('SLC-BookmanItal',  ('BOOKOSI.TTF',), 'Times-Italic'),    # tagline
+    ('SLC-Bookman',      ('BOOKOS.TTF',),  'Times-Roman'),     # accreditation
 )
 
 _fonts_ready = False
@@ -132,16 +163,18 @@ def _register_letterhead_fonts():
     from reportlab.pdfbase.ttfonts import TTFont
 
     resolved = {}
-    for name, filename, fallback in _LETTERHEAD_FACES:
+    for name, filenames, fallback in _LETTERHEAD_FACES:
         resolved[name] = fallback
-        path = _font_path(filename)
-        if not os.path.exists(path):
-            continue
-        try:
-            pdfmetrics.registerFont(TTFont(name, path))
-            resolved[name] = name
-        except Exception:
-            pass
+        for filename in filenames:
+            path = _font_path(filename)
+            if not os.path.exists(path):
+                continue
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                resolved[name] = name
+                break
+            except Exception:
+                pass
 
     _PDF_INSTITUTION_FONT = resolved['SLC-OldEnglish']
     _PDF_LOCATION_FONT    = resolved['SLC-Gothic']
@@ -237,12 +270,18 @@ def branded_excel_response(*, filename, sheet_title, report_title, subtitle, hea
     return resp
 
 
-def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
+# How far below the title the period line sits, and so how much further
+# down a report with one starts its table.
+PERIOD_LINE_MM = 5
+
+
+def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right='', period=''):
     """Paint the SLC letterhead and footer onto `canvas` for a `w` x `h` page.
 
     Shared by the landscape report tables and the portrait registration
     confirmation, so the two can never drift apart. Everything is positioned
-    relative to the page size, so it works in either orientation.
+    relative to the page size, so it works in either orientation. `period`
+    (report_period) is printed directly below the title.
     """
     from reportlab.lib.units import mm
     from reportlab.lib import colors
@@ -303,6 +342,10 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
     canvas.setFillColor(brand)
     canvas.setFont('Helvetica-Bold', 11)
     canvas.drawCentredString(cx, h - 39 * mm, title)
+    if period:
+        canvas.setFillColor(colors.HexColor('#333333'))
+        canvas.setFont('Helvetica', 9.5)
+        canvas.drawCentredString(cx, h - (39 + PERIOD_LINE_MM) * mm, period)
     # Footer
     canvas.setFont('Helvetica', 8)
     canvas.setFillColor(colors.HexColor('#999999'))
@@ -314,14 +357,20 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right=''):
 
 
 def branded_pdf_response(*, filename, report_title, subtitle, generated_by, headers, rows,
-                         col_widths_mm, extra_tables=(), generated_by_role=''):
+                         col_widths_mm, extra_tables=(), generated_by_role='', period=''):
     """Build a landscape A4 PDF with the SLC letterhead, brand table and footer.
 
     `extra_tables` appends further titled tables below the first, each a dict of
     {title, headers, rows, col_widths_mm}. A report that counts the same rows
     along two different axes needs them kept apart: side by side in one row, the
     two sets of columns would each sum to the total, inviting a reader to add
-    them all together and get twice the real figure.
+    them all together and get twice the real figure. With `headers=None` there
+    is no untitled first table: the report is the titled tables alone (a report
+    grouped into sections).
+
+    `period` (report_period) is printed directly below the title; pass '' for
+    a report that is not limited to dates. `subtitle` is the line above the
+    table (counts, other filters) and may be empty.
     """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
@@ -340,7 +389,7 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
 
     def draw_frame(canvas, doc):
         w, h = landscape(A4)
-        draw_letterhead(canvas, w, h, title=report_title,
+        draw_letterhead(canvas, w, h, title=report_title, period=period,
                         footer_left=f'Generated {generated_at} by {generated_by} '
                                     f'· Saint Louis College CDSO · Confidential',
                         footer_right=f'Page {doc.page}')
@@ -351,7 +400,8 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
     doc = SimpleDocTemplate(
         resp, pagesize=landscape(A4),
         leftMargin=15 * mm, rightMargin=15 * mm,
-        topMargin=44 * mm, bottomMargin=16 * mm, title=report_title,
+        topMargin=(44 + (PERIOD_LINE_MM if period else 0)) * mm, bottomMargin=16 * mm,
+        title=report_title,
     )
     cell_style = ParagraphStyle('cell', fontName='Helvetica', fontSize=8, leading=10)
     # The "nothing matched" line: centred across the spanned row and greyed, so
@@ -405,10 +455,12 @@ def branded_pdf_response(*, filename, report_title, subtitle, generated_by, head
         table.setStyle(TableStyle(style))
         return table
 
-    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)]
-    story.append(build_table(headers, rows, col_widths_mm))
-    for extra in extra_tables:
-        story.append(Spacer(1, 7 * mm))
+    story = [Paragraph(esc(subtitle), sub_style), Spacer(1, 4 * mm)] if subtitle else []
+    if headers is not None:
+        story.append(build_table(headers, rows, col_widths_mm))
+    for i, extra in enumerate(extra_tables):
+        if story and (headers is not None or i):
+            story.append(Spacer(1, 7 * mm))
         story.append(Paragraph(esc(extra['title']), section_style))
         story.append(Spacer(1, 3 * mm))
         story.append(build_table(extra['headers'], extra['rows'], extra['col_widths_mm']))

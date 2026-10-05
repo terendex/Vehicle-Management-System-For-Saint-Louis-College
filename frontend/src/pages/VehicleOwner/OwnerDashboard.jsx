@@ -26,6 +26,7 @@ import { bayPlate } from '../../utils/bayPlate'
 import './OwnerDashboard.css'
 import { PW_RULES, pwStrength, STRENGTH_LABELS } from '../../utils/passwordRules'
 import { isControlNumber, vehicleQrPayload } from '../../utils/plateFormat'
+import { violationLabel } from '../../utils/violationTypes'
 
 /* What each schedule code admits, spelled out — a bare 'ANY' told the owner
    nothing, and "any day" would overstate it (the campus is closed on Sunday). */
@@ -38,16 +39,6 @@ const SCHEDULE_LABELS = {
   ALL:   'Mon – Sat',
 }
 
-
-const VIOLATION_TYPE_LABELS = {
-  unauthorized_entry:   'Unauthorized Entry',
-  double_parking:       'Double Parking',
-  time_exceed:          'Time Exceed',
-  no_sticker:           'No Sticker',
-  expired_registration: 'Expired Registration',
-  unauthorized:         'Unauthorized (Legacy)',
-  other:                'Other',
-}
 
 const OFFENSE_LABELS = { 1: '1st offense', 2: '2nd offense', 3: '3rd offense' }
 
@@ -1016,7 +1007,7 @@ export default function OwnerDashboard() {
                               <tbody>
                                 {active.map(v => (
                                   <tr key={v.id} className={`od-viol-active${v.status === 'fee_imposed' ? ' od-viol-fee' : ''}`}>
-                                    <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                                    <td className="od-viol-type">{violationLabel(v)}</td>
                                     <td className="od-viol-offense">
                                       {v.offense_number
                                         ? <span className={`od-offense-badge od-offense-${v.offense_number}`}>{OFFENSE_LABELS[v.offense_number] || `${v.offense_number}th offense`}</span>
@@ -1069,7 +1060,7 @@ export default function OwnerDashboard() {
                             <tbody>
                               {resolved.map(v => (
                                 <tr key={v.id} className="od-viol-resolved">
-                                  <td className="od-viol-type">{VIOLATION_TYPE_LABELS[v.violation_type] || v.violation_type}</td>
+                                  <td className="od-viol-type">{violationLabel(v)}</td>
                                   <td className="od-viol-notes">{v.notes || '—'}</td>
                                   <td className="od-viol-fine">₱{parseFloat(v.fine_amount || 0).toFixed(2)}</td>
                                   <td className="od-viol-date">{new Date(v.issued_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })}</td>

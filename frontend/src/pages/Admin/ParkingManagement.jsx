@@ -5,7 +5,7 @@ import {
   Pencil, Eye, Trash2, X, Loader2, CheckCircle2, Video,
   AlertTriangle, CheckCircle, Square, PenTool, LayoutGrid, ListChecks, Check,
   VideoOff, Search, Maximize2, Minimize2, Copy, ChevronDown, WifiOff,
-  Shapes, Minus,
+  Shapes, Minus, Rows3,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { fieldProblems } from '../../components/Feedback/formProblems'
@@ -159,6 +159,16 @@ function stampShape(vehicle, shapeKey, size, angle) {
   return rotatePts(shape.make(bay.w * unit, bay.l * unit), angle)
 }
 
+// The standard shape with its aisle edge (the bottom edge, which the angled
+// shapes all share) centred on 0,0 and lying along the x axis, plus the
+// edge's length: one bay's share of a row, measured along the aisle.
+function rowUnit(vehicle, shapeKey, size) {
+  const pts   = stampShape(vehicle, shapeKey, size, 0)
+  const along = Math.abs(pts[2][0] - pts[3][0])
+  const midX  = (pts[2][0] + pts[3][0]) / 2, edgeY = pts[2][1]
+  return { along, pts: pts.map(([x, y]) => [x - midX, y - edgeY]) }
+}
+
 // Picture units around a centre → stored full-frame coordinates, and back.
 const toNorm   = (pts, cx, cy, aspect, lensCount) => pts.map(([x, y]) => [cx + x / aspect, cy + y / lensCount])
 const fromNorm = (pts, cx, cy, aspect, lensCount) => pts.map(([x, y]) => [(x - cx) * aspect, (y - cy) * lensCount])
@@ -211,6 +221,75 @@ function shapeThumb(shapeKey) {
   return pts.map(([x, y]) => `${(ox + (x - minX) * k).toFixed(1)},${(oy + (y - minY) * k).toFixed(1)}`).join(' ')
 }
 
+// ── Overlap check ──────────────────────────────────────────────────
+// The double-parking check (parking_camera.py) assumes bays do not overlap:
+// a car on the shared part would count against both. Area ratios survive the
+// frame's stretch, so this works on stored coordinates directly.
+const polyArea = (pts) => Math.abs(pts.reduce((a, [x, y], i) => {
+  const [nx, ny] = pts[(i + 1) % pts.length]
+  return a + x * ny - nx * y
+}, 0)) / 2
+
+function isConvex(pts) {
+  let sign = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length], [cx, cy] = pts[(i + 2) % pts.length]
+    const z = (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+    if (z !== 0) { if (sign && Math.sign(z) !== sign) return false; sign = Math.sign(z) }
+  }
+  return true
+}
+
+// Sutherland–Hodgman: `subject` clipped by the convex polygon `clip`.
+function clipPolygon(subject, clip) {
+  const orient = Math.sign(clip.reduce((a, [x, y], i) => {
+    const [nx, ny] = clip[(i + 1) % clip.length]
+    return a + x * ny - nx * y
+  }, 0)) || 1
+  const inside = ([px, py], [ax, ay], [bx, by]) => orient * ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) >= 0
+  const cross = ([px, py], [qx, qy], [ax, ay], [bx, by]) => {
+    const d = (px - qx) * (ay - by) - (py - qy) * (ax - bx)
+    if (d === 0) return [qx, qy]
+    const t = ((px - ax) * (ay - by) - (py - ay) * (ax - bx)) / d
+    return [px + t * (qx - px), py + t * (qy - py)]
+  }
+  let out = subject
+  for (let i = 0; i < clip.length && out.length; i++) {
+    const a = clip[i], b = clip[(i + 1) % clip.length]
+    const input = out
+    out = []
+    input.forEach((cur, j) => {
+      const prev = input[(j + input.length - 1) % input.length]
+      if (inside(cur, a, b)) {
+        if (!inside(prev, a, b)) out.push(cross(prev, cur, a, b))
+        out.push(cur)
+      } else if (inside(prev, a, b)) {
+        out.push(cross(prev, cur, a, b))
+      }
+    })
+  }
+  return out
+}
+
+// Pairs of bays (same lens) whose shared area is over 10% of the smaller one.
+// A hand-drawn concave outline is compared by its bounding box instead.
+function overlappingBays(spaces) {
+  const pairs = []
+  for (let i = 0; i < spaces.length; i++) {
+    for (let j = i + 1; j < spaces.length; j++) {
+      const a = spaces[i], b = spaces[j]
+      if ((a.lens_index ?? 0) !== (b.lens_index ?? 0)) continue
+      if (a.x2 <= b.x1 || b.x2 <= a.x1 || a.y2 <= b.y1 || b.y2 <= a.y1) continue
+      const pa = shapePoints(a), pb = shapePoints(b)
+      const shared = isConvex(pb)
+        ? polyArea(clipPolygon(pa, pb))
+        : (Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) * (Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1))
+      if (shared > 0.1 * Math.min(polyArea(pa), polyArea(pb))) pairs.push([a.space_number, b.space_number])
+    }
+  }
+  return pairs
+}
+
 const STAMP_STORE = 'pm.slotStamp'
 const STAMP_DEFAULTS = { shape: 'straight', size: { car: 1, motorcycle: 1 }, angle: { car: 0, motorcycle: 0 } }
 const SIZE_MIN = 0.5, SIZE_MAX = 2
@@ -260,7 +339,9 @@ export default function ParkingManagement({ embedded = false }) {
   const [selId,        setSelId]        = useState(null)
   const [mode,         setMode]         = useState('live')
   const [drafts,       setDrafts]       = useState([])
-  const [tool,         setTool]         = useState('box') // 'box' | 'pen' | 'shape' (Edit Layout only)
+  const [tool,         setTool]         = useState('box') // 'box' | 'pen' | 'shape' | 'row' (Edit Layout only)
+  // Row tool: where the row starts, once its first point has been clicked.
+  const [rowStart,     setRowStart]     = useState(null)
   // The standard-shape stamp: which shape, and the size and angle last used
   // for each vehicle. Remembered per browser so a row of bays is placed the
   // same way next visit. The vehicle is picked per zone and otherwise
@@ -454,6 +535,28 @@ export default function ParkingManagement({ embedded = false }) {
                        pt.x, pt.y, aspect, lensCount)
     return fitInBand(pts, lensIdx / lensCount, (lensIdx + 1) / lensCount)
   }
+
+  // A row of bays from `from` to `to` (full-frame points): as many of the
+  // chosen shape as fit, each exactly one standard bay wide (BAY_SIZES, at
+  // the stamp's size), side by side with no gap and no overlap. The line is
+  // the aisle edge; the bays stand on its left as drawn, so a row drawn left
+  // to right stands above the line and one drawn right to left below it.
+  const rowBays = (from, to, aspect) => {
+    const { along, pts } = rowUnit(stampVeh, stamp.shape, stampSize)
+    const dx = (to.x - from.x) * aspect, dy = (to.y - from.y) * lensCount
+    const count = Math.max(1, Math.floor(Math.hypot(dx, dy) / along + 1e-6))
+    const t = Math.atan2(dy, dx)
+    const shape = rotatePts(pts, t * 180 / Math.PI)
+    return Array.from({ length: count }, (_, i) => fitInBand(
+      toNorm(shape,
+             from.x + (i + 0.5) * along * Math.cos(t) / aspect,
+             from.y + (i + 0.5) * along * Math.sin(t) / lensCount,
+             aspect, lensCount),
+      lensIdx / lensCount, (lensIdx + 1) / lensCount))
+  }
+  const rowPreview = mode === 'edit' && tool === 'row' && rowStart && penCursor && !needsLensChoice
+    ? rowBays(rowStart, penCursor, penCursor.aspect ?? 16 / 9)
+    : null
 
   // ── Which camera is this zone (and this feed) actually about? ────
   //
@@ -952,7 +1055,7 @@ export default function ParkingManagement({ embedded = false }) {
       if (penPoints.length > 0) setPenCursor(toFullFrame(svgPt(e, svgEl.current)))
       return
     }
-    if (mode === 'edit' && tool === 'shape') {   // the stamp's ghost follows the pointer
+    if (mode === 'edit' && (tool === 'shape' || tool === 'row')) {   // the stamp's (or row's) ghost follows the pointer
       setPenCursor({ ...toFullFrame(svgPt(e, svgEl.current)), aspect: viewAspect() })
       return
     }
@@ -1015,6 +1118,14 @@ export default function ParkingManagement({ embedded = false }) {
       // click on open picture places a new one.
       commitLabel()
       addDraft(withPoints({}, stampAt(toFullFrame(svgPt(e, svgEl.current)), viewAspect())))
+      return
+    }
+    if (mode === 'edit' && tool === 'row') {
+      // First click starts the row, the second places every bay along it.
+      const pt = toFullFrame(svgPt(e, svgEl.current))
+      if (!rowStart) { commitLabel(); setRowStart(pt); return }
+      rowBays(rowStart, pt, viewAspect()).forEach(bay => addDraft(withPoints({}, bay)))
+      setRowStart(null)
       return
     }
     if (mode !== 'edit' || tool !== 'pen') return
@@ -1099,6 +1210,7 @@ export default function ParkingManagement({ embedded = false }) {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         if (tool === 'pen' && penPoints.length > 0) setPenPoints([])
+        else if (tool === 'row' && rowStart) setRowStart(null)
         else if (selDraft) setSelDraft(null)
         return
       }
@@ -1149,6 +1261,19 @@ export default function ParkingManagement({ embedded = false }) {
   // ── Save layout ─────────────────────────────────────────────────
   const saveLayout = async () => {
     if (!selId) return
+    const overlaps = overlappingBays(drafts)
+    if (overlaps.length) {
+      const named = overlaps.slice(0, 4).map(([a, b]) => `${a} and ${b}`).join(', ')
+        + (overlaps.length > 4 ? `, and ${overlaps.length - 4} more` : '')
+      const ok = await notify.confirm({
+        title: 'Some bays overlap',
+        message: `${named} overlap. A car on the shared part counts against both bays, `
+          + 'which can raise a false double parking alert. The Row tool places bays side by side without overlap.',
+        confirmLabel: 'Save anyway',
+        cancelLabel: 'Go back',
+      })
+      if (!ok) return
+    }
     setSaving(true)
     try {
       const payload = drafts.map(s => ({
@@ -1487,22 +1612,29 @@ export default function ParkingManagement({ embedded = false }) {
                   <div className="pm-mode-toggle">
                     <button
                       className={`pm-mode-btn${tool === 'box' ? ' pm-mode-btn--active' : ''}`}
-                      onClick={() => { setTool('box'); setPenPoints([]); setPenCursor(null) }}
+                      onClick={() => { setTool('box'); setPenPoints([]); setPenCursor(null); setRowStart(null) }}
                     >
                       <Square size={13} /> Box
                     </button>
                     <button
                       className={`pm-mode-btn${tool === 'pen' ? ' pm-mode-btn--active' : ''}`}
-                      onClick={() => { setTool('pen'); setPenCursor(null) }}
+                      onClick={() => { setTool('pen'); setPenCursor(null); setRowStart(null) }}
                     >
                       <PenTool size={13} /> Pen
                     </button>
                     <button
                       className={`pm-mode-btn${tool === 'shape' ? ' pm-mode-btn--active' : ''}`}
-                      onClick={() => { setTool('shape'); setPenPoints([]); setPenCursor(null) }}
+                      onClick={() => { setTool('shape'); setPenPoints([]); setPenCursor(null); setRowStart(null) }}
                       title="Place standard car or motorcycle slots"
                     >
                       <Shapes size={13} /> Shapes
+                    </button>
+                    <button
+                      className={`pm-mode-btn${tool === 'row' ? ' pm-mode-btn--active' : ''}`}
+                      onClick={() => { setTool('row'); setPenPoints([]); setPenCursor(null); setRowStart(null) }}
+                      title="Place a row of standard bays side by side, with no gap between them"
+                    >
+                      <Rows3 size={13} /> Row
                     </button>
                   </div>
                 )}
@@ -1632,7 +1764,7 @@ export default function ParkingManagement({ embedded = false }) {
             {/* Standard shapes: pick the vehicle, the shape, its size and
                 angle, then click the picture. Its own row — the toolbar is
                 already full, and these are set together, not one at a time. */}
-            {mode === 'edit' && tool === 'shape' && (
+            {mode === 'edit' && (tool === 'shape' || tool === 'row') && (
               <div className="pm-shapebar">
                 <div className="pm-mode-toggle" role="group" aria-label="Vehicle">
                   {CAT_OPTS.map(({ key, label, Icon }) => (
@@ -1674,7 +1806,7 @@ export default function ParkingManagement({ embedded = false }) {
                   />
                   <span className="pm-shape-val">{Math.round(stampSize * 100)}%</span>
                 </label>
-                <label className="pm-shape-field">
+                {tool === 'shape' && <label className="pm-shape-field">
                   Angle
                   <input
                     type="range" min={-90} max={90} step={5}
@@ -1684,11 +1816,15 @@ export default function ParkingManagement({ embedded = false }) {
                     title="Double-click to reset to 0°"
                   />
                   <span className="pm-shape-val">{stampAngle}°</span>
-                </label>
+                </label>}
                 <span className="pm-edit-hint">
                   {needsLensChoice
                     ? 'Pick a camera view first'
-                    : `Click the picture to place a ${stampVeh} slot · resize or rotate it after`}
+                    : tool === 'row'
+                      ? (rowStart
+                          ? `${rowPreview?.length ?? 0} ${stampVeh} bay${rowPreview?.length === 1 ? '' : 's'}, ${BAY_SIZES[stampVeh].w} m wide each · click to place · Esc cancels`
+                          : 'Click where the row starts on the aisle edge, then where it ends · bays stand on the left of the line as drawn')
+                      : `Click the picture to place a ${stampVeh} slot · resize or rotate it after`}
                 </span>
               </div>
             )}
@@ -1873,8 +2009,10 @@ export default function ParkingManagement({ embedded = false }) {
                       onClick={e => {
                         if (mode === 'live') { onSpaceClick(s); return }
                         // Selecting a slot is not a pen point — unless a shape
-                        // is already being traced over it.
+                        // is already being traced over it, or a row is being
+                        // drawn across it.
                         if (tool === 'pen' && penPoints.length > 0) return
+                        if (tool === 'row' && rowStart) return
                         e.stopPropagation()
                         if (!sel) { commitLabel(); setSelDraft(id); setDraftLabel(s.space_number) }
                       }}
@@ -2053,6 +2191,26 @@ export default function ParkingManagement({ embedded = false }) {
                     strokeDasharray="0.012 0.006"
                     pointerEvents="none"
                   />
+                )}
+
+                {/* The row a second click would place, with its aisle line. */}
+                {rowPreview && (
+                  <g pointerEvents="none">
+                    <line
+                      x1={rowStart.x} y1={rowStart.y} x2={penCursor.x} y2={penCursor.y}
+                      stroke="#F6CE11" strokeWidth={0.003}
+                    />
+                    {rowPreview.map((bay, i) => (
+                      <polygon
+                        key={i}
+                        points={bay.map(p => p.join(',')).join(' ')}
+                        fill="rgba(246, 206, 17, 0.18)"
+                        stroke="#F6CE11"
+                        strokeWidth={0.003}
+                        strokeDasharray="0.012 0.006"
+                      />
+                    ))}
+                  </g>
                 )}
 
                 {/* Rubber band (edit mode) */}
@@ -2324,6 +2482,8 @@ export default function ParkingManagement({ embedded = false }) {
                         ? 'Click to trace a freeform shape · click a slot to edit it'
                         : tool === 'shape'
                           ? 'Click to place the chosen shape · click a slot to resize, rotate, copy, or remove it'
+                          : tool === 'row'
+                            ? 'Click the start and end of a row to place standard bays edge to edge · click a slot to edit it'
                           : 'Click-drag to draw · click a slot to move, reshape, copy, or remove it')
                     + (clipLabel ? ` · Copied ${clipLabel} — Ctrl+V to paste` : '')}
               </span>

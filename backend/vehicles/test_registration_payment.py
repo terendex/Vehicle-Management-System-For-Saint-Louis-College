@@ -46,9 +46,11 @@ class PaymentTestCase(TestCase):
         self.client = APIClient()
         self._n = 0
         today = timezone.localdate()
+        # Open well past every deadline these tests reach: a period closing
+        # brings an unpaid application's deadline forward (payment_deadline).
         RegistrationPeriod.objects.create(
             label='Payment tests', is_active=True,
-            start_date=today - timedelta(days=1), end_date=today + timedelta(days=1))
+            start_date=today - timedelta(days=1), end_date=today + timedelta(days=30))
         self.admin = User.objects.create_user(
             email='payadmin@slc.edu.ph', last_name='Admin', first_name='Pay',
             password='pw', role='admin', is_staff=True, is_superuser=True)

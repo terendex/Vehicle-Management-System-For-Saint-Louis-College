@@ -504,6 +504,13 @@ class VehicleRegistration(models.Model):
         "Expired automatically: the Vehicle Pass fee was not paid and the Official "
         "Receipt was not filed within 3 days of applying.",
     )
+    # The other way an unpaid application expires: the registration period it
+    # was filed under closed first. Once a period is closed, nothing filed in
+    # it is left pending on the applicant's step.
+    EXPIRED_CLOSED_REASON = (
+        "Expired automatically: registration closed before the Vehicle Pass fee was "
+        "paid and the Official Receipt was filed."
+    )
 
     def on_payment_clock(self) -> bool:
         """True while this row is an online application still owing its receipt."""
@@ -512,20 +519,54 @@ class VehicleRegistration(models.Model):
                 and self.source == self.Source.PUBLIC
                 and self.created_at is not None)
 
-    def payment_deadline(self):
+    def payment_deadline(self, periods=None):
         """When the receipt is due — the time every screen and email states.
+
+        The earlier of PAYMENT_WINDOW_DAYS working days from applying and the
+        close of the registration period the application was filed in, so
+        the deadline an applicant is told is always the one enforced.
 
         None when no deadline applies: a walk-in, an exempt or already-paid
         applicant. Answered for EXPIRED rows too, so the expiry notice can say
         which deadline was missed.
+
+        `periods` is every registration period's (start_date, end_date), for a
+        caller answering this for a whole page of rows (see
+        registration_periods()); without it, one query looks them up.
         """
         if (self.source != self.Source.PUBLIC
                 or self.payment_status != self.PaymentStatus.UNPAID
                 or self.created_at is None):
             return None
+        due = self.working_day_deadline()
+        closes = self.registration_closes_at(periods)
+        return min(due, closes) if closes is not None else due
+
+    def working_day_deadline(self):
+        """PAYMENT_WINDOW_DAYS working days from applying (or from the rollout)."""
         from time_utils import add_business_days
         return add_business_days(max(self.created_at, self.PAYMENT_DEADLINE_ROLLOUT),
                                  self.PAYMENT_WINDOW_DAYS)
+
+    def registration_closes_at(self, periods=None):
+        """The end of the last day of the period this was filed in, or None.
+
+        "Filed in" is by the campus date of created_at. When periods overlap,
+        the one that closes last counts: the application was legitimately
+        open for as long as any window it fell in.
+        """
+        from time_utils import day_end
+        filed = timezone.localdate(self.created_at)
+        if periods is None:
+            periods = self.registration_periods()
+        ends = [end for start, end in periods if start <= filed <= end]
+        return day_end(max(ends)) if ends else None
+
+    @staticmethod
+    def registration_periods():
+        """Every period's (start_date, end_date): pass it to payment_deadline()
+        when answering for many rows, so a page costs one query, not one a row."""
+        return list(RegistrationPeriod.objects.values_list('start_date', 'end_date'))
 
     def payment_overdue(self, now=None) -> bool:
         """Past the deadline AND its grace — the point it actually expires."""
@@ -540,23 +581,43 @@ class VehicleRegistration(models.Model):
 
         Exact, not a superset: the slot and plate checks exclude these rows,
         so a row matched here early would free a hold that is still live.
-        add_business_days(max(created_at, ROLLOUT), N) + grace <= now becomes
-        created_at <= business_days_before(now - grace, N), its exact inverse.
-        The ROLLOUT half does not depend on the row, so it is answered here,
-        and until its own deadline has passed nothing at all is overdue.
+        The deadline is the earlier of two, so a row is overdue when either
+        has passed (plus grace):
+
+          * working days: add_business_days(max(created_at, ROLLOUT), N)
+            becomes created_at <= business_days_before(now - grace, N), its
+            exact inverse. The ROLLOUT half does not depend on the row, so it
+            is answered here, and until its own deadline has passed no row
+            is overdue this way;
+          * registration closed: filed on a date that only closed periods
+            cover (registration_closes_at takes the latest-closing one).
         """
         from time_utils import add_business_days, business_days_before
         now = now or timezone.now()
         if now < (add_business_days(cls.PAYMENT_DEADLINE_ROLLOUT, cls.PAYMENT_WINDOW_DAYS)
                   + cls.PAYMENT_GRACE):
-            return models.Q(pk__in=[])
+            by_days = models.Q(pk__in=[])
+        else:
+            by_days = models.Q(created_at__lte=business_days_before(now - cls.PAYMENT_GRACE,
+                                                                    cls.PAYMENT_WINDOW_DAYS))
         return models.Q(
             status=cls.Status.PENDING,
             payment_status=cls.PaymentStatus.UNPAID,
             source=cls.Source.PUBLIC,
-            created_at__lte=business_days_before(now - cls.PAYMENT_GRACE,
-                                                 cls.PAYMENT_WINDOW_DAYS),
-        )
+        ) & (by_days | cls._closed_period_q(now))
+
+    @classmethod
+    def _closed_period_q(cls, now):
+        """Rows filed on a date covered only by periods closed (plus grace) by `now`."""
+        from time_utils import day_end, day_start
+        closed, still_open = models.Q(pk__in=[]), models.Q(pk__in=[])
+        for start, end in RegistrationPeriod.objects.values_list('start_date', 'end_date'):
+            filed_in = models.Q(created_at__gte=day_start(start), created_at__lt=day_end(end))
+            if day_end(end) + cls.PAYMENT_GRACE <= now:
+                closed |= filed_in
+            else:
+                still_open |= filed_in
+        return closed & ~still_open
 
     @classmethod
     def holds_schedule_q(cls):

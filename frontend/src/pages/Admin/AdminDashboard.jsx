@@ -11,6 +11,7 @@ import {
   CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import './AdminDashboard.css'
+import { VIOLATION_TYPES } from '../../utils/violationTypes'
 
 // ── Shared chart config ────────────────────────────────────────────────────────
 
@@ -488,24 +489,25 @@ export default function AdminDashboard() {
     return slices
   })() : []
 
-  const VIOLATION_TYPE_LABELS = {
-    unauthorized_entry: 'Unauthorized Entry', double_parking: 'Double Parking',
-    time_exceed: 'Time Exceed', no_sticker: 'No Sticker',
-    expired_registration: 'Expired Registration', unauthorized: 'Unauthorized (Legacy)', other: 'Other',
-  }
-  // Violation types — distinct hues; the most severe (unauthorized entry) leads
-  // in red, "other" uses the muted neutral. Order validated so red and orange
-  // are not adjacent (red, yellow, blue, aqua, violet, magenta, muted).
-  const violationTypeSlices = stats ? [
-    { key: 'unauthorized_entry',   color: STATUS.critical },
-    { key: 'double_parking',       color: CAT.yellow },
-    { key: 'time_exceed',          color: CAT.blue },
-    { key: 'no_sticker',           color: CAT.aqua },
-    { key: 'expired_registration', color: CAT.violet },
-    { key: 'unauthorized',         color: CAT.magenta },
-    { key: 'other',                color: CAT.muted },
-  ].map(t => ({ name: VIOLATION_TYPE_LABELS[t.key], value: stats.violations?.by_type?.[t.key] ?? 0, color: t.color }))
-    .filter(s => s.value > 0) : []
+  // Violation types — the four the system issues (utils/violationTypes), in
+  // distinct hues; the most severe (unauthorized entry) leads in red. A legacy
+  // "unauthorized" row counts as Unauthorized Entry; any other legacy type is
+  // gathered under a muted "Other" so the total still adds up.
+  const violationTypeSlices = stats ? (() => {
+    const byType = stats.violations?.by_type ?? {}
+    const colors = { unauthorized_entry: STATUS.critical, double_parking: CAT.yellow,
+                     time_exceed: CAT.blue, confiscated_activity: CAT.violet }
+    const counted = new Set([...VIOLATION_TYPES.map(t => t.value), 'unauthorized'])
+    const legacy = Object.entries(byType).filter(([k]) => !counted.has(k)).reduce((n, [, v]) => n + v, 0)
+    return [
+      ...VIOLATION_TYPES.map(t => ({
+        name: t.label,
+        value: (byType[t.value] ?? 0) + (t.value === 'unauthorized_entry' ? (byType.unauthorized ?? 0) : 0),
+        color: colors[t.value],
+      })),
+      { name: 'Other', value: legacy, color: CAT.muted },
+    ].filter(s => s.value > 0)
+  })() : []
 
   // Labels are written as a plain answer to "what is this number?", because the
   // people reading this dashboard are not all CDSO staff. Every tile is styled

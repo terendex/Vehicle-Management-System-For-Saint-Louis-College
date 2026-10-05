@@ -47,9 +47,10 @@ class UserManager(BaseUserManager):
             raise ValueError('A last name or first name is required')   # every screen shows the name; a blank one is useless
         email = self.normalize_email(email)              # tidy the address (lower-cases the domain part)
 
-        # Owner accounts expire a configurable time after creation (System
-        # Settings). Compute the frozen expiry date once, at creation, unless a
-        # caller supplied one explicitly. Admin/security accounts never expire.
+        # Owner accounts expire at the end of the school year (July 31; see
+        # vehicles/school_year.py). Compute the frozen expiry date once, at
+        # creation, unless a caller supplied one explicitly. Admin/security
+        # accounts never expire.
         if (extra_fields.get('role') == User.Role.VEHICLE_OWNER
                 and 'expires_at' not in extra_fields):
             expiry = self._owner_expiry_date()           # None when expiry is switched off
@@ -61,29 +62,24 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)                        # write it to the database
         return user
 
-    # Works out the day an owner account should expire, from the CDSO's
-    # settings. Returns None when expiry is turned off, which means "never".
+    # Works out the day an owner account should expire: July 31 at the end of
+    # the school year. Returns None when expiry is turned off, which means "never".
     @staticmethod
     def _owner_expiry_date():
-        """Creation-date + configured (months, days), or None if expiry is off.
+        """The school year's last day (vehicles.school_year), or None if expiry is off.
 
-        Lazy import of SystemSettings avoids an accounts->vehicles import cycle.
+        Lazy imports avoid an accounts->vehicles import cycle.
         """
         try:
             from vehicles.models import SystemSettings   # imported late: accounts and vehicles refer to each other
+            from vehicles.school_year import pass_expiry_date
         except Exception:
             return None                                  # settings unavailable: treat expiry as off rather than fail
         cfg = SystemSettings.get()                       # the single settings row
         if not cfg.account_expiry_enabled:
-            return None                                  # the CDSO has expiry switched off
-        if cfg.account_expiry_months <= 0 and cfg.account_expiry_days <= 0:
-            return None                                  # a zero-length period would expire accounts immediately
-        from datetime import timedelta
-        from dateutil.relativedelta import relativedelta  # months are not a fixed number of days, so use calendar maths
+            return None                                  # expiry switched off
         from django.utils import timezone
-        return (timezone.localdate()                     # count from today, campus time
-                + relativedelta(months=cfg.account_expiry_months)
-                + timedelta(days=cfg.account_expiry_days))
+        return pass_expiry_date(timezone.localdate())    # every pass ends with its school year, July 31
 
     # Django calls this to find the account behind a login identifier.
     def get_by_natural_key(self, username):

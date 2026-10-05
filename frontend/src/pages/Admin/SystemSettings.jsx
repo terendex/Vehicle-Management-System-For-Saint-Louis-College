@@ -33,7 +33,6 @@ const ROLE_LABELS = {
   vehicle_owner: 'Registered Vehicle Owner',
 }
 
-const hasExpiryPeriod = (f) => f.account_expiry_months > 0 || f.account_expiry_days > 0
 
 // A car cannot be badly parked before it counts as parked at all. The server
 // rejects this pair too; checking here shows it as the admin types rather than
@@ -170,12 +169,9 @@ const formatStamp = (iso) => {
     : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-/** e.g. '12 months', '30 days', '1 month and 15 days' */
-function expiryPeriodText(f) {
-  const parts = []
-  if (f.account_expiry_months > 0) parts.push(`${f.account_expiry_months} month${f.account_expiry_months !== 1 ? 's' : ''}`)
-  if (f.account_expiry_days   > 0) parts.push(`${f.account_expiry_days} day${f.account_expiry_days !== 1 ? 's' : ''}`)
-  return parts.join(' and ')
+/** '2027-07-31' -> 'July 31, 2027' */
+function fmtLongDate(iso) {
+  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 // The page is one long form split into four categories, one shown at a time.
@@ -218,6 +214,9 @@ export default function SystemSettings() {
   const { user } = useAuthStore()
   const [confirmSave, setConfirmSave] = useState(false)  // review-before-save modal
   const [saveSummary, setSaveSummary] = useState(null)   // success modal contents
+  // Read-only facts the server works out, shown beside the form: the date an
+  // account accepted today would expire (end of its school year).
+  const [serverInfo, setServerInfo] = useState({})
 
   // Notices state
   const [notices, setNotices]               = useState([])
@@ -266,6 +265,7 @@ export default function SystemSettings() {
         const normalized = normalizeSettings(data)
         setForm(normalized)
         setSaved(normalized)
+        setServerInfo({ pass_valid_until: data.pass_valid_until })
       })
       .catch(() => toast.error('Failed to load system settings.'))
       .finally(() => setLoading(false))
@@ -576,11 +576,6 @@ export default function SystemSettings() {
     Object.keys(FIELD_TAB).filter((k) => form[k] !== saved[k]).map((k) => FIELD_TAB[k])
   )
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
-  const expiryChanged = form.account_expiry_months !== saved.account_expiry_months
-    || form.account_expiry_days !== saved.account_expiry_days
-  // The server rejects a zero period; block the save here too so the admin sees
-  // it as they type rather than as a toast after the round trip.
-  const expiryInvalid = !hasExpiryPeriod(form)
   const dwellInvalid  = !dwellOrderValid(form)
   // Only meaningful while a schedule is on — with backups off the box is hidden
   // and whatever number it holds is never used.
@@ -591,7 +586,7 @@ export default function SystemSettings() {
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
     // No field on this form accepts a negative. Clearing a box gives '' → 0,
-    // which for the expiry pair is caught by expiryInvalid rather than sent.
+    // which the per-field checks below catch rather than send.
     const num = (v) => Math.max(0, Number(v) || 0)
     // The weekday is a <select>, so it arrives as text; the server stores a number.
     const numeric = type === 'number' || name === 'scheduled_backup_weekday'
@@ -618,10 +613,8 @@ export default function SystemSettings() {
       }
       setForm(normalized)
       setSaved(normalized)
-      setSaveSummary({
-        expiryPeriod:   expiryPeriodText(normalized),
-        expiryChanged,
-      })
+      setServerInfo({ pass_valid_until: data.pass_valid_until })
+      setSaveSummary({})
     } catch (err) {
       const msg = err.response?.data
         ? Object.values(err.response.data).join(' ')
@@ -695,59 +688,24 @@ export default function SystemSettings() {
                   <div>
                     <h2 className="ss-section-title">Vehicle-Owner Account Expiration</h2>
                     <p className="ss-section-desc">
-                      Each vehicle-owner account expires this long after it is created and is then
-                      archived automatically. The owner is emailed and can register again — their
-                      email, ID and plate are freed for reuse. Expiration cannot be switched off;
-                      the period below is the only control.
+                      Every vehicle pass is valid for one school year, which runs from August 1 to
+                      July 31. Each vehicle-owner account expires on July 31 at the end of the school
+                      year it was accepted for, and is then archived automatically. The owner is
+                      emailed and can register again for the next school year; their email, ID and
+                      plate are freed for reuse.
                     </p>
                   </div>
                 </div>
 
                 <div className="ss-rows">
-                  <div className="ss-row">
-                    <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="account_expiry_months">Expiry period</label>
-                      <span className="ss-row-hint">
-                        Months and days must total at least 1 — 0 and 0 is not accepted. Existing
-                        owners keep the expiry date they already have; changing the period applies
-                        to accounts created from now on.
-                      </span>
-                    </div>
-                    <div className="ss-row-control">
-                      <input
-                        id="account_expiry_months"
-                        name="account_expiry_months"
-                        type="number"
-                        min={0}
-                        max={120}
-                        value={form.account_expiry_months}
-                        onChange={handleChange}
-                        className="ss-input"
-                      />
-                      <span className="ss-unit">months</span>
-                      <input
-                        id="account_expiry_days"
-                        name="account_expiry_days"
-                        type="number"
-                        min={0}
-                        max={365}
-                        value={form.account_expiry_days}
-                        onChange={handleChange}
-                        className="ss-input"
-                        aria-label="Expiry period — days"
-                      />
-                      <span className="ss-unit">days</span>
-                    </div>
-                  </div>
-
                   <div className="ss-note">
                     <ShieldAlert size={13} />
                     <span>
-                      {expiryInvalid
-                        ? <>Enter at least 1 month or 1 day. Expiration cannot be switched off.</>
-                        : <>Owner accounts archive <strong>{expiryPeriodText(form)}</strong> after creation,
-                           then are deleted {form.retention_years} year{form.retention_years !== 1 ? 's' : ''} later
-                           under the retention policy.</>}
+                      {serverInfo.pass_valid_until
+                        ? <>An account accepted today is valid until <strong>{fmtLongDate(serverInfo.pass_valid_until)}</strong>,
+                           then is deleted {form.retention_years} year{form.retention_years !== 1 ? 's' : ''} later
+                           under the retention policy. Existing owners keep the date they already have.</>
+                        : <>Accounts expire on July 31 at the end of their school year.</>}
                     </span>
                   </div>
                 </div>
@@ -1714,14 +1672,13 @@ export default function SystemSettings() {
                 // Stated on the way out rather than by locking the button and
                 // hoping the strip beside it is read.
                 const problems = []
-                if (expiryInvalid) problems.push('Account expiration needs at least 1 month or 1 day.')
                 if (dwellInvalid)  problems.push('The double-parking delay cannot be shorter than the parked delay.')
                 if (keepInvalid)   problems.push('Automatic backups to keep must be between 1 and 90.')
                 if (scheduleInvalid) problems.push('Scheduled backup needs a time, a day of the month from 1 to 31, and a keep count from 1 to 90.')
                 if (problems.length) {
                   // Open the tab holding the first bad field, so dismissing the
                   // message leaves the admin looking at the control to fix.
-                  setTab(expiryInvalid ? 'accounts' : dwellInvalid ? 'parking' : 'data')
+                  setTab(dwellInvalid ? 'parking' : 'data')
                 }
                 if (await notify.validation(problems, { title: 'Settings not saved' })) return
                 setConfirmSave(true)
@@ -1766,12 +1723,6 @@ export default function SystemSettings() {
               )}
               {form.vehicle_pass_fee_employee !== saved.vehicle_pass_fee_employee && (
                 <li>Employee vehicle-pass fee becomes <strong>₱{form.vehicle_pass_fee_employee}</strong>.</li>
-              )}
-              {expiryChanged && (
-                <li>
-                  Owner-account expiry period changes to <strong>{expiryPeriodText(form)}</strong> for
-                  newly created accounts. Owners that already have an expiry date keep it.
-                </li>
               )}
               {form.parked_after_seconds !== saved.parked_after_seconds && (
                 <li>
@@ -1847,9 +1798,6 @@ export default function SystemSettings() {
             <h2 className="ss-modal-title">Settings Saved</h2>
             <p className="ss-modal-body">
               Your changes are live.
-              {saveSummary.expiryChanged
-                ? ` New owner accounts now expire ${saveSummary.expiryPeriod} after creation, and expired ones are archived automatically.`
-                : ''}
             </p>
             <div className="ss-modal-actions">
               <button className="ss-modal-btn ss-modal-btn-primary" onClick={() => setSaveSummary(null)}>Done</button>

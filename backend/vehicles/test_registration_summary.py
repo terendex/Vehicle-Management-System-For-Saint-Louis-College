@@ -11,7 +11,8 @@ The period tests cover the other half: a window that is already running is the
 one most likely to need a change (a deadline moves, or the label was picked
 wrong), so PATCH has to reach the active row without archiving it.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_tz
+from unittest import mock
 
 from django.db import connection
 from django.test import TestCase
@@ -315,9 +316,18 @@ class BrandedPdfExtraTablesTests(TestCase):
 
 
 class RegistrationPeriodEditTests(TestCase):
-    """PATCH /registration-periods/<pk>/ — editing a window that is already live."""
+    """PATCH /registration-periods/<pk>/ — editing a window that is already live.
+
+    The clock is pinned to Monday, October 5, 2026, so every date below sits
+    well inside S.Y. 2026–2027 (June 1, 2026 to July 31, 2027) whatever day
+    the suite runs on.
+    """
 
     def setUp(self):
+        clock = mock.patch('django.utils.timezone.now', return_value=datetime(
+            2026, 10, 5, 12, 0, tzinfo=dt_tz(timedelta(hours=8))))
+        clock.start()
+        self.addCleanup(clock.stop)
         self.client = APIClient()
         self.admin = User.objects.create_user(
             email='periodadmin@slc.edu.ph', last_name='Admin', first_name='Period',
@@ -343,10 +353,12 @@ class RegistrationPeriodEditTests(TestCase):
         self.assertEqual(self.period.end_date.isoformat(), new_end)
         self.assertTrue(self.period.is_active)
 
-    def test_label_can_be_corrected_without_resending_the_dates(self):
+    def test_label_is_the_school_year_never_what_was_typed(self):
         res = self.patch({'label': 'S.Y. 2027–2028'})
         self.assertEqual(res.status_code, 200, res.data)
-        self.assertEqual(res.data['label'], 'S.Y. 2027–2028')
+        self.assertEqual(res.data['label'], 'S.Y. 2026–2027')
+        self.assertEqual(res.data['school_year'], 'S.Y. 2026–2027')
+        self.assertEqual(res.data['valid_until'], '2027-07-31')
         # Omitted fields keep their stored value rather than blanking out.
         self.assertEqual(res.data['start_date'], self.period.start_date.isoformat())
 
@@ -355,10 +367,10 @@ class RegistrationPeriodEditTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertIn('end_date', res.data)
 
-    def test_blank_label_is_rejected(self):
+    def test_a_blank_label_is_not_an_error(self):
         res = self.patch({'label': '   '})
-        self.assertEqual(res.status_code, 400)
-        self.assertIn('label', res.data)
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['label'], 'S.Y. 2026–2027')
 
     def test_malformed_date_is_rejected(self):
         res = self.patch({'start_date': '06-01-2026'})
@@ -370,7 +382,7 @@ class RegistrationPeriodEditTests(TestCase):
         archived = RegistrationPeriod.objects.create(
             label='S.Y. 2025–2026', is_active=False,
             start_date=today - timedelta(days=400), end_date=today - timedelta(days=200))
-        self.patch({'label': 'S.Y. 2028–2029'})
+        self.patch({'end_date': (today + timedelta(days=20)).isoformat()})
         archived.refresh_from_db()
         self.assertEqual(archived.label, 'S.Y. 2025–2026')
         self.assertFalse(archived.is_active)
@@ -382,19 +394,19 @@ class RegistrationPeriodEditTests(TestCase):
         res = self.client.post('/api/vehicles/registration-periods/',
                                {'label': '', 'start_date': 'nope'}, format='json')
         self.assertEqual(res.status_code, 400)
-        self.assertIn('label', res.data)
+        self.assertNotIn('label', res.data)       # never asked for: it is derived
         self.assertIn('start_date', res.data)
         self.assertIn('end_date', res.data)
 
     def test_creating_a_period_archives_the_previous_active_one(self):
         today = timezone.localdate()
         res = self.client.post('/api/vehicles/registration-periods/', {
-            'label': 'S.Y. 2030–2031',
             'start_date': today.isoformat(),
             'end_date': (today + timedelta(days=60)).isoformat(),
         }, format='json')
         self.assertEqual(res.status_code, 201, res.data)
         self.assertTrue(res.data['is_active'])
+        self.assertEqual(res.data['label'], 'S.Y. 2026–2027')
         self.period.refresh_from_db()
         self.assertFalse(self.period.is_active)
 
@@ -413,7 +425,7 @@ class RegistrationPeriodEditTests(TestCase):
         """The list is ordered by created_at, so an edit must not jump a period
         to the top of the table."""
         before = list(RegistrationPeriod.objects.values_list('id', flat=True))
-        self.patch({'label': 'S.Y. 2031–2032'})
+        self.patch({'end_date': (timezone.localdate() + timedelta(days=9)).isoformat()})
         self.assertEqual(list(RegistrationPeriod.objects.values_list('id', flat=True)), before)
 
     def test_non_admin_cannot_edit_a_period(self):

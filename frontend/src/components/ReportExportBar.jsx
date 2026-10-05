@@ -32,7 +32,9 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
   const [from, setFrom] = useState('')
   const [to, setTo]     = useState('')
   const [busy, setBusy] = useState(null) // 'pdf' | 'excel' | null
-  const today = new Date().toISOString().slice(0, 10)
+  // The campus calendar date, not UTC: toISOString() would read yesterday
+  // until 8 AM in Manila (and last year on New Year's morning).
+  const today = new Date().toLocaleDateString('en-CA')
 
   const dateParams = () => {
     // Filters first, dates second: the date pickers belong to this bar and

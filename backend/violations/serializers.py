@@ -32,6 +32,7 @@ class ViolationSerializer(serializers.ModelSerializer):
             'conduction_number': {'read_only': True},
             'owner_name':        {'read_only': True},
             'owner_email':       {'read_only': True},
+            'overstay_minutes':  {'read_only': True},   # measured by the gate, never typed
         }
 
     def get_plate_number(self, obj):

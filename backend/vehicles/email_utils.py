@@ -778,8 +778,8 @@ def send_pending_email(registration):
             f'<div style="background:{WARN_BG};border:1px solid {WARN_BORDER};border-radius:8px;'
             f'padding:10px 12px;margin-bottom:12px;color:{WARN_INK};font-size:13.5px;line-height:1.6;">'
             f'<strong>Deadline: {esc(deadline_val)}</strong><br>'
-            f'You have {window_days} working days (Monday to Friday) from applying to pay and '
-            f'file your receipt number. '
+            f'You have {window_days} working days (Monday to Friday) from applying, or until '
+            f'registration closes if that comes first, to pay and file your receipt number. '
             f'If it is not filed by then, this application <strong>expires automatically</strong> '
             f'and you will need to submit a new one.</div>'
         ) if deadline_val else ''
@@ -806,9 +806,9 @@ def send_pending_email(registration):
         )
         deadline_text = (
             f"DEADLINE: {deadline_val}\n"
-            f"You have {window_days} working days (Monday to Friday) from applying. If the\n"
-            f"receipt number is not filed by then, this application expires automatically\n"
-            f"and you must apply again.\n\n"
+            f"You have {window_days} working days (Monday to Friday) from applying, or until\n"
+            f"registration closes if that comes first. If the receipt number is not filed\n"
+            f"by then, this application expires automatically and you must apply again.\n\n"
         ) if deadline_val else ''
         payment_text = (
             f"NEXT STEP - PAY AND FILE YOUR RECEIPT NUMBER\n"
@@ -1077,16 +1077,25 @@ def send_registration_expired_email(registration):
     days          = registration.PAYMENT_WINDOW_DAYS
     base_url      = (getattr(settings, 'PUBLIC_SITE_URL', '') or '').rstrip('/')
     register_link = f"{base_url}/register"
+    # Which deadline ran out: the registration period closing before the
+    # applicant's working days were up, or the working days themselves.
+    closed_first  = (deadline is not None and registration.created_at is not None
+                     and deadline < registration.working_day_deadline())
+    why = ('registration closed before the Vehicle Pass fee was paid and the Official '
+           'Receipt number was filed' if closed_first else
+           f'the Vehicle Pass fee was not paid and the Official Receipt number was not filed '
+           f'within {days} working days of applying')
 
     missed = f' The deadline was <strong>{esc(deadline_val)}</strong>.' if deadline_val else ''
     html_message = _shell(
         accent=BAD_INK,
-        preheader=f'{ref_number} expired: the receipt was not filed within {days} working days.',
+        preheader=(f'{ref_number} expired: registration closed before the receipt was filed.'
+                   if closed_first else
+                   f'{ref_number} expired: the receipt was not filed within {days} working days.'),
         heading='Vehicle Registration Expired',
         intro=(f'Dear <strong style="color:{INK};">{full_name_val}</strong>, your application '
-               f'<strong style="color:{INK};">{ref_number}</strong> has expired because the '
-               f'Vehicle Pass fee was not paid and the Official Receipt number was not filed '
-               f'within {days} working days of applying.{missed}'),
+               f'<strong style="color:{INK};">{ref_number}</strong> has expired because '
+               f'{esc(why)}.{missed}'),
         rows_html=(
             _section('What you can do', (
                 f'<div style="color:{MUTED};font-size:14px;line-height:1.7;">'
@@ -1110,9 +1119,7 @@ def send_registration_expired_email(registration):
     send_mail(
         subject=f"SLC Vehicle Registration Expired — {ref_number}",
         message=(f"Dear {registration.full_name},\n\n"
-                 f"Your vehicle registration {ref_number} has expired because the Vehicle Pass "
-                 f"fee was not paid and the Official Receipt number was not filed within "
-                 f"{days} working days of applying."
+                 f"Your vehicle registration {ref_number} has expired because {why}."
                  + (f" The deadline was {deadline_val}." if deadline_val else '')
                  + f"\n\nTo get a vehicle pass, submit a new application while registration is "
                    f"open:\n{register_link}\n\n"

@@ -51,7 +51,8 @@ export default function PaymentDeadline({ display, secondsLeft, windowDays = 3, 
         </p>
         {!compact && (
           <p className="pay-deadline-why">
-            You have {windowDays} working days (Monday to Friday) from applying. If the Official Receipt is not filed by
+            You have {windowDays} working days (Monday to Friday) from applying, or until registration
+            closes if that comes first. If the Official Receipt is not filed by
             then, this application <strong>expires automatically</strong> and you will need to
             submit a new one.
             {!label && ' The deadline has passed. If you have already paid, submit now. If it is refused, please apply again.'}

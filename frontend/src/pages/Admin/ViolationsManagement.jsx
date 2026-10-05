@@ -15,17 +15,8 @@ import {
 import ReportExportBar from '../../components/ReportExportBar'
 import TableLoader from '../../components/TableLoader'
 import './ViolationsManagement.css'
+import { VIOLATION_TYPES, violationLabel, violationTypeKey, violationTypeName } from '../../utils/violationTypes'
 
-const TYPE_LABELS = {
-  unauthorized_entry:   'Unauthorized Entry',
-  double_parking:       'Double Parking',
-  time_exceed:          'Time Exceed',
-  confiscated_activity: 'Activity While Confiscated',
-  no_sticker:           'No Sticker',
-  expired_registration: 'Expired Registration',
-  unauthorized:         'Unauthorized',
-  other:                'Other',
-}
 
 const OFFENSE_LABELS = { 1: '1st', 2: '2nd', 3: '3rd' }
 
@@ -293,7 +284,7 @@ export default function ViolationsManagement() {
     if (filter === 'confiscated') list = list.filter(isConfiscated)
     if (filter === 'resolved')    list = list.filter(isSettled)
 
-    if (typeFilter !== 'all') list = list.filter(v => v.violation_type === typeFilter)
+    if (typeFilter !== 'all') list = list.filter(v => violationTypeKey(v.violation_type) === typeFilter)
 
     // Same precedence the export uses: an explicit date in the report bar wins
     // over the period buttons, and the buttons apply when the box is empty.
@@ -375,7 +366,7 @@ export default function ViolationsManagement() {
   // Named on the bar so it is clear before clicking what the file will hold.
   const reportFilterSummary = [
     filter     !== 'all' ? FILTER_OPTIONS.find(o => o.value === filter)?.label : '',
-    typeFilter !== 'all' ? (TYPE_LABELS[typeFilter] ?? typeFilter) : '',
+    typeFilter !== 'all' ? violationTypeName(typeFilter) : '',
     datePeriod !== 'all' ? DATE_PERIODS.find(d => d.value === datePeriod)?.label : '',
     search.trim() ? `“${search.trim()}”` : '',
   ].filter(Boolean).join(' · ')
@@ -567,8 +558,8 @@ export default function ViolationsManagement() {
         </td>
         <td className="vm-cell-type" data-label="Type / Offense">
           <div className="vm-type-cell">
-            <span className={`vm-type-pill vm-type-${v.violation_type}`}>
-              {TYPE_LABELS[v.violation_type] ?? v.violation_type}
+            <span className={`vm-type-pill vm-type-${violationTypeKey(v.violation_type)}`}>
+              {violationLabel(v)}
             </span>
             <OffenseBadge num={v.offense_number} />
           </div>
@@ -603,7 +594,10 @@ export default function ViolationsManagement() {
     const isOpen = expanded.has(g.key)
 
     const typeCounts = {}
-    for (const v of g.items) typeCounts[v.violation_type] = (typeCounts[v.violation_type] || 0) + 1
+    for (const v of g.items) {
+      const key = violationTypeKey(v.violation_type)
+      typeCounts[key] = (typeCounts[key] || 0) + 1
+    }
     // The highest offence still standing is where the person sits on the ladder.
     const topOffense = Math.max(0, ...open.map(v => v.offense_number || 0))
     // Penalty state is per person, so every row carries the same one; the
@@ -633,7 +627,7 @@ export default function ViolationsManagement() {
             <div className="vm-type-cell">
               {Object.entries(typeCounts).map(([type, n]) => (
                 <span key={type} className={`vm-type-pill vm-type-${type}`}>
-                  {TYPE_LABELS[type] ?? type}{n > 1 && <b className="vm-type-count">×{n}</b>}
+                  {violationTypeName(type)}{n > 1 && <b className="vm-type-count">×{n}</b>}
                 </span>
               ))}
               {topOffense > 0 && <OffenseBadge num={topOffense} />}
@@ -716,7 +710,7 @@ export default function ViolationsManagement() {
               title="Filter by violation type"
             >
               <option value="all">All types</option>
-              {Object.entries(TYPE_LABELS).map(([value, label]) => (
+              {VIOLATION_TYPES.map(({ value, label }) => (
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>

@@ -45,6 +45,14 @@ REPEAT_THRESHOLD = 3                   # legacy
 # violations drop out of the count.
 CONFISCATION_DAYS = {1: 7, 2: 14}     # 3 runs to the end of the registration period
 
+def format_overstay(minutes):
+    """'45 min', '2 hr', '1 hr 25 min'."""
+    hours, mins = divmod(int(minutes or 0), 60)
+    if not hours:
+        return f'{mins} min'
+    return f'{hours} hr {mins} min' if mins else f'{hours} hr'
+
+
 # Types that count toward the ladder.
 NEW_STYLE_TYPES = {
     'unauthorized_entry', 'double_parking', 'time_exceed', 'confiscated_activity',
@@ -58,7 +66,7 @@ class Violation(models.Model):
     class Type(models.TextChoices):
         UNAUTHORIZED_ENTRY   = 'unauthorized_entry',   'Unauthorized Entry'
         DOUBLE_PARKING       = 'double_parking',       'Double Parking'
-        TIME_EXCEED          = 'time_exceed',           'Time Exceed'      # stayed longer than the rule allows
+        TIME_EXCEED          = 'time_exceed',           'Overstaying'      # stayed longer than the rule allows
         NO_STICKER           = 'no_sticker',           'No Sticker'
         EXPIRED_REGISTRATION = 'expired_registration', 'Expired Registration'
         # Logged when a confiscated account is caught entering or parking. The
@@ -138,6 +146,10 @@ class Violation(models.Model):
         max_length=20, choices=Status.choices, default=Status.WARNING,
     )
     registration_blocked = models.BooleanField(default=False)   # set on a 3rd strike: bars registering again
+    # How long past the allowed stay the vehicle was, for an Overstaying
+    # violation; null for every other type and for rows issued before it was
+    # recorded. Set by whichever gate path measured it (scanning/views.py).
+    overstay_minutes     = models.PositiveIntegerField(null=True, blank=True)
     cdso_report_issued   = models.BooleanField(default=False)   # a formal report was handed to the CDSO
     official_receipt     = models.CharField(max_length=100, blank=True)   # OR number presented when clearing
 

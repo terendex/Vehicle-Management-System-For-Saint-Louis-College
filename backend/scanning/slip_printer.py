@@ -220,6 +220,15 @@ def render_slip(slip, reprint=False):
             y += 6
         rule()
 
+    # The visited office's signature or stamp (slips.VISITOR_SIGNATURE): a
+    # labelled box ~15mm tall, wide enough for a rubber stamp.
+    if slip.get('signature'):
+        centered(slip['signature'].upper(), _font(10, bold=True), 4)
+        box = round(15 * 203 / 25.4)
+        draw.rectangle([pad, y, DOTS_WIDE - pad - 1, y + box], outline=0, width=2)
+        y += box + 4
+        rule()
+
     # QR, 32mm square, drawn module by module so every module is whole dots.
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0)
     qr.add_data(slip.get('qr') or slip['code'])

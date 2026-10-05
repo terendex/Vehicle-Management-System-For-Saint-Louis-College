@@ -147,13 +147,24 @@ class VehicleRegistrationSerializer(serializers.ModelSerializer):
                 .annotate(n=Count('id')))
         return {row['plate_number']: row['n'] for row in rows}
 
+    def _periods(self):
+        """The registration periods, read once for the whole page.
+
+        DRF reuses this child serializer for every row of a list, so the cache
+        on it spans the response: the deadline (which a closing period can
+        bring forward) costs one query per page rather than one per row.
+        """
+        if not hasattr(self, '_period_cache'):
+            self._period_cache = VehicleRegistration.registration_periods()
+        return self._period_cache
+
     def get_payment_deadline(self, instance):
-        deadline = instance.payment_deadline()
+        deadline = instance.payment_deadline(self._periods())
         return deadline.isoformat() if deadline else None
 
     def get_payment_deadline_display(self, instance):
         from .registration_deadline import format_deadline
-        deadline = instance.payment_deadline()
+        deadline = instance.payment_deadline(self._periods())
         return format_deadline(deadline) if deadline else None
 
     def get_registration_block_count(self, instance):

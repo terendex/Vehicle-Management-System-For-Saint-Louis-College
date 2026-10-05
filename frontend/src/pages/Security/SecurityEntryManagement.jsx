@@ -1881,7 +1881,7 @@ export default function SecurityEntryManagement() {
   const refreshOverstaying = () =>
     getOverstaying(gateId).then(r => setOverstaying(r.data?.results ?? [])).catch(() => {})
 
-  // Acknowledging issues the Time Exceed violation there and then, which runs
+  // Acknowledging issues the Overstaying violation there and then, which runs
   // the offence ladder — a first offence costs the owner a week of campus
   // access. Too expensive for a single unconfirmed tap.
   const handleAcknowledgeOverstay = async (row) => {
@@ -1891,7 +1891,7 @@ export default function SecurityEntryManagement() {
       message: `${who} has been inside ${fmtMinutes(row.inside_minutes)}, which is `
              + `${fmtMinutes(row.over_minutes)} past the allowed `
              + `${fmtMinutes(row.max_minutes)} (${row.rule_name}).`,
-      description: 'This issues a Time Exceed violation now and applies the sanction '
+      description: 'This issues an Overstaying violation now and applies the sanction '
                  + 'for their offence number. They may still leave, but they cannot '
                  + 'come back in until the confiscation ends.',
       confirmLabel: 'Record violation',
@@ -2689,7 +2689,7 @@ export default function SecurityEntryManagement() {
                           className="em-overstay-ack"
                           disabled={ackBusy === row.plate_number}
                           onClick={() => handleAcknowledgeOverstay(row)}
-                          title="Issue the Time Exceed violation for this overstay"
+                          title="Issue the Overstaying violation for this overstay"
                         >
                           {ackBusy === row.plate_number ? 'Recording…' : 'Acknowledge'}
                         </button>

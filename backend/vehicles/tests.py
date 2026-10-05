@@ -190,10 +190,11 @@ class AccountExpiryArchiveTests(TestCase):
     def test_create_user_sets_expiry(self):
         owner, _ = self._make_owner_with_reg()
         self.assertIsNotNone(owner.expires_at)
-        # ~1 month out (28-31 days depending on month length)
-        delta = (owner.expires_at - timezone.localdate()).days
-        self.assertGreaterEqual(delta, 27)
-        self.assertLessEqual(delta, 32)
+        # July 31 at the end of the school year (vehicles/school_year.py),
+        # whatever months/days the settings row still carries.
+        from vehicles.school_year import school_year_of, valid_until
+        self.assertEqual(owner.expires_at, valid_until(school_year_of(timezone.localdate())))
+        self.assertEqual((owner.expires_at.month, owner.expires_at.day), (7, 31))
 
     def test_admin_account_never_expires(self):
         from accounts.models import User

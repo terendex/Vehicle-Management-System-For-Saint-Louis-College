@@ -818,8 +818,8 @@ def _filter_audit_logs(request):
     filters_desc = []
     if action:
         filters_desc.append(f"Action: {action_labels.get(action, action)}")   # the readable label, falling back to the raw value
-    if date_from or date_to:
-        filters_desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")
+    # The dates are not listed here: they are the report's period line,
+    # printed under its title (_audit_report_period).
     if search:
         filters_desc.append(f"Search: '{search}'")
     # Newest first, so the row cap each caller applies keeps the most recent.
@@ -827,7 +827,14 @@ def _filter_audit_logs(request):
 
 
 # One column set for both formats, so the Excel and the PDF cannot drift apart.
-AUDIT_REPORT_HEADERS = ['#', 'Date & Time', 'Actor', 'Role', 'Action', 'Details']
+# No Role column: the actor's name is what a reader of the trail looks for.
+AUDIT_REPORT_HEADERS = ['#', 'Date & Time', 'Actor', 'Action', 'Details']
+
+
+def _audit_report_period(request):
+    from report_utils import report_period
+    return report_period((request.query_params.get('date_from') or '').strip(),
+                         (request.query_params.get('date_to') or '').strip())
 
 
 # Turns audit rows into the flat cells both report formats take.
@@ -842,11 +849,10 @@ def _audit_report_rows(qs):
         # deleting an account nulls the FK while leaving its history. An empty
         # cell would read as a rendering fault rather than as "no person".
         actor = name_case(log.actor.full_name) if log.actor else 'System'
-        role  = (log.actor.role if log.actor else '').replace('_', ' ').title()   # 'vehicle_owner' -> 'Vehicle Owner'
         rows.append([
             i,
             tz.localtime(log.created_at).strftime('%b %d, %Y %I:%M:%S %p'),   # campus-local, to the second: ordering matters in an audit trail
-            actor, role,
+            actor,
             action_labels.get(log.action, log.action),   # falls back to the stored value for an action since renamed
             log.details or '',               # '' not None, so the cell renders empty rather than as the word "None"
         ])
@@ -867,10 +873,10 @@ class AuditLogExportView(APIView):
         # The Excel subtitle carries who generated it and when; the PDF below
         # does not, because branded_pdf_response takes generated_by separately
         # and prints it itself.
+        period = _audit_report_period(request)
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "   # getattr with a default: an unnamed account must not break a download
-                    + ('; '.join(filters_desc) if filters_desc else 'All records')
-                    + f" · {len(rows)} entries")
+                    + ' · '.join(([period] if period else []) + filters_desc + [f"{len(rows)} entries"]))
         return branded_excel_response(
             filename=report_filename('Audit Log Report', 'xlsx'),
             sheet_title='Audit Log',
@@ -878,7 +884,7 @@ class AuditLogExportView(APIView):
             subtitle=subtitle,
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 21, 24, 12, 20, 95],   # characters; Details takes most of it, being the free-text column
+            col_widths=[5, 21, 24, 20, 95],   # characters; Details takes most of it, being the free-text column
         )
 
 
@@ -891,21 +897,19 @@ class AuditLogPdfExportView(APIView):
         from report_utils import branded_pdf_response, report_filename
         qs, filters_desc = _filter_audit_logs(request)
         rows = _audit_report_rows(qs[:5000])
-        subtitle = (('; '.join(filters_desc) if filters_desc else 'All records')
-                    + f" · {len(rows)} entries")
+        subtitle = ' · '.join(filters_desc + [f"{len(rows)} entries"])
         return branded_pdf_response(
             filename=report_filename('Audit Log Report', 'pdf'),
             report_title='Audit Log Report',
+            period=_audit_report_period(request),
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=AUDIT_REPORT_HEADERS,
             rows=rows,
-            # Date & Time needs 91pt but only had 86pt, so every single row
-            # wrapped to two lines — doubling the height of the whole report.
-            # Actor was using 64pt of its 109pt, so 5mm moves across and both
-            # fit comfortably. Total is unchanged at 267mm (the printable width).
-            col_widths_mm=[10, 39, 37, 22, 38, 121],
+            # Date & Time needs 91pt, or every row wraps to two lines and the
+            # report doubles in height. The total is 267mm, the printable width.
+            col_widths_mm=[10, 39, 45, 40, 133],
         )
 
 

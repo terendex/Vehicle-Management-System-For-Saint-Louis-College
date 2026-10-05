@@ -3233,14 +3233,19 @@ def _payment_link_dead(token, generic_message):
     expired_unpaid = registration is not None and (
         registration.payment_overdue()               # overdue, but a receipt upload held the row as the sweep passed
         or (registration.status == VehicleRegistration.Status.EXPIRED
-            and registration.rejection_reason in VehicleRegistration.EXPIRED_UNPAID_REASONS))
+            and (registration.rejection_reason in VehicleRegistration.EXPIRED_UNPAID_REASONS
+                 or registration.rejection_reason == VehicleRegistration.EXPIRED_CLOSED_REASON)))
     if not expired_unpaid:
         return Response({"error": generic_message}, status=status.HTTP_404_NOT_FOUND)
     deadline = registration.payment_deadline()
     when = f" (the deadline was {format_deadline(deadline)})" if deadline else ""
+    closed_first = (deadline is not None
+                    and deadline < registration.working_day_deadline())
+    why = ("registration closed before the Official Receipt was filed" if closed_first
+           else f"the Official Receipt was not filed within "
+                f"{VehicleRegistration.PAYMENT_WINDOW_DAYS} working days of applying")
     return Response({
-        "error": (f"This application has expired because the Official Receipt was not filed "
-                  f"within {VehicleRegistration.PAYMENT_WINDOW_DAYS} working days of applying{when}. "
+        "error": (f"This application has expired because {why}{when}. "
                   f"Please submit a new application. If you already paid, bring your "
                   f"Official Receipt to the CDSO Office."),
         "expired": True,
@@ -4182,6 +4187,12 @@ class ParkingAvailabilityView(APIView):
         })
 
 
+def _pass_expiry_today():
+    """The expires_at an owner account accepted today would get."""
+    from .school_year import pass_expiry_date
+    return pass_expiry_date(timezone.localdate())
+
+
 # The one row that configures the whole system, and the three ways it is
 # touched: GET reads it, PUT rewrites all of it, PATCH flips a toggle.
 class SystemSettingsView(APIView):
@@ -4225,6 +4236,10 @@ class SystemSettingsView(APIView):
             "account_expiry_enabled": obj.account_expiry_enabled,
             "account_expiry_months":  obj.account_expiry_months,
             "account_expiry_days":    obj.account_expiry_days,
+            # Read-only: where an owner account accepted today would expire.
+            # Passes end with their school year (vehicles/school_year.py); the
+            # months/days pair above no longer dates new accounts.
+            "pass_valid_until": _pass_expiry_today().isoformat(),
             "parked_after_seconds":      obj.parked_after_seconds,
             "double_park_after_seconds": obj.double_park_after_seconds,
             "auto_backup_frequency": obj.auto_backup_frequency,
@@ -4576,16 +4591,15 @@ class SystemSettingsView(APIView):
             from . import scheduler
             scheduler.wake()
 
-        # Give an expiry date to any owner still missing one, using the duration
-        # the admin just chose and counting from their join date. Owners that
-        # already have a date keep it — frozen-at-creation semantics, so changing
-        # the period never moves the goalposts on an existing account.
+        # Give an expiry date to any owner still missing one: the end of the
+        # school year they joined in (July 31). Owners that already have a date
+        # keep it — frozen-at-creation semantics, so a save never moves the
+        # goalposts on an existing account.
         #
         # Runs on every save, not just the first: an owner with no expires_at is
         # an account that would live forever, which is the state expiration is
         # meant to make impossible.
-        from datetime import timedelta
-        from dateutil.relativedelta import relativedelta   # months are not a fixed number of days, so timedelta alone cannot add them
+        from .school_year import school_year_of, valid_until
         from accounts.models import User as _User          # aliased to stay clear of any local name in this long method
         # Only owners, only live ones, and only those with no date yet — the
         # `expires_at__isnull=True` filter is what makes this leave existing
@@ -4596,9 +4610,7 @@ class SystemSettingsView(APIView):
         for owner in owners:
             # Counted from when they joined, not from today: a settings save is
             # not meant to hand anybody a fresh term they did not have.
-            owner.expires_at = (owner.date_joined.date()
-                                + relativedelta(months=account_expiry_months)
-                                + timedelta(days=account_expiry_days))
+            owner.expires_at = valid_until(school_year_of(timezone.localdate(owner.date_joined)))
         if owners:
             # batch_size matters here: Postgres' default is one CASE statement
             # covering every row, which stops being a query at a few thousand
@@ -5082,13 +5094,17 @@ class ParkingNoticeDetailView(APIView):
 
 # One shape for a period, used by every method below.
 def _serialize_period(p):
+    from .school_year import label as sy_label, school_year_of, valid_until
+    year = school_year_of(p.start_date)      # the school year is read off the open date, never typed
     return {
         'id':         p.id,
-        'label':      p.label,               # e.g. "AY 2026-2027 First Semester"
+        'label':      p.label,               # e.g. "S.Y. 2026–2027"
         'start_date': p.start_date.isoformat(),   # ISO text: the form shows these, it does no date maths
         'end_date':   p.end_date.isoformat(),
         'is_active':  p.is_active,           # the one flag that decides whether registration is open at all
         'created_at': p.created_at.isoformat(),
+        'school_year': sy_label(year),
+        'valid_until': valid_until(year).isoformat(),   # every pass accepted for this school year ends here
     }
 
 
@@ -5098,9 +5114,14 @@ def _clean_period_payload(data, *, partial=False, current=None):
     """Validate a registration-period payload for create (all fields) or edit.
 
     `partial` keeps any field the caller left out at its `current` value, so a
-    PATCH that only moves the end date does not have to resend the label.
+    PATCH that only moves the end date does not have to resend the other.
     Returns (cleaned, errors) — cleaned is only complete when errors is empty.
+
+    The label is never taken from the caller: it is the school year the open
+    date falls in ("S.Y. 2026–2027", see vehicles/school_year.py), and the
+    close date has to stay inside that same school year.
     """
+    from .school_year import label as sy_label, school_year_of, validate_period
     from datetime import datetime as _dt
 
     # Strict: one format, and it raises on anything else. The callers below
@@ -5115,14 +5136,6 @@ def _clean_period_payload(data, *, partial=False, current=None):
     # sent, and on a PATCH fall back to what the row already holds. `not
     # partial` makes a create demand every field, since there is nothing to
     # fall back to.
-    if 'label' in data or not partial:
-        label = (data.get('label') or '').strip()
-        if not label:
-            errors['label'] = 'Label is required.'   # present but blank is a mistake, not "leave it alone"
-        cleaned['label'] = label
-    else:
-        cleaned['label'] = current.label         # untouched by this request
-
     for field in ('start_date', 'end_date'):
         if field in data or not partial:
             try:
@@ -5136,10 +5149,12 @@ def _clean_period_payload(data, *, partial=False, current=None):
     # a caller that forgets to check `errors` cannot write partial values.
     if errors:
         return None, errors
-    # Only reachable once both dates parsed. `<` and not `<=`: a one-day window
-    # that opens and closes on the same date is legitimate.
-    if cleaned['end_date'] < cleaned['start_date']:
-        return None, {'end_date': 'End date must be on or after start date.'}
+    # Only reachable once both dates parsed. A one-day window that opens and
+    # closes on the same date is legitimate.
+    errors = validate_period(cleaned['start_date'], cleaned['end_date'], timezone.localdate())
+    if errors:
+        return None, errors
+    cleaned['label'] = sy_label(school_year_of(cleaned['start_date']))
     return cleaned, {}
 
 
@@ -5494,8 +5509,8 @@ def _filter_registrations_report(request):
     type_labels    = dict(VehicleRegistration.RegistrantType.choices)
     payment_labels = dict(VehicleRegistration.PaymentStatus.choices)
     desc = []
-    if date_from or date_to:
-        desc.append(f"Period: {date_from or 'start'} to {date_to or 'today'}")   # names the open end, rather than leaving a blank
+    # The dates are not listed here: they are the report's period line,
+    # printed under its title (_registration_report_period).
     if status_f:
         desc.append(f"Status: {status_labels.get(status_f, status_f)}")   # the readable label, falling back to the raw value for an unknown one
     if type_f:
@@ -5539,12 +5554,16 @@ def _registration_report_rows(qs):
     return rows
 
 
-# The one line under the report title that says what is in it.
+# The line above the table: the filters other than the dates, and the count a
+# reader checks the table against.
 def _registration_report_subtitle(desc, count):
-    # 'All records' rather than an empty string when nothing was filtered: the
-    # subtitle should still assert something, and the count is what a reader
-    # checks the table against.
-    return ('; '.join(desc) if desc else 'All records') + f" · {count} entries"
+    return ' · '.join(desc + [f"{count} entries"])
+
+
+def _registration_report_period(request):
+    from report_utils import report_period
+    return report_period((request.query_params.get('date_from') or '').strip(),
+                         (request.query_params.get('date_to') or '').strip())
 
 
 class RegistrationReportExcelView(APIView):
@@ -5563,9 +5582,10 @@ class RegistrationReportExcelView(APIView):
         # The Excel subtitle carries who generated it and when; the PDF below
         # does not, because branded_pdf_response takes `generated_by` as its
         # own argument and prints it itself.
+        period = _registration_report_period(request)
         subtitle = (f"Generated {tz.localtime().strftime('%B %d, %Y %I:%M %p')} "
                     f"by {getattr(request.user, 'full_name', '')} · "   # getattr with a default: an unnamed account must not break a download
-                    + _registration_report_subtitle(desc, len(rows)))
+                    + ' · '.join(([period] if period else []) + [_registration_report_subtitle(desc, len(rows))]))
         return branded_excel_response(
             filename=report_filename('Vehicle Registrations Report', 'xlsx'),
             sheet_title='Registrations',
@@ -5589,16 +5609,16 @@ class RegistrationReportPdfView(APIView):
         return branded_pdf_response(
             filename=report_filename('Vehicle Registrations Report', 'pdf'),
             report_title='Vehicle Registrations Report',
+            period=_registration_report_period(request),
             subtitle=_registration_report_subtitle(desc, len(rows)),
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
             headers=REGISTRATION_REPORT_HEADERS,
             rows=rows,
-            # Millimetres, summing to 247 of the 267 available (A4 landscape
-            # less report_utils' 15mm margins), so the table sits short of the
-            # full width rather than filling it. The identifier column is the
-            # wider one since it names both a plate and a conduction number.
-            col_widths_mm=[10, 30, 40, 60, 40, 40, 27],
+            # Millimetres, summing to the 267 available (A4 landscape less
+            # report_utils' 15mm margins), so the table fills the width like
+            # every other report. The name gets the most room.
+            col_widths_mm=[10, 30, 40, 70, 40, 45, 32],
         )
 
 
@@ -5842,11 +5862,11 @@ class RegistrationSummaryReportPdfView(APIView):
         # two above can answer.
         cat_headers, cat_rows, cat_widths = _vehicle_category_breakdown(qs, counts)
 
-        subtitle = (('; '.join(desc) if desc else 'All records')
-                    + f" · {counts['total']} registrations")
+        subtitle = ' · '.join(desc + [f"{counts['total']} registrations"])
         return branded_pdf_response(
             filename=report_filename('Registration Summary Report', 'pdf'),
             report_title='Vehicle Registration Summary Report',
+            period=_registration_report_period(request),
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),   # the preparer's position on the signature block
@@ -5928,8 +5948,8 @@ def _visit_search_filter(request):
         qs = qs.filter(expected_date__gte=bounds['date_from'])
     if 'date_to' in bounds:
         qs = qs.filter(expected_date__lte=bounds['date_to'])
-    if bounds:
-        desc.append(f"Expected: {bounds.get('date_from', 'any date')} to {bounds.get('date_to', 'any date')}")
+    # The dates are not listed here: they are the report's period line,
+    # printed under its title (_scheduled_visit_report).
 
     q = (params.get('q') or '').strip()
     if q:
@@ -6161,14 +6181,18 @@ class ExpectedVisitsTodayView(APIView):
 
 # The CDSO's Scheduled Visits table, printed. Same filters, same order, so the
 # report is exactly the rows on screen.
-SCHEDULED_VISIT_REPORT_HEADERS = ['#', 'Ref', 'Visitor', 'Category', 'Expected', 'Plate',
-                                  'Purpose', 'Status', 'Arrived', 'Arranged by']
+# The SV reference and who arranged the visit stay on the screen; the printed
+# report carries what a reader of it needs.
+SCHEDULED_VISIT_REPORT_HEADERS = ['#', 'Visitor', 'Category', 'Expected', 'Plate',
+                                  'Purpose', 'Status', 'Arrived']
 
 
 def _scheduled_visit_report(request):
-    """(rows, subtitle) for both report formats, from the table's own filter."""
-    from report_utils import name_case
+    """(rows, subtitle, period) for both report formats, from the table's own filter."""
+    from report_utils import name_case, report_period
     qs, desc = _filter_scheduled_visits(request)
+    period = report_period((request.query_params.get('date_from') or '').strip(),
+                           (request.query_params.get('date_to') or '').strip(), label='Expected')
     today = timezone.localdate()
     rows = []
     for i, v in enumerate(qs[:5000], start=1):
@@ -6181,13 +6205,12 @@ def _scheduled_visit_report(request):
         pass_ = v.visitor_passes.order_by('-pk').first()
         arrived = '—'
         if v.is_arrived:
-            arrived = (timezone.localtime(v.arrived_at).strftime('%b %d, %I:%M %p')
+            arrived = (timezone.localtime(v.arrived_at).strftime('%b %d, %Y %I:%M %p')
                        if v.arrived_at else 'Yes')
             if pass_:
                 arrived += f" · VP-{pass_.pk}"
         rows.append([
             i,
-            f"SV-{v.pk}",
             name_case(v.visitor_name) + (f" ({v.supplier.company_name})" if v.supplier and
                               v.supplier.company_name != v.visitor_name else ''),
             v.category_label,
@@ -6196,9 +6219,8 @@ def _scheduled_visit_report(request):
             v.purpose or '—',
             status,
             arrived,
-            name_case(v.created_by.full_name) if v.created_by else '—',
         ])
-    return rows, ('; '.join(desc) if desc else 'All active visits') + f" · {len(rows)} entries"
+    return rows, ' · '.join((desc or ['All active visits']) + [f"{len(rows)} entries"]), period
 
 
 class ScheduledVisitReportPdfView(APIView):
@@ -6207,17 +6229,18 @@ class ScheduledVisitReportPdfView(APIView):
 
     def get(self, request):
         from report_utils import branded_pdf_response, report_filename
-        rows, subtitle = _scheduled_visit_report(request)
+        rows, subtitle, period = _scheduled_visit_report(request)
         return branded_pdf_response(
             filename=report_filename('Scheduled Visits Report', 'pdf'),
             report_title='Scheduled Visits Report',
+            period=period,
             subtitle=subtitle,
             generated_by=getattr(request.user, 'full_name', ''),
             generated_by_role=getattr(request.user, 'get_role_display', lambda: '')(),
             headers=SCHEDULED_VISIT_REPORT_HEADERS,
             rows=rows,
             # Millimetres, summing to the 267 available on A4 landscape.
-            col_widths_mm=[9, 16, 40, 24, 25, 21, 43, 28, 30, 31],
+            col_widths_mm=[9, 50, 28, 27, 24, 55, 36, 38],
         )
 
 
@@ -6227,7 +6250,9 @@ class ScheduledVisitReportExcelView(APIView):
 
     def get(self, request):
         from report_utils import branded_excel_response, report_filename
-        rows, subtitle = _scheduled_visit_report(request)
+        rows, subtitle, period = _scheduled_visit_report(request)
+        if period:
+            subtitle = f'{period} · {subtitle}'
         return branded_excel_response(
             filename=report_filename('Scheduled Visits Report', 'xlsx'),
             sheet_title='Scheduled Visits',
@@ -6236,5 +6261,5 @@ class ScheduledVisitReportExcelView(APIView):
                       f"by {getattr(request.user, 'full_name', '')} · {subtitle}"),
             headers=SCHEDULED_VISIT_REPORT_HEADERS,
             rows=rows,
-            col_widths=[5, 10, 30, 16, 14, 12, 34, 22, 22, 20],
+            col_widths=[5, 30, 16, 14, 12, 34, 22, 22],
         )
