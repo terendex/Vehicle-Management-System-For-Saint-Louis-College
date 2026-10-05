@@ -65,6 +65,11 @@ EMAIL_TRANSPORT_BACKEND = 'sim_clock.RedirectEmailBackend'
 if EMAIL_BACKEND == _REAL_TRANSPORT:          # outbox switched off: send through the redirect directly
     EMAIL_BACKEND = EMAIL_TRANSPORT_BACKEND
 
+# The demo never writes backup files (its data may be a copy of the live
+# database), and leaves real cameras alone unless asked: SIM_CAMERAS=1.
+SCHEDULER_SKIP_JOBS = ('auto_backup', 'scheduled_backup')
+SIM_CAMERAS = os.environ.get('SIM_CAMERAS', '').strip().lower() in ('1', 'true', 'yes')
+
 # The clock itself. Installed now, before any app or model module is imported,
 # so even a field's default=timezone.now picks up the simulated one.
 SIM_CLOCK_ENABLED = True

@@ -89,3 +89,27 @@ class RedirectEmailTests(SimpleTestCase):
         mail.outbox = []
         backend = sim_clock.RedirectEmailBackend()
         self.assertIn('console', type(backend.inner).__module__)
+
+
+class DemoSafeguardTests(TestCase):
+    """A demo holding a copy of the live data writes no backups and opens no cameras."""
+
+    @override_settings(SCHEDULER_SKIP_JOBS=('auto_backup', 'scheduled_backup'))
+    def test_skipped_jobs_never_run(self):
+        from vehicles import scheduler
+        with mock.patch('vehicles.tasks.auto_backup') as backup, \
+             mock.patch('vehicles.tasks.scheduled_backup') as scheduled, \
+             mock.patch('vehicles.tasks.purge_old_records', return_value={}) as purge:
+            outcomes = scheduler.run_due_jobs(force=True)
+        backup.assert_not_called()
+        scheduled.assert_not_called()
+        purge.assert_called_once()
+        self.assertNotIn('auto_backup', outcomes)
+
+    @override_settings(SIM_CLOCK_ENABLED=True, SIM_CAMERAS=False)
+    def test_the_demo_does_not_open_real_cameras(self):
+        from vehicles import ffmpeg_capture
+        with mock.patch.object(ffmpeg_capture, '_try_cv2') as cv2_open:
+            cap = ffmpeg_capture.open_capture('rtsp://admin:x@10.243.40.80:554/onvif1')
+        self.assertFalse(cap.isOpened())
+        cv2_open.assert_not_called()

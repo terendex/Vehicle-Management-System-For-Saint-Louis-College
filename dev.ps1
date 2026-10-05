@@ -80,6 +80,13 @@
 .PARAMETER Reset
     With -SimClock -SimSetup: drop the demo database and start over.
 
+.PARAMETER FromLive
+    With -SimClock -SimSetup: fill the demo with a COPY OF THE LIVE system
+    (database and uploaded files, read-only on the live side) instead of the
+    fictional campus. Always starts over. The copy stays on this PC; its
+    emails only reach SIM_EMAIL_TO and real cameras stay closed unless
+    SIM_CAMERAS=1. Log in with your own live account.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\dev.ps1
     # background jobs ON (the default)
@@ -104,7 +111,8 @@ param(
     [switch]$NoBackgroundJobs,
     [switch]$SimClock,
     [switch]$SimSetup,
-    [switch]$Reset
+    [switch]$Reset,
+    [switch]$FromLive
 )
 
 # Stop at the first unexpected error instead of carrying on half-started.
@@ -183,6 +191,7 @@ if ($SimClock) {
             $env:DJANGO_SETTINGS_MODULE = 'sim_settings'
             $setupArgs = @('manage.py', 'sim_setup')
             if ($Reset) { $setupArgs += '--reset' }
+            if ($FromLive) { $setupArgs += '--from-live' }
             & $Python @setupArgs
             if ($LASTEXITCODE -ne 0) { Write-Host 'Demo setup failed (see above).' -ForegroundColor Red; exit 1 }
         } finally {
@@ -190,8 +199,8 @@ if ($SimClock) {
             Pop-Location
         }
     }
-} elseif ($SimSetup -or $Reset) {
-    Write-Host '-SimSetup and -Reset only apply together with -SimClock.' -ForegroundColor Red
+} elseif ($SimSetup -or $Reset -or $FromLive) {
+    Write-Host '-SimSetup, -Reset and -FromLive only apply together with -SimClock.' -ForegroundColor Red
     exit 1
 }
 
@@ -250,10 +259,11 @@ if (-not $SkipDoctor) {
 # First say plainly whether background jobs will run, before anything starts.
 if ($schedulerOn -or $autodetectOn) {
     Write-Host "`n== Background jobs: ON ==" -ForegroundColor Yellow
-    if ($schedulerOn)  { Write-Host "   Daily scheduler WILL run: automatic backup, archive expired accounts, purge old records." -ForegroundColor Yellow }
+    if ($schedulerOn -and $SimClock) { Write-Host "   Daily scheduler WILL run: archive expired accounts, purge old records (no backups in the demo)." -ForegroundColor Yellow }
+    elseif ($schedulerOn) { Write-Host "   Daily scheduler WILL run: automatic backup, archive expired accounts, purge old records." -ForegroundColor Yellow }
     else               { Write-Host "   Daily scheduler: off (DISABLE_DAILY_SCHEDULER=$(Get-Switch 'DISABLE_DAILY_SCHEDULER'))" -ForegroundColor Gray }
     if ($autodetectOn) { Write-Host "   Parking-camera auto-detection WILL run and keep writing bay occupancy." -ForegroundColor Yellow }
-    elseif ($SimClock) { Write-Host "   Parking-camera auto-detection: off (the demo has no cameras)" -ForegroundColor Gray }
+    elseif ($SimClock) { Write-Host "   Parking-camera auto-detection and camera streams: off in the demo (SIM_CAMERAS=1 allows streams)" -ForegroundColor Gray }
     else               { Write-Host "   Parking-camera auto-detection: off (DISABLE_PARKING_AUTODETECT=$(Get-Switch 'DISABLE_PARKING_AUTODETECT'))" -ForegroundColor Gray }
     if ($SimClock) { Write-Host "   They act on the demo database slc_sim_demo only." -ForegroundColor Yellow }
     else           { Write-Host "   They act on the database named in backend/.env (see the health check above)." -ForegroundColor Yellow }
@@ -302,7 +312,8 @@ if ($SimClock -and -not $NoFrontend) {
         Start-Sleep -Seconds 2
     }
     if ($ready) {
-        Write-Host "Instructor demo ready: $url  (admin cdso.demo@slc-sflu.edu.ph / Demo@2026!)" -ForegroundColor Green
+        if ($FromLive) { Write-Host "Instructor demo ready: $url  (a copy of the live system: log in with your live account)" -ForegroundColor Green }
+        else           { Write-Host "Instructor demo ready: $url  (admin cdso.demo@slc-sflu.edu.ph / Demo@2026!)" -ForegroundColor Green }
         Start-Process $url
     } else {
         Write-Host "The demo did not answer at $url within 2 minutes; check the two new windows for errors." -ForegroundColor Red

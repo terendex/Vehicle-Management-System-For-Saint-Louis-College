@@ -20,6 +20,13 @@ year, and sets the clock to the real date. The browser opens
 ports (8765 and 5174), so it runs beside the campus app on 8000 without
 touching it; if a demo port is taken, the launcher stops and says why.
 
+**A copy of the live system instead:** `.\dev.ps1 -SimClock -SimSetup -FromLive`
+copies the live database and uploaded files (read-only on the live side) into
+the demo, and you log in with your own live account. It holds real people's
+data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, it writes
+no backups, and it leaves the real cameras alone unless `SIM_CAMERAS=1`. Go
+back to the fictional campus with `.\dev.ps1 -SimClock -SimSetup -Reset`.
+
 | | |
 |---|---|
 | Admin login | `cdso.demo@slc-sflu.edu.ph` / `Demo@2026!` |

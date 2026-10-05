@@ -169,7 +169,13 @@ def run_due_jobs(force: bool = False) -> dict:
     today = timezone.localdate()
     outcomes: dict[str, str] = {}
 
+    # A deployment may leave jobs out (the instructor demo skips backups: its
+    # copy of the data must not add files beside the real backups).
+    from django.conf import settings
+    skip_jobs = set(getattr(settings, 'SCHEDULER_SKIP_JOBS', ()))
     for job in DAILY_JOBS:
+        if job in skip_jobs:
+            continue
         row = _claim(_claim_key(job), today)
         if row is None and not force:
             continue
