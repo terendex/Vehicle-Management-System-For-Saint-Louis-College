@@ -66,6 +66,11 @@
     by themselves. Emails go to SIM_EMAIL_TO from backend/.env, or are only
     printed in the backend window when it is not set.
 
+    The demo uses its own ports, backend 8765 and page 5174, never 8000/5173:
+    the installed campus app listens on 8000 against the LIVE database, and a
+    demo page proxying to it would show the real system. If either demo port
+    is taken the script stops. The browser opens at http://127.0.0.1:5174.
+
 .PARAMETER SimSetup
     With -SimClock: create the demo database first (a copy of the screenshot
     demo database, slc_manual_demo), apply migrations, open a registration
@@ -145,6 +150,23 @@ function Quote([string]$Text) { "'" + ($Text -replace "'", "''") + "'" }
 $SettingsModule = if ($SimClock) { 'sim_settings' } else { 'debug_settings' }
 $EnvSetup = "`$env:DJANGO_SETTINGS_MODULE = '$SettingsModule'; `$env:LOG_LEVEL = '$LogLevel'; " +
             "`$env:LOG_SQL = '$(if ($LogSql) { '1' } else { '' })'; "
+
+# The instructor demo's own ports (see .PARAMETER SimClock).
+$FrontendPort = 5173
+if ($SimClock) {
+    if (-not $PSBoundParameters.ContainsKey('Port')) { $Port = 8765 }
+    $FrontendPort = 5174
+    foreach ($p in $Port, $FrontendPort) {
+        $busy = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($busy) {
+            $owner = (Get-CimInstance Win32_Process -Filter "ProcessId=$($busy.OwningProcess)").CommandLine
+            Write-Host "`nPort $p is already in use, so the demo cannot start safely:" -ForegroundColor Red
+            Write-Host "   $owner" -ForegroundColor Red
+            Write-Host "   Close that window (an earlier demo?) and run this again." -ForegroundColor Red
+            exit 1
+        }
+    }
+}
 
 if ($SimClock) {
     # The demo's own database never has cameras to watch, and the doctor
@@ -231,6 +253,7 @@ if ($schedulerOn -or $autodetectOn) {
     if ($schedulerOn)  { Write-Host "   Daily scheduler WILL run: automatic backup, archive expired accounts, purge old records." -ForegroundColor Yellow }
     else               { Write-Host "   Daily scheduler: off (DISABLE_DAILY_SCHEDULER=$(Get-Switch 'DISABLE_DAILY_SCHEDULER'))" -ForegroundColor Gray }
     if ($autodetectOn) { Write-Host "   Parking-camera auto-detection WILL run and keep writing bay occupancy." -ForegroundColor Yellow }
+    elseif ($SimClock) { Write-Host "   Parking-camera auto-detection: off (the demo has no cameras)" -ForegroundColor Gray }
     else               { Write-Host "   Parking-camera auto-detection: off (DISABLE_PARKING_AUTODETECT=$(Get-Switch 'DISABLE_PARKING_AUTODETECT'))" -ForegroundColor Gray }
     if ($SimClock) { Write-Host "   They act on the demo database slc_sim_demo only." -ForegroundColor Yellow }
     else           { Write-Host "   They act on the database named in backend/.env (see the health check above)." -ForegroundColor Yellow }
@@ -246,8 +269,16 @@ Start-Window $(if ($SimClock) { 'SLC VMS - backend (SIMULATED CLOCK DEMO)' } els
 
 # -- Step 3: frontend dev server ---------------------------------------------------
 if (-not $NoFrontend) {
-    Write-Host "== Starting frontend on http://localhost:5173 (new window) ==" -ForegroundColor Cyan
-    Start-Window 'SLC VMS - frontend' $Frontend 'npm run dev'
+    if ($SimClock) {
+        # Pointed at the demo backend explicitly: the default (8000) may be
+        # the live campus app.
+        Write-Host "== Starting frontend on http://127.0.0.1:$FrontendPort (new window) ==" -ForegroundColor Cyan
+        Start-Window 'SLC VMS - frontend (SIMULATED CLOCK DEMO)' $Frontend (
+            "`$env:BACKEND_URL = 'http://127.0.0.1:$Port'; npx vite --host 127.0.0.1 --port $FrontendPort --strictPort")
+    } else {
+        Write-Host "== Starting frontend on http://localhost:5173 (new window) ==" -ForegroundColor Cyan
+        Start-Window 'SLC VMS - frontend' $Frontend 'npm run dev'
+    }
 }
 
 # -- Step 4 (optional): Celery background worker ------------------------------------
@@ -256,6 +287,26 @@ if ($WithCelery) {
     Write-Host "== Starting Celery worker (new window) ==" -ForegroundColor Cyan
     Start-Window 'SLC VMS - celery' $Backend (
         $EnvSetup + "& $(Quote $Python) -m celery -A config worker -l info --pool=solo")
+}
+
+# -- The demo: open it once both halves answer ---------------------------------------
+if ($SimClock -and -not $NoFrontend) {
+    Write-Host "`nWaiting for the demo to come up..." -ForegroundColor Gray
+    $url = "http://127.0.0.1:$FrontendPort"
+    $ready = $false
+    foreach ($i in 1..60) {
+        try {
+            $api = Invoke-WebRequest "$url/api/deployment/" -UseBasicParsing -TimeoutSec 3
+            if ($api.Content -match '"sim_clock"') { $ready = $true; break }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    if ($ready) {
+        Write-Host "Instructor demo ready: $url  (admin cdso.demo@slc-sflu.edu.ph / Demo@2026!)" -ForegroundColor Green
+        Start-Process $url
+    } else {
+        Write-Host "The demo did not answer at $url within 2 minutes; check the two new windows for errors." -ForegroundColor Red
+    }
 }
 
 # -- Where to look next -------------------------------------------------------------

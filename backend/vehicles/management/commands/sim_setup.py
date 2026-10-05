@@ -110,8 +110,10 @@ class Command(BaseCommand):
             self.stdout.write('No admin account yet: create one with  python manage.py createsuperuser')
             return
         device = TwoFactorDevice.objects.filter(user=admin, confirmed_at__isnull=False).first()
+        # The fictional campus's accounts all use the demo password (seed_demo.py).
+        demo_password = admin.email.endswith('@slc-sflu.edu.ph') and admin.check_password('Demo@2026!')
         self.stdout.write(f'  Admin login: {admin.email}'
-                          + ('   password: Demo@2026!' if created == 'copied' else ''))
+                          + ('   password: Demo@2026!' if demo_password else ''))
         if device:
             self.stdout.write(f'  2FA: add this key to an authenticator app: {device.secret}')
             self.stdout.write('       or print the current code:  python manage.py sim_clock code')

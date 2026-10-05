@@ -53,8 +53,10 @@ CELERY_RESULT_BACKEND = 'cache+memory://'
 CELERY_TASK_ALWAYS_EAGER = True
 DEBUG = True
 ALLOWED_HOSTS = ['*']
-FRONTEND_URL = 'http://127.0.0.1:5173'
-PUBLIC_SITE_URL = 'http://127.0.0.1:5173'
+# The demo's page (dev.ps1 -SimClock serves it on 5174, never the 5173/8000
+# a normal run or the campus app may be using), for the links in emails.
+FRONTEND_URL = 'http://127.0.0.1:5174'
+PUBLIC_SITE_URL = 'http://127.0.0.1:5174'
 
 # Email: the real transport, every message redirected to SIM_EMAIL_TO.
 SIM_EMAIL_TO = (os.environ.get('SIM_EMAIL_TO') or '').strip()

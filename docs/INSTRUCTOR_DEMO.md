@@ -15,7 +15,10 @@ Double-click **`SLC VMS (Simulated Clock).cmd`** in the project folder, or run:
 
 The first run copies the fictional demo campus (`slc_manual_demo`) into its own
 database, `slc_sim_demo`, opens a registration period for the current school
-year, and sets the clock to the real date. Open <http://127.0.0.1:5173>.
+year, and sets the clock to the real date. The browser opens
+<http://127.0.0.1:5174> by itself once the demo is up. The demo has its own
+ports (8765 and 5174), so it runs beside the campus app on 8000 without
+touching it; if a demo port is taken, the launcher stops and says why.
 
 | | |
 |---|---|
