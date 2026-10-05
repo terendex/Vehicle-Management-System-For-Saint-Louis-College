@@ -71,9 +71,20 @@ class Command(BaseCommand):
             self.stdout.write(f'Copied the demo uploads to {settings.MEDIA_ROOT}.')
         self.stdout.write('Applying migrations...')
         call_command('migrate', interactive=False, verbosity=0)
+        if created == 'kept' and self._is_live_copy():
+            # An earlier --from-live copy: keep it exactly as live has it.
+            actions.reset()
+            self._summary('live')
+            return
         self._active_period()
         actions.reset()
         self._summary(created)
+
+    @staticmethod
+    def _is_live_copy():
+        """The fictional campus always has its CDSO demo account; a live copy never does."""
+        from accounts.models import User
+        return not User.objects.filter(email='cdso.demo@slc-sflu.edu.ph').exists()
 
     # ── The database ────────────────────────────────────────────────────────
     def _create(self, db, name, reset):
