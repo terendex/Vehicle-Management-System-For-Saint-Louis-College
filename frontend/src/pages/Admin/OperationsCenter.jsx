@@ -3,13 +3,14 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   Shield, Users, AlertTriangle, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
-  UserCheck, Activity, Video, Wifi, MonitorDot, ParkingCircle,
-  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff,
+  UserCheck, Video, Wifi, MonitorDot, ParkingCircle,
+  ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff, Car,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from '../../components/Feedback/notify'
 import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses,
-         getCrossGate } from '../../api/scanning'
+         getCrossGate, getInsideCampus } from '../../api/scanning'
+import InsideCampus from './InsideCampus'
 import { camerasApi } from '../../api/cameras'
 import { displayStatus } from '../../utils/logStatus'
 import { useCameraContext } from '../../context/CameraContext'
@@ -597,6 +598,7 @@ function CrossGateRecords({ gateLabel, refreshKey }) {
    anything wrong right now", which is the question on every tab. */
 const TABS = [
   { id: 'live',    label: 'Live Monitor', icon: MonitorDot },
+  { id: 'inside',  label: 'Inside Campus', icon: Car },
   { id: 'guards',  label: 'Guards',       icon: Shield },
   { id: 'records', label: 'Gate Records', icon: ArrowRightLeft },
 ]
@@ -609,6 +611,7 @@ export default function OperationsCenter() {
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
   const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
+  const [inside,        setInside]        = useState(null) // every vehicle on campus now (GET /scan/inside/)
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState(null)
   const [tab,           setTab]           = useState('live')
@@ -623,11 +626,12 @@ export default function OperationsCenter() {
     try {
       // One log request per gate, so gates added in System Settings get a feed
       // without touching this file.
-      const [shiftsRes, monitorRes, historyRes, passesRes, ...logResults] = await Promise.allSettled([
+      const [shiftsRes, monitorRes, historyRes, passesRes, insideRes, ...logResults] = await Promise.allSettled([
         getCurrentShifts(),
         getGuardMonitor(),
         getShifts({ limit: 100 }),
         getVisitorPasses(),
+        getInsideCampus(),
         ...gateIds.map(id => getAccessLogs({ gate_id: id, limit: 12 })),
       ])
 
@@ -647,6 +651,8 @@ export default function OperationsCenter() {
 
       if (historyRes.status === 'fulfilled')
         setShiftHistory(historyRes.value.data?.results ?? historyRes.value.data ?? [])
+
+      if (insideRes.status === 'fulfilled') setInside(insideRes.value.data)
 
       if (passesRes.status === 'fulfilled') {
         const list = (passesRes.value.data?.results ?? passesRes.value.data ?? [])
@@ -685,7 +691,6 @@ export default function OperationsCenter() {
       .filter(sh => sh && sh.guard_id)
       .map(sh => [sh.guard_id, sh.gate])
   )
-  const totalEntries   = Object.values(logsByGate).reduce((n, l) => n + (l?.length ?? 0), 0)
 
   // Newest first (LIFO) + client-side pagination, same as the violations table
   const sortedShifts    = [...shiftHistory].sort((a, b) => new Date(b.clocked_in_at) - new Date(a.clocked_in_at))
@@ -723,13 +728,14 @@ export default function OperationsCenter() {
               <p className="oc-stat-lbl">Guards On Duty</p>
             </div>
           </div>
-          <div className="oc-stat-card">
-            <div className="oc-stat-icon green"><Activity size={18} /></div>
+          {/* The same count the Inside Campus tab lists, one tap away. */}
+          <button type="button" className="oc-stat-card oc-stat-card--link" onClick={() => setTab('inside')}>
+            <div className="oc-stat-icon green"><Car size={18} /></div>
             <div>
-              <p className="oc-stat-val">{totalEntries}</p>
-              <p className="oc-stat-lbl">Recent Entries</p>
+              <p className="oc-stat-val">{inside?.counts?.all ?? '—'}</p>
+              <p className="oc-stat-lbl">Vehicles Inside</p>
             </div>
-          </div>
+          </button>
           <div className="oc-stat-card">
             <div className="oc-stat-icon blue"><ArrowRightLeft size={18} /></div>
             <div>
@@ -856,6 +862,11 @@ export default function OperationsCenter() {
           </div>
         </div>
 
+        </div>
+
+        {/* ── Inside Campus ── */}
+        <div className="oc-tabpanel" hidden={tab !== 'inside'}>
+          <InsideCampus data={inside} loading={loading} />
         </div>
 
         {/* ── Gate Records ── */}

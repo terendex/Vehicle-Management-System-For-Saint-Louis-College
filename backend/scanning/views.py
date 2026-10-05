@@ -3610,6 +3610,84 @@ class IsGuardOrAdmin(permissions.BasePermission):
                     and request.user.role in ('security', 'admin'))
 
 
+# ── Who is on campus now (Operations Center) ─────────────────────────────────
+# The filter chips on the admin's Inside Campus tab. Each vehicle falls in
+# exactly one, by the category the gate recorded for it (AccessLog.Category);
+# supplier and event vehicles only count under All.
+INSIDE_GROUPS = (
+    ('student',      'Students',     ('student',)),
+    ('employee',     'Employees',    ('employee',)),
+    ('fetcher',      'Fetchers',     ('fetcher',)),
+    ('visitor',      'Visitors',     ('visitor',)),
+    ('unregistered', 'Unregistered', ('unknown', '')),
+)
+_INSIDE_GROUP_OF = {cat: key for key, _, cats in INSIDE_GROUPS for cat in cats}
+
+
+class InsideCampusView(APIView):
+    """Every vehicle on campus right now, with its owner and how long it has
+    been in; ?category= narrows to one chip (INSIDE_GROUPS).
+
+    "Inside" is the occupancy ledger's own definition (scanning/occupancy.py):
+    today's authorized entry with no exit pointing back at it, newer than
+    STALE_ENTRY_HOURS, one row per vehicle (plate, or the row for a vehicle
+    with no plate). So the total here is the parking screens' On Campus count.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        from .occupancy import STALE_ENTRY_HOURS
+        from .models import Gate
+        now = timezone.now()
+        logs = _open_entries_today().filter(scanned_at__gte=now - timedelta(hours=STALE_ENTRY_HOURS))
+
+        occupants, seen = [], set()
+        for log in logs:                                  # newest first, so the current visit wins
+            key = log.plate_number or f'NP-{log.pk}'
+            if key not in seen:
+                seen.add(key)
+                occupants.append(log)
+
+        # A visitor's name is on their pass, not on the entry row.
+        visitor_names = dict(
+            VisitorPass.objects
+            .filter(valid_date=timezone.localdate(), status=VisitorPass.Status.ACTIVE)
+            .exclude(visitor_name='')
+            .values_list('plate_number', 'visitor_name'))
+        gates = dict(Gate.objects.values_list('gate_id', 'label'))
+        categories = dict(AccessLog.Category.choices)
+
+        counts = {key: 0 for key, _, _ in INSIDE_GROUPS}
+        rows = []
+        wanted = (request.query_params.get('category') or '').strip()
+        for log in occupants:
+            group = _INSIDE_GROUP_OF.get(log.entrant_category or '', 'other')
+            if group in counts:
+                counts[group] += 1
+            if wanted and wanted != 'all' and group != wanted:
+                continue
+            owner = getattr(log.vehicle, 'user', None) if log.vehicle_id else None
+            rows.append({
+                'id':             log.pk,
+                'plate':          log.plate_number or f'NP-{log.pk}',
+                'name':           (owner.full_name if owner else '')
+                                  or visitor_names.get(log.plate_number, '') or log.driver_name or '',
+                'category':       log.entrant_category or 'unknown',
+                'category_label': categories.get(log.entrant_category or 'unknown', 'Unregistered'),
+                'group':          group,
+                'vehicle_type':   (log.vehicle.vehicle_type if log.vehicle_id else '') or log.vehicle_type or '',
+                'vehicle':        ' '.join(x for x in (log.vehicle_color, log.vehicle_model) if x),
+                'gate':           gates.get(log.gate_id, log.gate_id),
+                'entered_at':     log.scanned_at.isoformat(),
+                'minutes_inside': max(0, int((now - log.scanned_at).total_seconds() // 60)),
+            })
+        return Response({
+            'groups':  [{'key': key, 'label': label} for key, label, _ in INSIDE_GROUPS],
+            'counts':  {**counts, 'all': len(occupants)},
+            'results': rows,
+        })
+
+
 class OverstayingListView(APIView):
     """Vehicles on campus right now that are past their rule's maximum stay."""
     permission_classes = [permissions.IsAuthenticated]

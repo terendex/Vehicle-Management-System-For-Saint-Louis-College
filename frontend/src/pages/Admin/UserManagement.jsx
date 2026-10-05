@@ -17,10 +17,11 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Smartphone, ClipboardList,
+  Shield, Info, Lock, Smartphone, ClipboardList, History,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
+import { OwnerActivitySummary, UserActivityModal } from './UserActivity'
 
 const DEFAULT_AGENCY = 'RANNIAG'
 const EMPTY_GUARD = { ...EMPTY_NAME, email: '', agency: DEFAULT_AGENCY }
@@ -956,6 +957,10 @@ export default function UserManagement() {
                   )}
                 </div>
               )}
+              {/* A vehicle owner's schedule and violations, under their details. */}
+              {!editMode && selectedUser.role === 'vehicle_owner' && (
+                <OwnerActivitySummary userId={selectedUser.id} />
+              )}
             </div>
             <div className="um-modal-footer">
               {editMode ? (
@@ -971,6 +976,11 @@ export default function UserManagement() {
                   <button className="um-btn-secondary" onClick={startEdit}>
                     <Pencil size={15} /> Edit Details
                   </button>
+                  {selectedUser.role === 'vehicle_owner' && (
+                    <button className="um-btn-secondary" onClick={() => setModal('activity')}>
+                      <History size={15} /> View Activity
+                    </button>
+                  )}
                   <button
                     className="um-btn-primary"
                     disabled={badgeLocked(selectedUser)}
@@ -984,6 +994,11 @@ export default function UserManagement() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ACTIVITY: every entry, exit and violation of one owner */}
+      {modal === 'activity' && selectedUser && (
+        <UserActivityModal user={selectedUser} onClose={() => setModal('view')} />
       )}
 
       {/* TOGGLE STATUS */}

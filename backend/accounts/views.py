@@ -226,6 +226,23 @@ class UserDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAdminRole]
 
 
+class UserActivityView(APIView):
+    """One user's schedule, vehicles, violations and gate visits (accounts/activity.py).
+
+    ?date_from / ?date_to (YYYY-MM-DD) narrow the visits, as on the Vehicle Log.
+    """
+    permission_classes = [IsAdminRole]
+
+    def get(self, request, pk):
+        from .activity import user_activity
+        user = get_object_or_404(User, pk=pk)
+        return Response(user_activity(
+            user,
+            (request.query_params.get('date_from') or '').strip(),
+            (request.query_params.get('date_to') or '').strip(),
+        ))
+
+
 # Editing an account. Most of the body below is not the edit — it is working
 # out what CHANGED, so the audit line can say so.
 class UserUpdateView(generics.UpdateAPIView):

@@ -24,6 +24,15 @@ export const usersApi = {
     return data
   },
 
+  /** A vehicle owner's schedule, vehicles, violations and gate visits. */
+  getUserActivity: async (id, { dateFrom = '', dateTo = '' } = {}) => {
+    const params = {}
+    if (dateFrom) params.date_from = dateFrom
+    if (dateTo) params.date_to = dateTo
+    const { data } = await api.get(`/accounts/users/${id}/activity/`, { params })
+    return data
+  },
+
   /** Register a new user (security or vehicle_owner). */
   createUser: async (userData) => {
     const { data } = await api.post('/accounts/register/', userData)

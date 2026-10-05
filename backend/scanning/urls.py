@@ -39,6 +39,7 @@ urlpatterns = [
     # Vehicles still on campus past their rule's maximum stay, and the guard
     # acknowledging one (which issues the time-exceed violation immediately).
     path('overstaying/',            views.OverstayingListView.as_view(),   name='overstaying'),
+    path('inside/',                 views.InsideCampusView.as_view(),      name='inside-campus'),
     path('overstaying/acknowledge/', views.AcknowledgeOverstayView.as_view(), name='overstay-acknowledge'),
     # Plateless vehicles the guard records by hand (entry + its exit).
     path('unrecognized/',           views.UnrecognizedEntryView.as_view(), name='unrecognized-entry'),
