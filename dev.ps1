@@ -312,8 +312,8 @@ if ($SimClock -and -not $NoFrontend) {
         Start-Sleep -Seconds 2
     }
     if ($ready) {
-        if ($FromLive) { Write-Host "Instructor demo ready: $url  (a copy of the live system: log in with your live account)" -ForegroundColor Green }
-        else           { Write-Host "Instructor demo ready: $url  (admin cdso.demo@slc-sflu.edu.ph / Demo@2026!)" -ForegroundColor Green }
+        Write-Host "Instructor demo ready: $url" -ForegroundColor Green
+        Write-Host "   Live copy: log in with your live account. Fictional campus: cdso.demo@slc-sflu.edu.ph / Demo@2026!" -ForegroundColor Green
         Start-Process $url
     } else {
         Write-Host "The demo did not answer at $url within 2 minutes; check the two new windows for errors." -ForegroundColor Red
