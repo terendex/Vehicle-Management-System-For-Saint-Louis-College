@@ -50,8 +50,8 @@
     "college": "SAS",
     "name": "School of Advanced Studies",
     "programs": [
-      { "code": "PhD",  "name": "Doctor of Philosophy",                     "years": 2, "residency": true, "requires_masters": true },
-      { "code": "EdD",  "name": "Doctor of Education",                      "years": 2, "residency": true, "requires_masters": true },
+      { "code": "PhD",  "name": "Doctor of Philosophy",                     "years": 3, "residency": true, "requires_masters": true },
+      { "code": "EdD",  "name": "Doctor of Education",                      "years": 3, "residency": true, "requires_masters": true },
       { "code": "MAEd", "name": "Master of Arts in Education",              "years": 2, "residency": true, "requires_bachelors": true },
       { "code": "MBA",  "name": "Master in Business Administration",        "years": 2, "residency": true, "requires_bachelors": true },
       { "code": "MAGC", "name": "Master of Arts in Guidance and Counseling", "years": 2, "residency": true, "requires_bachelors": true },

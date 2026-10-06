@@ -196,3 +196,75 @@ class DropLegacyColumnTests(TestCase):
 
         # Running it again is harmless.
         call_command('drop_legacy_full_name', '--apply', stdout=io.StringIO())
+
+
+class NoUsernameTests(TestCase):
+    """username is off the model (accounts 0043): sign-in is by email and the
+    name is the three parts. The column stays until drop_legacy_username, so
+    an install on the previous code keeps working against the same database."""
+
+    def _columns(self):
+        with connection.cursor() as cursor:
+            return {c.name for c in connection.introspection.get_table_description(cursor, 'tbl_user')}
+
+    def test_the_model_has_no_username(self):
+        from django.core.exceptions import FieldDoesNotExist
+        with self.assertRaises(FieldDoesNotExist):
+            User._meta.get_field('username')
+        self.assertEqual(User.USERNAME_FIELD, 'email')
+
+    def test_accounts_are_made_and_found_without_it(self):
+        u = User.objects.create_user(email='no.username@slc.edu.ph', password='Passw0rd!23',
+                                     last_name='DELA CRUZ', first_name='JUAN', middle_initial='P')
+        self.assertEqual(User.objects.get_by_natural_key('no.username@slc.edu.ph').pk, u.pk)
+        self.assertEqual(u.full_name, 'DELA CRUZ, JUAN P.')
+        self.assertTrue(self.client.login(email='no.username@slc.edu.ph', password='Passw0rd!23'))
+
+    def test_the_previous_code_can_still_write_the_column(self):
+        """What an older install does: its INSERT/UPDATE names username."""
+        u = User.objects.create_user(email='old.install@slc.edu.ph', password='x',
+                                     last_name='OLD', first_name='CODE')
+        self.assertIn('username', self._columns())
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE tbl_user SET username = NULL WHERE user_id = %s", [u.pk])
+        u.refresh_from_db()
+        self.assertEqual(u.last_name, 'OLD')
+
+    def test_an_older_backup_still_restores(self):
+        from accounts.backup_utils import dump_backup, load_backup
+        u = User.objects.create_user(email='restore.me@slc.edu.ph', password='x',
+                                     last_name='BEFORE', first_name='RESTORE')
+        records = json.loads(dump_backup())
+        for record in records:
+            if record['model'] == 'accounts.user':
+                record['fields']['username'] = None          # what every older backup carries
+                if record['pk'] == u.pk:
+                    record['fields']['last_name'] = 'RESTORED'
+        load_backup(json.dumps(records))
+        u.refresh_from_db()
+        self.assertEqual(u.last_name, 'RESTORED')
+
+    def test_upgrade_drops_username_only_from_accounts(self):
+        old = json.dumps([
+            {'model': 'accounts.user', 'pk': 1,
+             'fields': {'username': None, 'last_name': 'A', 'first_name': 'B', 'middle_initial': ''}},
+            {'model': 'vehicles.vehicle', 'pk': 3, 'fields': {'plate_number': 'ABC123'}},
+        ])
+        records = json.loads(upgrade_legacy_backup(old))
+        self.assertNotIn('username', records[0]['fields'])
+        self.assertEqual(records[0]['fields']['last_name'], 'A')
+        self.assertEqual(records[1], {'model': 'vehicles.vehicle', 'pk': 3,
+                                      'fields': {'plate_number': 'ABC123'}})
+
+    def test_the_deferred_drop(self):
+        """Rolled back with the test (DDL is transactional on PostgreSQL)."""
+        call_command('drop_legacy_username', stdout=io.StringIO())
+        self.assertIn('username', self._columns(), 'a dry run must change nothing')
+        call_command('drop_legacy_username', '--apply', stdout=io.StringIO())
+        self.assertNotIn('username', self._columns())
+        User.objects.create_user(email='after.drop@slc.edu.ph', password='x',
+                                 last_name='AFTER', first_name='DROP')
+        out = io.StringIO()
+        call_command('drop_legacy_username', '--apply', stdout=out)   # again: harmless
+        self.assertIn('already dropped', out.getvalue())
+

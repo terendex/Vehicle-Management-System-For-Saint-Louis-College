@@ -112,6 +112,12 @@ def name_search_q(term, prefix='') -> Q:
 
 LEGACY_NAME_MODELS = ('accounts.user', 'vehicles.vehicleregistration')
 
+# Fields since taken off a model, which an older backup still carries. The
+# deserializer refuses an unknown field, so they are dropped on the way in.
+REMOVED_FIELDS = {
+    'accounts.user': ('username',),                      # accounts 0043
+}
+
 
 def upgrade_legacy_backup(payload: str) -> str:
     """Rewrite a backup taken before the name split so it loads today.
@@ -119,16 +125,21 @@ def upgrade_legacy_backup(payload: str) -> str:
     Such a file carries `full_name` on every account and registration, which
     the deserializer refuses as an unknown field — every older backup would
     otherwise be unrestorable. The name is split into the three parts (unless
-    the record already has them) and full_name dropped. A current backup comes
-    back unchanged.
+    the record already has them) and full_name dropped. Fields removed since
+    (REMOVED_FIELDS, e.g. an account's username) are dropped too. A current
+    backup comes back unchanged.
     """
     import json
-    if '"full_name"' not in payload:
+    if '"full_name"' not in payload and '"username"' not in payload:
         return payload                     # cheap exit: nothing to upgrade
     records = json.loads(payload)
     changed = False
     for record in records if isinstance(records, list) else []:
         fields = record.get('fields') or {}
+        for name in REMOVED_FIELDS.get(record.get('model'), ()):
+            if name in fields:
+                del fields[name]
+                changed = True
         if record.get('model') not in LEGACY_NAME_MODELS or 'full_name' not in fields:
             continue
         legacy = fields.pop('full_name')

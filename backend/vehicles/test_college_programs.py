@@ -35,12 +35,14 @@ class CatalogTests(SimpleTestCase):
     def test_the_list_as_given(self):
         self.assertEqual(len(PROGRAM_YEARS), 30)
         self.assertEqual(PROGRAM_YEARS['BS Arch'], 5)
+        doctorates = {'PhD', 'EdD'}
         two_year = {'JD'} | {code for college, _, programs in COLLEGES if college == 'SAS'
-                             for code, _ in programs}
-        self.assertEqual(len(two_year), 8)
+                             for code, _ in programs} - doctorates
+        self.assertEqual(len(two_year), 6)
+        self.assertTrue(all(PROGRAM_YEARS[code] == 3 for code in doctorates))
         self.assertTrue(all(y == 2 for code, y in PROGRAM_YEARS.items() if code in two_year))
         self.assertTrue(all(y == 4 for code, y in PROGRAM_YEARS.items()
-                            if code != 'BS Arch' and code not in two_year))
+                            if code != 'BS Arch' and code not in two_year | doctorates))
         for gone in ('BSCS', 'BSN', 'BSEE', 'BSME', 'AB Communication'):
             self.assertNotIn(gone, PROGRAM_YEARS)
 
@@ -60,13 +62,14 @@ class CatalogTests(SimpleTestCase):
         self.assertEqual(normalize_program_year('maed 2'), 'MAEd - 2')
         self.assertEqual(normalize_program_year('MBA - 1'), 'MBA - 1')
         self.assertEqual(normalize_program_year('phd 2'), 'PhD - 2')
+        self.assertEqual(normalize_program_year('EdD 3'), 'EdD - 3')
         self.assertEqual(normalize_program_year('mba residency'), 'MBA - Residency')
         self.assertEqual(normalize_program_year('EdD - RESIDENCY'), 'EdD - Residency')
 
     def test_refusing(self):
         for bad in ('', 'BSIT', 'BSIT - 0', 'BSIT - 5', 'BSIT 12', 'BS Arch - 6',
                     'BSCS - 2', 'Info Tech - 1', 'SHS - STEM - Grade 11',
-                    'JD - 3', 'JD - 4', 'MBA - 3', 'PhD - 3', 'MAEd EM - 1',
+                    'JD - 3', 'JD - 4', 'MBA - 3', 'PhD - 4', 'EdD - 4', 'MAEd EM - 1',
                     'BSIT - Residency', 'JD - Residency'):
             self.assertIsNone(normalize_program_year(bad), bad)
 
@@ -77,7 +80,10 @@ class CatalogTests(SimpleTestCase):
         self.assertIn('JD - 2', names)
         self.assertNotIn('JD - 3', names)
         self.assertIn('MPA - Residency', names)
-        self.assertEqual(len(names), 21 * 4 + 5 + 8 * 2 + 7)
+        self.assertIn('PhD - 3', names)
+        self.assertNotIn('MBA - 3', names)
+        # 21 four-year programs, BS Arch, JD, 5 masterals, 2 doctorates, 7 Residency.
+        self.assertEqual(len(names), 21 * 4 + 5 + 2 + 5 * 2 + 2 * 3 + 7)
 
 
 class SubmitTests(PaymentTestCase):

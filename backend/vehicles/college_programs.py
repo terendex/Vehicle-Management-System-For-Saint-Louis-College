@@ -41,11 +41,12 @@ COLLEGES = (
         ('BS Crim', 4), ('JD', 2),
     )),
     # The School of Advanced Studies' schedule of fees (S.Y. 2025-2026) is
-    # the whole offering: the doctorates PhD and EdD, and the masterals MAEd,
-    # MBA, MAGC, MLIS and MPA, each Year 1 and Year 2, plus Residency (below).
+    # the whole offering: the doctorates PhD and EdD (Year 1 to Year 3), and
+    # the masterals MAEd, MBA, MAGC, MLIS and MPA (Year 1 and Year 2), each
+    # plus Residency (below).
     # Codes carry no hyphen: the stored value is "<code> - <year>".
     ('SAS', 'School of Advanced Studies', (
-        ('PhD', 2), ('EdD', 2),
+        ('PhD', 3), ('EdD', 3),
         ('MAEd', 2), ('MBA', 2), ('MAGC', 2), ('MLIS', 2), ('MPA', 2),
     )),
 )

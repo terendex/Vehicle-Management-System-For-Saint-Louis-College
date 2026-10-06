@@ -223,8 +223,11 @@ class User(AbstractUser):
     # Format in QR: "SLC-GUARD:{user_code}:{guard_qr_secret}"
     guard_qr_secret = models.UUIDField(null=True, blank=True, unique=True)
 
-    # Override username to be nullable/blank, email is used for login
-    username = models.CharField(max_length=150, blank=True, null=True)
+    # No username: people sign in by email and are named by the three name
+    # parts. None removes AbstractUser's field. The tbl_user.username column
+    # stays (nullable, unused) until drop_legacy_username runs, because a
+    # campus install on older code still selects it (migration 0043).
+    username = None
 
     USERNAME_FIELD = 'email'                             # tells Django to authenticate on email
     REQUIRED_FIELDS = ['last_name', 'first_name']  # email is already required via USERNAME_FIELD
