@@ -50,6 +50,36 @@ class RealSystemTests(TestCase):
         self.assertLess(abs((_wall_clock() - timezone.now()).total_seconds()), 5)
 
 
+class DormancyOnTheRealClockTests(SimpleTestCase):
+    """Moving the demo's date must not make two-factor ask at every sign-in."""
+
+    def _dormant(self, last_login, simulated_now, real_now):
+        from types import SimpleNamespace
+        from accounts import twofa
+        with mock.patch('django.utils.timezone.now', return_value=simulated_now), \
+             mock.patch.object(twofa, '_wall_clock', return_value=real_now):
+            return twofa.is_dormant(SimpleNamespace(last_login=last_login))
+
+    def test_a_date_jump_does_not_make_a_recent_login_dormant(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        real = timezone.now()
+        self.assertFalse(self._dormant(real - timedelta(days=1), real + timedelta(days=30), real))
+
+    def test_a_login_stamped_in_the_moved_past_is_not_dormant_there(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        real = timezone.now()
+        past = real - timedelta(days=60)
+        self.assertFalse(self._dormant(past - timedelta(hours=1), past, real))
+
+    def test_a_week_of_real_silence_is_still_dormant(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        real = timezone.now()
+        self.assertTrue(self._dormant(real - timedelta(days=8), real, real))
+
+
 class HelperTests(SimpleTestCase):
 
     def test_offsets_read_plainly(self):

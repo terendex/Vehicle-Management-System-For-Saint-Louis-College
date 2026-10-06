@@ -118,11 +118,16 @@ def is_dormant(user) -> bool:
 
     A never-used account counts as dormant, which is what makes a first login
     always pass through enrollment.
+
+    Under the instructor demo's simulated clock the gap must hold on the real
+    clock too: jumping the date a week ahead would otherwise make every account
+    dormant and ask for a code at each sign-in. Outside the demo both clocks
+    are the same one.
     """
     last = getattr(user, 'last_login', None)
     if last is None:
         return True
-    return (timezone.now() - last).days >= DORMANCY_DAYS
+    return (min(timezone.now(), _wall_clock()) - last).days >= DORMANCY_DAYS
 
 
 # ── Password-hash fingerprint ───────────────────────────────────────────────
