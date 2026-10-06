@@ -11,8 +11,9 @@ The registration form bundles an identical copy
 network; test_college_programs fails if the two differ.
 
 Stored as one string, "<code> - <year>" (e.g. "BSIT - 3", "BS Arch - 5",
-"MAEd EM - 1"),
-which is the shape program_year has always had.
+"MBA - 1"), which is the shape program_year has always had. A School of
+Advanced Studies student past coursework is on "Residency" instead of a year
+("MBA - Residency").
 """
 from __future__ import annotations
 
@@ -39,22 +40,29 @@ COLLEGES = (
     ('CLCJE', 'College of Law and Criminal Justice Education', (
         ('BS Crim', 4), ('JD', 2),
     )),
-    # Graduate (Masteral) programs, Year 1 and Year 2. Master of Arts in
-    # Education is one entry per major so the major is on file. Codes carry
-    # no hyphen: the stored value is "<code> - <year>".
-    ('SAS', 'School of Advanced Studies (Masteral)', (
-        ('MAEd EM', 2), ('MAEd English', 2), ('MAEd Filipino', 2), ('MAEd RVE', 2),
-        ('MAEd Science', 2), ('MAEd Math', 2), ('MAEd PE', 2), ('MAEd SocSci', 2),
-        ('MAEd SpEd', 2),
-        ('MAGC', 2), ('MLIS', 2), ('MBA', 2), ('MPA', 2),
+    # The School of Advanced Studies' schedule of fees (S.Y. 2025-2026) is
+    # the whole offering: the doctorates PhD and EdD, and the masterals MAEd,
+    # MBA, MAGC, MLIS and MPA, each Year 1 and Year 2, plus Residency (below).
+    # Codes carry no hyphen: the stored value is "<code> - <year>".
+    ('SAS', 'School of Advanced Studies', (
+        ('PhD', 2), ('EdD', 2),
+        ('MAEd', 2), ('MBA', 2), ('MAGC', 2), ('MLIS', 2), ('MPA', 2),
     )),
 )
 
 PROGRAM_YEARS = {code: years for _, _, programs in COLLEGES for code, years in programs}
 _BY_LOWER = {code.lower(): code for code in PROGRAM_YEARS}
 
+# A graduate student past coursework, writing the thesis or dissertation, is
+# enrolled on Residency rather than a year level: the fee schedule's third
+# column. Offered after the year levels of every School of Advanced Studies
+# program.
+RESIDENCY = 'Residency'
+RESIDENCY_PROGRAMS = frozenset(code for college, _, programs in COLLEGES if college == 'SAS'
+                               for code, _ in programs)
+
 # Lazy program part, so "BSIT 12" splits as BSIT / 12 rather than "BSIT 1" / 2.
-_SHAPE = re.compile(r'^(.*?)\s*-?\s*(\d+)$')
+_SHAPE = re.compile(r'^(.*?)\s*-?\s*(\d+|residency)$', re.IGNORECASE)
 
 INVALID_MESSAGE = 'Choose your program and year level from the list.'
 
@@ -69,15 +77,19 @@ def normalize_program_year(text):
     m = _SHAPE.match(' '.join((text or '').split()))
     if not m:
         return None
-    code, year = _BY_LOWER.get(m.group(1).lower()), int(m.group(2))
-    if code is None or not 1 <= year <= PROGRAM_YEARS[code]:
+    code, level = _BY_LOWER.get(m.group(1).lower()), m.group(2)
+    if code is None:
         return None
-    return f'{code} - {year}'
+    if level.lower() == RESIDENCY.lower():
+        return f'{code} - {RESIDENCY}' if code in RESIDENCY_PROGRAMS else None
+    if not 1 <= int(level) <= PROGRAM_YEARS[code]:
+        return None
+    return f'{code} - {int(level)}'
 
 
 def all_program_years():
     """Every valid value, in list order — what /vehicles/programs/ serves."""
-    return [f'{code} - {year}'
+    return [f'{code} - {level}'
             for _, _, programs in COLLEGES
             for code, years in programs
-            for year in range(1, years + 1)]
+            for level in [*range(1, years + 1), *([RESIDENCY] if code in RESIDENCY_PROGRAMS else [])]]

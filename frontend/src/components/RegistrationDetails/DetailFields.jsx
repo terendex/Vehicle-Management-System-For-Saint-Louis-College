@@ -2,7 +2,7 @@ import {
   DEPARTMENTS, DRIVER_RELATIONSHIPS, OTHER_VEHICLE_TYPE, VEHICLE_COLORS, VEHICLE_TYPES,
   formatDetailValue,
 } from './detailRules'
-import { COLLEGES, composeProgramYear, splitProgramYear, yearsFor } from '../../utils/collegePrograms'
+import { COLLEGES, composeProgramYear, splitProgramYear, yearLabel, yearsFor } from '../../utils/collegePrograms'
 
 /* The editable-detail fields, rendered from whatever the server says is
    editable for this particular registration.
@@ -102,7 +102,7 @@ export default function DetailFields({
                 style={{ marginTop: 8 }}
               >
                 <option value="">{code ? 'Select year' : 'Choose a program first'}</option>
-                {yearsFor(code).map(y => <option key={y} value={y}>{`Year ${y}`}</option>)}
+                {yearsFor(code).map(y => <option key={y} value={y}>{yearLabel(y)}</option>)}
               </select>
               {legacy && value === onFile && (
                 <span className="rd-field-hint">

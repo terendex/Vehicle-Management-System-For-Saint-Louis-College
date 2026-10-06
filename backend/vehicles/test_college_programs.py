@@ -11,8 +11,8 @@ from pathlib import Path
 from django.conf import settings
 from django.test import SimpleTestCase
 
-from vehicles.college_programs import (COLLEGES, PROGRAM_YEARS, all_program_years,
-                                       normalize_program_year)
+from vehicles.college_programs import (COLLEGES, PROGRAM_YEARS, RESIDENCY_PROGRAMS,
+                                       all_program_years, normalize_program_year)
 from vehicles.models import VehicleRegistration
 from vehicles.test_registration_payment import PaymentTestCase
 
@@ -25,22 +25,31 @@ class CatalogTests(SimpleTestCase):
         """The form's dropdown and the server's check must offer the same list."""
         bundled = json.loads(FRONTEND_COPY.read_text(encoding='utf-8'))
         self.assertEqual(
-            [(c['college'], c['name'], tuple((p['code'], p['years']) for p in c['programs']))
+            [(c['college'], c['name'],
+              tuple((p['code'], p['years'], bool(p.get('residency'))) for p in c['programs']))
              for c in bundled],
-            [(code, name, tuple(programs)) for code, name, programs in COLLEGES],
+            [(code, name, tuple((p, years, p in RESIDENCY_PROGRAMS) for p, years in programs))
+             for code, name, programs in COLLEGES],
             'frontend/src/data/collegePrograms.json and vehicles/college_programs.py differ')
 
     def test_the_list_as_given(self):
-        self.assertEqual(len(PROGRAM_YEARS), 36)
+        self.assertEqual(len(PROGRAM_YEARS), 30)
         self.assertEqual(PROGRAM_YEARS['BS Arch'], 5)
         two_year = {'JD'} | {code for college, _, programs in COLLEGES if college == 'SAS'
                              for code, _ in programs}
-        self.assertEqual(len(two_year), 14)
+        self.assertEqual(len(two_year), 8)
         self.assertTrue(all(y == 2 for code, y in PROGRAM_YEARS.items() if code in two_year))
         self.assertTrue(all(y == 4 for code, y in PROGRAM_YEARS.items()
                             if code != 'BS Arch' and code not in two_year))
         for gone in ('BSCS', 'BSN', 'BSEE', 'BSME', 'AB Communication'):
             self.assertNotIn(gone, PROGRAM_YEARS)
+
+    def test_advanced_studies_is_the_fee_schedule(self):
+        """Only what the School of Advanced Studies' schedule of fees lists:
+        PhD and EdD, and MAEd (no majors), MBA, MAGC, MLIS and MPA."""
+        sas = [code for college, _, programs in COLLEGES if college == 'SAS' for code, _ in programs]
+        self.assertEqual(sas, ['PhD', 'EdD', 'MAEd', 'MBA', 'MAGC', 'MLIS', 'MPA'])
+        self.assertEqual(RESIDENCY_PROGRAMS, set(sas))
 
     def test_normalising(self):
         self.assertEqual(normalize_program_year('BSIT - 3'), 'BSIT - 3')
@@ -48,13 +57,17 @@ class CatalogTests(SimpleTestCase):
         self.assertEqual(normalize_program_year('  bsit-3 '), 'BSIT - 3')
         self.assertEqual(normalize_program_year('bs  psych 2'), 'BS Psych - 2')
         self.assertEqual(normalize_program_year('BS Arch - 5'), 'BS Arch - 5')
-        self.assertEqual(normalize_program_year('maed  em 2'), 'MAEd EM - 2')
+        self.assertEqual(normalize_program_year('maed 2'), 'MAEd - 2')
         self.assertEqual(normalize_program_year('MBA - 1'), 'MBA - 1')
+        self.assertEqual(normalize_program_year('phd 2'), 'PhD - 2')
+        self.assertEqual(normalize_program_year('mba residency'), 'MBA - Residency')
+        self.assertEqual(normalize_program_year('EdD - RESIDENCY'), 'EdD - Residency')
 
     def test_refusing(self):
         for bad in ('', 'BSIT', 'BSIT - 0', 'BSIT - 5', 'BSIT 12', 'BS Arch - 6',
                     'BSCS - 2', 'Info Tech - 1', 'SHS - STEM - Grade 11',
-                    'JD - 3', 'JD - 4', 'MBA - 3', 'MAEd - 1'):
+                    'JD - 3', 'JD - 4', 'MBA - 3', 'PhD - 3', 'MAEd EM - 1',
+                    'BSIT - Residency', 'JD - Residency'):
             self.assertIsNone(normalize_program_year(bad), bad)
 
     def test_program_list_endpoint_serves_the_official_list(self):
@@ -63,7 +76,8 @@ class CatalogTests(SimpleTestCase):
         self.assertNotIn('BSIT - 5', names)
         self.assertIn('JD - 2', names)
         self.assertNotIn('JD - 3', names)
-        self.assertEqual(len(names), 21 * 4 + 5 + 14 * 2)
+        self.assertIn('MPA - Residency', names)
+        self.assertEqual(len(names), 21 * 4 + 5 + 8 * 2 + 7)
 
 
 class SubmitTests(PaymentTestCase):
@@ -107,6 +121,13 @@ class EditTests(PaymentTestCase):
         res = self.edit(reg, program_year='Info Tech - 2')
         self.assertEqual(res.status_code, 400, res.data)
         self.assertIn('program_year', res.data['errors'])
+
+    def test_residency_is_saved(self):
+        reg = self.submit()
+        res = self.edit(reg, program_year='mba - residency')
+        self.assertEqual(res.status_code, 200, res.data)
+        reg.refresh_from_db()
+        self.assertEqual(reg.program_year, 'MBA - Residency')
 
     def test_edit_from_the_list_is_saved(self):
         reg = self.submit()

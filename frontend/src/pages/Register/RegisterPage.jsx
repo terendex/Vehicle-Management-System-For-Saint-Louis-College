@@ -148,7 +148,7 @@ const REGISTRATION_TYPES = [
     description: 'Parent, guardian or driver fetching, or staying with, a student',
   },
 ]
-import { COLLEGES, composeProgramYear, findProgram, yearsFor } from '../../utils/collegePrograms'
+import { COLLEGES, composeProgramYear, findProgram, yearLabel, yearsFor } from '../../utils/collegePrograms'
 import { cleanInitial, namePayload } from '../../utils/names'
 import './RegisterPage.css'
 
@@ -1235,7 +1235,8 @@ export default function RegisterPage() {
   const regOpen = regStatus?.is_open ?? true
 
   // The official program list (utils/collegePrograms) decides the year levels
-  // on offer: 1–4, 1–5 for BS Arch, 1–2 for JD and the masteral programs.
+  // on offer: 1–4, 1–5 for BS Arch, 1–2 for JD and the School of Advanced
+  // Studies, whose programs also offer Residency.
   const yearOptions = yearsFor(formData.student_program)
   const selectedProgram = findProgram(formData.student_program)
 
@@ -1720,6 +1721,12 @@ export default function RegisterPage() {
                             who have already finished a bachelor's degree.
                           </span>
                         )}
+                        {selectedProgram?.requires_masters && (
+                          <span className="field-hint">
+                            {selectedProgram.name} is a doctoral program. It admits only students
+                            who have already finished a master's degree.
+                          </span>
+                        )}
                       </div>
                       <div className="form-group">
                         <label>Year Level <span className="required">*</span></label>
@@ -1728,7 +1735,7 @@ export default function RegisterPage() {
                           disabled={!formData.student_program} required
                         >
                           <option value="">{formData.student_program ? 'Select Year' : 'Choose a program first'}</option>
-                          {yearOptions.map(y => <option key={y} value={y}>{`Year ${y}`}</option>)}
+                          {yearOptions.map(y => <option key={y} value={y}>{yearLabel(y)}</option>)}
                         </select>
                       </div>
                     </>

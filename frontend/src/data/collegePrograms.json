@@ -48,21 +48,15 @@
   },
   {
     "college": "SAS",
-    "name": "School of Advanced Studies (Masteral)",
+    "name": "School of Advanced Studies",
     "programs": [
-      { "code": "MAEd EM", "name": "Master of Arts in Education, major in Educational Management", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd English", "name": "Master of Arts in Education, major in English", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd Filipino", "name": "Master of Arts in Education, major in Filipino", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd RVE", "name": "Master of Arts in Education, major in Religious and Values Education", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd Science", "name": "Master of Arts in Education, major in Science", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd Math", "name": "Master of Arts in Education, major in Mathematics", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd PE", "name": "Master of Arts in Education, major in Physical Education", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd SocSci", "name": "Master of Arts in Education, major in Social Sciences", "years": 2, "requires_bachelors": true },
-      { "code": "MAEd SpEd", "name": "Master of Arts in Education, major in Special Education", "years": 2, "requires_bachelors": true },
-      { "code": "MAGC", "name": "Master of Arts in Guidance and Counseling", "years": 2, "requires_bachelors": true },
-      { "code": "MLIS", "name": "Master in Library and Information Science", "years": 2, "requires_bachelors": true },
-      { "code": "MBA", "name": "Master in Business Administration", "years": 2, "requires_bachelors": true },
-      { "code": "MPA", "name": "Master in Public Administration", "years": 2, "requires_bachelors": true }
+      { "code": "PhD",  "name": "Doctor of Philosophy",                     "years": 2, "residency": true, "requires_masters": true },
+      { "code": "EdD",  "name": "Doctor of Education",                      "years": 2, "residency": true, "requires_masters": true },
+      { "code": "MAEd", "name": "Master of Arts in Education",              "years": 2, "residency": true, "requires_bachelors": true },
+      { "code": "MBA",  "name": "Master in Business Administration",        "years": 2, "residency": true, "requires_bachelors": true },
+      { "code": "MAGC", "name": "Master of Arts in Guidance and Counseling", "years": 2, "residency": true, "requires_bachelors": true },
+      { "code": "MLIS", "name": "Master in Library and Information Science", "years": 2, "residency": true, "requires_bachelors": true },
+      { "code": "MPA",  "name": "Master in Public Administration",          "years": 2, "residency": true, "requires_bachelors": true }
     ]
   }
 ]
