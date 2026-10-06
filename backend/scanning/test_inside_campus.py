@@ -57,10 +57,14 @@ class InsideCampusTests(TestCase):
         self.assertEqual([r['plate'] for r in data['results']], ['FET 4004'])
         self.assertEqual(data['counts']['all'], 2)
 
-    def test_admin_only(self):
+    def test_guards_and_admin_only(self):
         guard = User.objects.create_user(email='in-guard@slc.edu.ph', last_name='G', first_name='G',
                                          password='pw', role='security')
         self.client.force_authenticate(guard)
+        self.assertEqual(self.client.get('/api/scan/inside/').status_code, 200)
+        owner = User.objects.create_user(email='in-owner@slc.edu.ph', last_name='O', first_name='O',
+                                         password='pw', role='vehicle_owner', owner_type='student')
+        self.client.force_authenticate(owner)
         self.assertEqual(self.client.get('/api/scan/inside/').status_code, 403)
 
     def test_a_plateless_vehicle_never_takes_a_walk_in_visitors_name(self):

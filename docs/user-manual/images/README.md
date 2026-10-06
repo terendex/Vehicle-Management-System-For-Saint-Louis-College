@@ -517,7 +517,7 @@ The guard’s main screen at the gate. Plates are read automatically from the en
 5. **Scan QR**: Scan the QR code on the owner’s vehicle pass, or on any printed slip — a visitor slip, a supplier or event pass, or the entry slip given to a vehicle with no plate. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up cannot let a vehicle out by accident.
 6. **No Plate?**: Record a vehicle with no plate or conduction sticker by describing it. Its entry slip prints on the thermal printer for the driver to keep.
 7. **Recent Entries**: Latest decisions at this gate, plus the plates and names you looked up. The chips count entries by category.
-8. **Active Visitors**: Visitor passes still inside, with time left. +30m extends a pass.
+8. **Active Owners**: Everyone inside the campus: owners, fetchers and unregistered vehicles with how long they have been in, plus visitor passes with time left. +30m extends a pass.
 9. **Confiscated accounts**: Owners serving a violation penalty. They may not enter or park.
 10. **Shift controls**: On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.
 

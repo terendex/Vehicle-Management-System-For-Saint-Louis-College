@@ -3611,7 +3611,8 @@ class IsGuardOrAdmin(permissions.BasePermission):
 
 
 # ── Who is on campus now (Operations Center) ─────────────────────────────────
-# The filter chips on the admin's Inside Campus tab. Each vehicle falls in
+# The filter chips on the admin's Inside Campus tab and the guard's Active
+# Owners panel. Each vehicle falls in
 # exactly one, by the category the gate recorded for it (AccessLog.Category);
 # supplier and event vehicles only count under All.
 INSIDE_GROUPS = (
@@ -3632,8 +3633,10 @@ class InsideCampusView(APIView):
     today's authorized entry with no exit pointing back at it, newer than
     STALE_ENTRY_HOURS, one row per vehicle (plate, or the row for a vehicle
     with no plate). So the total here is the parking screens' On Campus count.
+
+    The guard's Active Owners panel lists the same rows, so guards read it too.
     """
-    permission_classes = [IsAdminRole]
+    permission_classes = [IsGuardOrAdmin]
 
     def get(self, request):
         from .occupancy import STALE_ENTRY_HOURS

@@ -19,7 +19,7 @@ import {
   getVisitorPasses, extendVisitorPass, recordVisitorDetails,
   confirmVisitorSlipPrinted, lookupSlip, exitSlip,
   lookupOwner, getUnrecognizedInside, recordUnrecognizedEntry, recordUnrecognizedExit,
-  getOverstaying, acknowledgeOverstay,
+  getOverstaying, acknowledgeOverstay, getInsideCampus,
 } from '../../api/scanning'
 import { getSystemSettings, getExpectedVisitsToday } from '../../api/vehicles'
 import { camerasApi } from '../../api/cameras'
@@ -1681,6 +1681,9 @@ export default function SecurityEntryManagement() {
   const [lookups, setLookups]         = useState(loadCachedLookups) // lookups the server keeps no row for
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
+  const [inside, setInside]           = useState(null)  // every vehicle on campus now (GET /scan/inside/)
+  const [insideGroup, setInsideGroup] = useState('all') // Active Owners chip
+  const [insideSearch, setInsideSearch] = useState('')
   const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
   const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
   const [recordingPass, setRecordingPass] = useState(null)  // the active pass whose slip is being recorded
@@ -1915,6 +1918,10 @@ export default function SecurityEntryManagement() {
   }
 
 
+  // Everyone on campus, every gate: owners, fetchers, visitors, unregistered.
+  const refreshInside = () =>
+    getInsideCampus().then(r => setInside(r.data)).catch(() => {})
+
   const refreshUnrecognized = () =>
     getUnrecognizedInside(gateId).then(r => setUnrecognized(r.data ?? [])).catch(() => {})
 
@@ -1924,7 +1931,7 @@ export default function SecurityEntryManagement() {
     getExpectedVisitsToday().then(r => setExpected(r.data ?? [])).catch(() => {})
 
   const refreshAll = () => {
-    refreshLogs(); refreshPasses(); refreshUnrecognized(); refreshOverstaying(); refreshExpected()
+    refreshLogs(); refreshPasses(); refreshUnrecognized(); refreshOverstaying(); refreshExpected(); refreshInside()
   }
 
   // Instant refresh on new gate scans / visitor-pass changes
@@ -1935,9 +1942,35 @@ export default function SecurityEntryManagement() {
     refreshPasses()
     refreshUnrecognized()
     refreshExpected()
-    const t = setInterval(() => { refreshPasses(); refreshOverstaying() }, 30000)
+    refreshInside()
+    const t = setInterval(() => { refreshPasses(); refreshOverstaying(); refreshInside() }, 30000)
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Active Owners: every vehicle inside. A visitor on a pass shows as the pass
+  // (time left, +30m, slip), so its entry row is dropped by plate; the rest
+  // come from the inside list as they are. Passes first, they need watching.
+  const plateKey = (pl) => (pl || '').toUpperCase().replace(/\s+/g, '')
+  const passPlates = new Set(passes.map(p => plateKey(p.plate_number)).filter(Boolean))
+  const activeAll = [
+    ...passes.map(p => ({ key: `pass-${p.id}`, group: 'visitor', pass: p,
+                          search: `${p.plate_number} ${p.visitor_name || ''}` })),
+    ...(inside?.results ?? [])
+      .filter(r => !passPlates.has(plateKey(r.plate)))
+      .map(r => ({ key: `in-${r.id}`, group: r.group, row: r, search: `${r.plate} ${r.name || ''}` })),
+  ]
+  const activeCounts = activeAll.reduce((c, a) => ({ ...c, [a.group]: (c[a.group] || 0) + 1 }), {})
+  // Only the chips that have someone in them; supplier and event vehicles
+  // ('other') are under All only, as on the admin's Inside Campus tab.
+  const activeChips = [{ key: 'all', label: 'All', count: activeAll.length },
+    ...(inside?.groups ?? [{ key: 'visitor', label: 'Visitors' }])
+      .filter(g => activeCounts[g.key])
+      .map(g => ({ ...g, count: activeCounts[g.key] }))]
+  const activeGroup = activeChips.some(c => c.key === insideGroup) ? insideGroup : 'all'
+  const activeQuery = insideSearch.trim().toLowerCase().replace(/\s+/g, '')
+  const activeRows = activeAll.filter(a =>
+    (activeGroup === 'all' || a.group === activeGroup)
+    && (!activeQuery || a.search.toLowerCase().replace(/\s+/g, '').includes(activeQuery)))
 
   // Walk-ins inside whose slip has not been typed in yet.
   const unrecordedCount = recordable.filter(p => !p.visitor_name).length
@@ -2749,69 +2782,123 @@ export default function SecurityEntryManagement() {
               </section>
             )}
 
-            {/* Active visitors — time remaining / overstay */}
+            {/* Active owners — every vehicle inside the campus, from every gate.
+                Visitors keep their pass row (time left, +30m, slip); owners,
+                fetchers and unregistered vehicles show how long they have
+                been in. */}
             <section className="cm-panel">
               <div className="cm-panel-head">
-                <span className="cm-panel-title"><Clock size={14} /> Active Visitors</span>
-                <div className="cm-panel-end"><span className="cm-count">{passes.length}</span></div>
+                <span className="cm-panel-title"><Users size={14} /> Active Owners</span>
+                <div className="cm-panel-end"><span className="cm-count" title="Vehicles inside the campus now">{activeAll.length}</span></div>
               </div>
-              {passes.length === 0 ? (
-                <p className="cm-empty">No visitors currently inside.</p>
+              {activeAll.length === 0 ? (
+                <p className="cm-empty">No one is inside the campus right now.</p>
               ) : (
-                <div className="em-side-list">
-                  {passes.map(p => {
-                    const t = passTimeInfo(p)
-                    return (
-                      <div key={p.id} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
-                        <div className="em-visitor-main">
-                          <span className="em-visitor-plate">{p.plate_number}</span>
-                          {p.visitor_name ? (
-                            <span className="em-visitor-sub">
-                              {`${p.visitor_name} · `}
-                              {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                <>
+                  <div className="em-active-tools">
+                    <div className="em-active-chips" role="group" aria-label="Who is inside">
+                      {activeChips.map(c => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          className={`em-active-chip${activeGroup === c.key ? ' active' : ''}`}
+                          aria-pressed={activeGroup === c.key}
+                          onClick={() => setInsideGroup(c.key)}
+                        >
+                          {c.label} <span className="em-active-chip-count">{c.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="em-active-search">
+                      <Search size={12} />
+                      <input
+                        type="search"
+                        placeholder="Plate or name"
+                        value={insideSearch}
+                        onChange={(e) => setInsideSearch(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  {activeRows.length === 0 ? (
+                    <p className="cm-empty">No one inside matches.</p>
+                  ) : (
+                    <div className="em-side-list em-active-list">
+                      {activeRows.map(a => {
+                        if (a.row) {
+                          const r = a.row
+                          return (
+                            <div key={a.key} className="em-visitor-row">
+                              <div className="em-visitor-main">
+                                <span className="em-visitor-plate">{r.plate}</span>
+                                <span className="em-visitor-sub">
+                                  {r.name || 'Name not recorded'}
+                                  {r.vehicle_type ? ` · ${r.vehicle_type}` : ''}
+                                  {` · ${r.gate}`}
+                                </span>
+                              </div>
+                              <span className={`em-cat em-cat--${r.group}`}>{r.category_label}</span>
+                              <span className="em-visitor-time em-active-stay"
+                                title={`Came in at ${fmtClock(r.entered_at)}`}>
+                                {fmtShort(r.minutes_inside)}
+                              </span>
+                            </div>
+                          )
+                        }
+                        const p = a.pass
+                        const t = passTimeInfo(p)
+                        return (
+                          <div key={p.id} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
+                            <div className="em-visitor-main">
+                              <span className="em-visitor-plate">{p.plate_number}</span>
+                              {p.visitor_name ? (
+                                <span className="em-visitor-sub">
+                                  {`${p.visitor_name} · `}
+                                  {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
+                                </span>
+                              ) : (
+                                // Let in on a blank slip; the guard has not typed it in yet.
+                                <span className="em-visitor-sub" style={{ color: '#8A6B00', fontWeight: 600 }}>
+                                  Details not recorded
+                                </span>
+                              )}
+                            </div>
+                            <span className={`em-visitor-time${t.overdue ? ' overdue' : t.soon ? ' soon' : ''}`}>
+                              {t.overdue && <AlertTriangle size={11} />}
+                              {t.label}
                             </span>
-                          ) : (
-                            // Let in on a blank slip; the guard has not typed it in yet.
-                            <span className="em-visitor-sub" style={{ color: '#8A6B00', fontWeight: 600 }}>
-                              Details not recorded
-                            </span>
-                          )}
-                        </div>
-                        <span className={`em-visitor-time${t.overdue ? ' overdue' : t.soon ? ' soon' : ''}`}>
-                          {t.overdue && <AlertTriangle size={11} />}
-                          {t.label}
-                        </span>
-                        <button
-                          type="button"
-                          className="em-visitor-extend"
-                          onClick={() => handleExtendPass(p)}
-                          title="Extend by 30 minutes"
-                        >
-                          +30m
-                        </button>
-                        <button
-                          type="button"
-                          className="em-visitor-extend"
-                          onClick={() => setRecordingPass(p)}
-                          title={p.visitor_name ? 'Edit the visitor slip details' : 'Record Visitor Slip — type in what the visitor wrote'}
-                          aria-label={`Record the visitor slip for ${p.plate_number}`}
-                          style={p.visitor_name ? undefined : { color: '#8A6B00', borderColor: '#F7E08A', background: '#FEF9E4' }}
-                        >
-                          <ClipboardList size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          className="em-visitor-extend"
-                          onClick={() => openSlip(p.qr_payload)}
-                          title="Open the visitor slip — reprint it, or record the exit"
-                          aria-label={`Open the slip for ${p.plate_number}`}
-                        >
-                          <Ticket size={12} />
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
+                            <button
+                              type="button"
+                              className="em-visitor-extend"
+                              onClick={() => handleExtendPass(p)}
+                              title="Extend by 30 minutes"
+                            >
+                              +30m
+                            </button>
+                            <button
+                              type="button"
+                              className="em-visitor-extend"
+                              onClick={() => setRecordingPass(p)}
+                              title={p.visitor_name ? 'Edit the visitor slip details' : 'Record Visitor Slip — type in what the visitor wrote'}
+                              aria-label={`Record the visitor slip for ${p.plate_number}`}
+                              style={p.visitor_name ? undefined : { color: '#8A6B00', borderColor: '#F7E08A', background: '#FEF9E4' }}
+                            >
+                              <ClipboardList size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="em-visitor-extend"
+                              onClick={() => openSlip(p.qr_payload)}
+                              title="Open the visitor slip — reprint it, or record the exit"
+                              aria-label={`Open the slip for ${p.plate_number}`}
+                            >
+                              <Ticket size={12} />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </section>
 

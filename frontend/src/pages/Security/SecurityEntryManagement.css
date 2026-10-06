@@ -233,6 +233,73 @@
 }
 .em-visitor-extend:hover { background: #EEF4F9; }
 
+/* ─── Active Owners panel ──────────────────────────────────────────
+   Everyone inside the campus: the visitor rows above plus an owner row
+   per vehicle. Chips and the search narrow it; the list scrolls so a
+   full campus does not push the panels below off the column. */
+.em-active-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+.em-active-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.em-active-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #2E4C63;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.em-active-chip:hover { background: #EEF4F9; }
+.em-active-chip.active { background: #084A85; border-color: #084A85; color: #FFFFFF; }
+.em-active-chip-count { font-weight: 700; opacity: 0.75; }
+.em-active-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid #D3E1EC;
+  background: #FFFFFF;
+  color: #64839C;
+}
+.em-active-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 12px;
+  font-family: inherit;
+  color: #0B2340;
+}
+.em-active-list { max-height: 420px; overflow-y: auto; }
+.em-active-stay { color: #2E4C63; }
+
+/* Who came in, same colours as the admin's Inside Campus tab. */
+.em-cat {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  background: #EEF2F6;
+  color: #2E4C63;
+}
+.em-cat--student      { background: #DCE9F2; color: #084A85; }
+.em-cat--employee     { background: #E8F7F0; color: #0A5C43; }
+.em-cat--fetcher      { background: #EFE8FA; color: #5B2E91; }
+.em-cat--visitor      { background: #FDF0BE; color: #8A6B00; }
+.em-cat--unregistered { background: #FDECEC; color: #9B1C1C; }
+
 /* ─── Overstaying panel ────────────────────────────────────────────
    Amber, not red: an overstay is a rule being broken, but the guard is
    being asked to judge it, not told something has already gone wrong.
