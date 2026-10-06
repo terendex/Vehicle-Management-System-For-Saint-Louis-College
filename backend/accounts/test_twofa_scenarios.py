@@ -156,7 +156,7 @@ class Journey(TestCase):
     def make_guard(self, email='guard@slc.edu.ph', **kw):
         from scanning.models import Gate
         Gate.objects.get_or_create(
-            gate_id='gate1', defaults={'name': 'Gate 1', 'is_active': True})
+            gate_id='gate1', defaults={'label': 'Gate 1', 'is_active': True})
         return User.objects.create_user(
             email=email, last_name='GUARD', first_name='GATE', password=PASSWORD,
             role='security', gate_assignment='gate1', **kw)

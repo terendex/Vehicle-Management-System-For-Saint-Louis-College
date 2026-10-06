@@ -97,7 +97,7 @@ class PolicyScopeTests(TwoFactorTestCase):
     def test_guard_gate_login_issues_tokens_without_any_code(self):
         from scanning.models import Gate
         Gate.objects.get_or_create(
-            gate_id='gate1', defaults={'name': 'Gate 1', 'is_active': True},
+            gate_id='gate1', defaults={'label': 'Gate 1', 'is_active': True},
         )
         res = self.client.post(
             '/api/auth/guard-login/',
