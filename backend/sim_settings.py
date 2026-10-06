@@ -68,6 +68,10 @@ if EMAIL_BACKEND == _REAL_TRANSPORT:          # outbox switched off: send throug
 # The demo never writes backup files (its data may be a copy of the live
 # database), and leaves real cameras alone unless asked: SIM_CAMERAS=1.
 SCHEDULER_SKIP_JOBS = ('auto_backup', 'scheduled_backup')
+
+# Sign in on the password alone: no authenticator code at login, whatever the
+# date (accounts/twofa.py). Sensitive actions still ask for a code.
+SIM_SKIP_2FA_LOGIN = True
 SIM_CAMERAS = os.environ.get('SIM_CAMERAS', '').strip().lower() in ('1', 'true', 'yes')
 
 # The clock itself. Installed now, before any app or model module is imported,

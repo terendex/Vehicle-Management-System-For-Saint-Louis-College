@@ -199,6 +199,24 @@ def read_challenge(token):
     return user, data.get('purpose')
 
 
+def _demo_skips_login_codes() -> bool:
+    """The instructor demo signs in on the password alone.
+
+    Moving its date around is the point of the demo, and a code screen in the
+    way of every account it is shown from stops the demonstration. Both checks
+    must hold: the setting comes only from sim_settings.py, and the simulated
+    clock refuses to install anywhere but a local demo database, so the real
+    system never reaches this.
+    """
+    if not getattr(settings, 'SIM_SKIP_2FA_LOGIN', False):
+        return False
+    try:
+        import sim_clock
+    except ImportError:                                  # pragma: no cover — always present in this repo
+        return False
+    return sim_clock.installed()
+
+
 def login_challenge(user, request=None):
     """Decide whether a correct password is enough for `user` this time.
 
@@ -226,7 +244,7 @@ def login_challenge(user, request=None):
     """
     from .models import TwoFactorDevice
 
-    if not requires_2fa(user):
+    if not requires_2fa(user) or _demo_skips_login_codes():
         return None
 
     device = (TwoFactorDevice.objects

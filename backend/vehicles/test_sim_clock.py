@@ -80,6 +80,30 @@ class DormancyOnTheRealClockTests(SimpleTestCase):
         self.assertTrue(self._dormant(real - timedelta(days=8), real, real))
 
 
+class DemoLoginWithoutCodeTests(SimpleTestCase):
+    """The demo signs in on the password alone; the real system never does."""
+
+    def test_the_demo_asks_no_code_at_login(self):
+        from types import SimpleNamespace
+        from accounts import twofa
+        admin = SimpleNamespace(is_authenticated=True, is_archived=False, is_active=True, role='admin')
+        with override_settings(SIM_SKIP_2FA_LOGIN=True), \
+             mock.patch.object(sim_clock, 'installed', return_value=True):
+            self.assertIsNone(twofa.login_challenge(admin))
+
+    def test_the_setting_alone_does_not_skip_codes(self):
+        from accounts import twofa
+        with override_settings(SIM_SKIP_2FA_LOGIN=True):
+            self.assertFalse(sim_clock.installed())
+            self.assertFalse(twofa._demo_skips_login_codes())
+
+    def test_the_real_system_has_no_such_setting(self):
+        from django.conf import settings
+        from accounts import twofa
+        self.assertFalse(getattr(settings, 'SIM_SKIP_2FA_LOGIN', False))
+        self.assertFalse(twofa._demo_skips_login_codes())
+
+
 class HelperTests(SimpleTestCase):
 
     def test_offsets_read_plainly(self):
