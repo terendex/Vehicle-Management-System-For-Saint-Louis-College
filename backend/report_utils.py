@@ -116,13 +116,12 @@ def report_filename(report_name, ext):
 _WIN_FONTS = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
 
 # (reportlab name, TTF filenames in order of preference, fallback built-in)
-# per letterhead line. The institution name always gets a blackletter face:
-# Old English Text MT where Windows has it (the campus server), otherwise
-# UnifrakturMaguntia, an Old English style face bundled in report_assets/
-# under the SIL Open Font License (UnifrakturMaguntia-OFL.txt), for Linux
-# hosts such as Railway that have no Windows fonts.
+# per letterhead line. The institution name is always Old English Text MT:
+# the font itself where Windows has it (the campus server), otherwise the
+# same name drawn from its outlines (slc_wordmark.json, see _WORDMARK) on
+# Linux hosts such as Railway. Times-Bold only if both are missing.
 _LETTERHEAD_FACES = (
-    ('SLC-OldEnglish',   ('OLDENGL.TTF', 'UnifrakturMaguntia-Book.ttf'), 'Times-Bold'),   # institution
+    ('SLC-OldEnglish',   ('OLDENGL.TTF',), 'Times-Bold'),     # institution
     ('SLC-Gothic',       ('GOTHIC.TTF',),  'Times-Roman'),     # location
     ('SLC-BookmanItal',  ('BOOKOSI.TTF',), 'Times-Italic'),    # tagline
     ('SLC-Bookman',      ('BOOKOS.TTF',),  'Times-Roman'),     # accreditation
@@ -134,6 +133,13 @@ _PDF_INSTITUTION_FONT = 'Times-Bold'
 _PDF_LOCATION_FONT    = 'Times-Roman'
 _PDF_TAGLINE_FONT     = 'Times-Italic'
 _PDF_ACCRED_FONT      = 'Times-Roman'
+
+# "Saint Louis College" in Old English Text MT as glyph outlines, drawn when
+# the font is not installed. The font is Monotype's and may not be copied
+# into the repository, so the one phrase ships as artwork instead, like the
+# seals beside it. Built by report_assets/build_wordmark.py.
+_WORDMARK_PATH = os.path.join(settings.BASE_DIR, 'report_assets', 'slc_wordmark.json')
+_WORDMARK = None    # loaded by _register_letterhead_fonts() when it is needed
 
 
 def _font_path(filename):
@@ -180,6 +186,38 @@ def _register_letterhead_fonts():
     _PDF_LOCATION_FONT    = resolved['SLC-Gothic']
     _PDF_TAGLINE_FONT     = resolved['SLC-BookmanItal']
     _PDF_ACCRED_FONT      = resolved['SLC-Bookman']
+
+    global _WORDMARK
+    if _PDF_INSTITUTION_FONT != 'SLC-OldEnglish':
+        try:
+            import json
+            with open(_WORDMARK_PATH, encoding='utf-8') as f:
+                wordmark = json.load(f)
+            # Outlines of another name would print the wrong one; Times it is.
+            if wordmark.get('text') == LH_INSTITUTION:
+                _WORDMARK = wordmark
+        except (OSError, ValueError):
+            pass
+
+
+def _draw_wordmark(canvas, cx, baseline, size):
+    """Draw _WORDMARK centred on `cx`, sitting on `baseline`, at `size` points:
+    the same shapes and width drawCentredString gives with the real font."""
+    from reportlab.pdfgen.canvas import FILL_NON_ZERO   # TrueType outlines wind non-zero
+    scale = size / _WORDMARK['units_per_em']
+    left = cx - _WORDMARK['advance'] * scale / 2
+    path = canvas.beginPath()
+    for kind, *v in _WORDMARK['ops']:
+        pts = [left + v[i] * scale if i % 2 == 0 else baseline + v[i] * scale for i in range(len(v))]
+        if kind == 'M':
+            path.moveTo(*pts)
+        elif kind == 'L':
+            path.lineTo(*pts)
+        elif kind == 'C':
+            path.curveTo(*pts)
+        else:
+            path.close()
+    canvas.drawPath(path, stroke=0, fill=1, fillMode=FILL_NON_ZERO)
 
 
 def branded_excel_response(*, filename, sheet_title, report_title, subtitle, headers, rows, col_widths):
@@ -296,7 +334,10 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right='', per
     # Institution name is centred on the page; the seal tucks in just to its
     # left (a crest beside the name), vertically centred on the text block.
     inst_size = 22
-    inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
+    if _WORDMARK:
+        inst_w = _WORDMARK['advance'] * inst_size / _WORDMARK['units_per_em']
+    else:
+        inst_w = canvas.stringWidth(LH_INSTITUTION, _PDF_INSTITUTION_FONT, inst_size)
     logo_w = 16 * mm
     # College seal to the left of the name, CDSO emblem to the right, so the
     # name stays centred on the page between them. Each is drawn only if its
@@ -315,8 +356,11 @@ def draw_letterhead(canvas, w, h, *, title, footer_left='', footer_right='', per
         except Exception:
             pass
     canvas.setFillColor(navy)
-    canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
-    canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
+    if _WORDMARK:
+        _draw_wordmark(canvas, cx, h - 15 * mm, inst_size)
+    else:
+        canvas.setFont(_PDF_INSTITUTION_FONT, inst_size)
+        canvas.drawCentredString(cx, h - 15 * mm, LH_INSTITUTION)
     canvas.setFillColor(colors.HexColor('#333333'))
     canvas.setFont(_PDF_LOCATION_FONT, 9.5)
     canvas.drawCentredString(cx, h - 19.5 * mm, LH_LOCATION)
