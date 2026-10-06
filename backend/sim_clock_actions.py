@@ -10,15 +10,21 @@ from django.utils import timezone
 
 import sim_clock
 
-# The time-based jobs a demo needs to see happen, in the scheduler's order
-# (vehicles/scheduler.py DAILY_JOBS): expire overdue applications and send
-# reminders, archive accounts past July 31, roll events and scheduled visits
-# over. Backups and the retention purge are left to the scheduler.
+# Every time-based job, in the scheduler's order (vehicles/scheduler.py
+# DAILY_JOBS), so Run jobs now is the same pass the scheduler makes: take the
+# backups that are due (into backend/sim_backups), roll events over, expire
+# overdue applications and send reminders, archive accounts past July 31 and
+# scheduled visits past their day, then apply data retention. Backups come
+# first, as on the real system, so the data is captured before anything is
+# archived or purged.
 DEMO_JOBS = (
+    'auto_backup',
+    'scheduled_backup',
     'auto_manage_events',
     'expire_unpaid_registrations',
     'auto_archive_expired_accounts',
     'auto_archive_past_visits',
+    'purge_old_records',
 )
 
 
@@ -58,6 +64,7 @@ def status():
 def enable(on=True):
     _require()
     sim_clock.write(enabled=on)
+    _after_move()
     return status()
 
 
@@ -68,7 +75,41 @@ def set_to(moment):
         moment = timezone.make_aware(moment, timezone.get_current_timezone())
     sim_clock.write(enabled=True,
                     offset_seconds=(moment - sim_clock.real_now()).total_seconds())
+    _after_move()
     return status()
+
+
+def _after_move():
+    """Keep the backups and the scheduler in step with the date just set."""
+    _drop_future_backups()
+    # The scheduler sleeps up to an hour on real time; wake it so its pass runs
+    # at the new date now. A no-op outside the server process (the CLI).
+    from vehicles import scheduler
+    scheduler.wake()
+
+
+def _drop_future_backups():
+    """Delete the demo's backups dated after the simulated now.
+
+    Moving the clock back means those backups have not been taken yet. Left in
+    place they would make the next one look not due, and rotation (newest N by
+    date) would delete a fresh backup before them. Only the demo's own folders,
+    which sim_settings always sets, are ever touched.
+    """
+    import os
+    from accounts.backup_utils import _NAME_RE, taken_at
+    now = timezone.now()
+    removed = []
+    for folder in (getattr(settings, 'BACKUP_DIR', None),
+                   getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None)):
+        if not folder or not os.path.isdir(folder):
+            continue
+        for name in os.listdir(folder):
+            path = os.path.join(folder, name)
+            if _NAME_RE.match(name) and os.path.isfile(path) and taken_at(name, path) > now:
+                os.remove(path)
+                removed.append(name)
+    return removed
 
 
 def advance(*, hours=0, days=0, working_days=0):
@@ -87,6 +128,7 @@ def reset():
     """Back to the real time (offset 0), clock left on."""
     _require()
     sim_clock.write(enabled=True, offset_seconds=0)
+    _after_move()
     return status()
 
 
@@ -105,10 +147,13 @@ def run_jobs():
 
 
 JOB_LABELS = {
+    'auto_backup':                   'Automatic backup',
+    'scheduled_backup':              'Scheduled backup',
     'auto_manage_events':            'Events',
     'expire_unpaid_registrations':   'Unpaid registrations',
     'auto_archive_expired_accounts': 'Expired accounts',
     'auto_archive_past_visits':      'Scheduled visits',
+    'purge_old_records':             'Data retention',
 }
 
 

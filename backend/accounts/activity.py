@@ -59,7 +59,7 @@ def _violations(user):
     labels[Violation.Type.UNAUTHORIZED] = labels[Violation.Type.UNAUTHORIZED_ENTRY]
     out = []
     for v in rows:
-        settled = v.is_resolved or v.status in (Violation.Status.CLEARED, Violation.Status.LIFTED)
+        settled = v.is_resolved or v.status in Violation.INACTIVE_STATUSES
         label = labels.get(v.violation_type, v.violation_type)
         if v.overstay_minutes:
             label = f'{label} ({format_overstay(v.overstay_minutes)})'

@@ -25,6 +25,8 @@ backend/*.log
 backend/sim_clock.json
 backend/sim_clock.json.tmp
 backend/sim_media/
+# The demo's backups: copies of whatever the demo holds, live data included.
+backend/sim_backups/
 
 # Debug logs from backend/debug_settings.py (includes rotated copies like server.log.1)
 backend/logs/

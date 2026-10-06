@@ -16,8 +16,9 @@ What is real in the demo:
     the address on the record. With SIM_EMAIL_TO unset it is printed in the
     backend window instead of sent.
 
-Files go to backend/sim_media; Redis, R2 and Celery are replaced by in-process
-stand-ins, as in the manual-capture settings.
+Files go to backend/sim_media and backups to backend/sim_backups; Redis, R2
+and Celery are replaced by in-process stand-ins, as in the manual-capture
+settings.
 """
 import os
 
@@ -65,13 +66,19 @@ EMAIL_TRANSPORT_BACKEND = 'sim_clock.RedirectEmailBackend'
 if EMAIL_BACKEND == _REAL_TRANSPORT:          # outbox switched off: send through the redirect directly
     EMAIL_BACKEND = EMAIL_TRANSPORT_BACKEND
 
-# The demo never writes backup files (its data may be a copy of the live
-# database), and leaves real cameras alone unless asked: SIM_CAMERAS=1.
-SCHEDULER_SKIP_JOBS = ('auto_backup', 'scheduled_backup')
+# Backups run on the demo's date like every other job, but only ever into
+# backend/sim_backups: its data may be a copy of the live database, and the
+# configured scheduled folder is the live one, a real drive on the campus PC.
+# Automatic, scheduled, manual and pre-restore backups, the backup list and
+# restore all use these folders (accounts/backup_utils.py). Git-ignored.
+BACKUP_DIR = os.path.join(BASE_DIR, 'sim_backups')
+SIM_SCHEDULED_BACKUP_DIR = os.path.join(BACKUP_DIR, 'scheduled')
 
 # Sign in on the password alone: no authenticator code at login, whatever the
 # date (accounts/twofa.py). Sensitive actions still ask for a code.
 SIM_SKIP_2FA_LOGIN = True
+
+# Real cameras are left alone unless asked: SIM_CAMERAS=1.
 SIM_CAMERAS = os.environ.get('SIM_CAMERAS', '').strip().lower() in ('1', 'true', 'yes')
 
 # The clock itself. Installed now, before any app or model module is imported,

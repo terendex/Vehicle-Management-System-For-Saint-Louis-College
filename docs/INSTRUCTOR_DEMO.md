@@ -23,14 +23,15 @@ touching it; if a demo port is taken, the launcher stops and says why.
 **A copy of the live system instead:** `.\dev.ps1 -SimClock -SimSetup -FromLive`
 copies the live database and uploaded files (read-only on the live side) into
 the demo, and you log in with your own live account. It holds real people's
-data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, it writes
-no backups, and it leaves the real cameras alone unless `SIM_CAMERAS=1`. Go
+data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, its
+backups go to `backend/sim_backups` only (never the real backup folders), and it
+leaves the real cameras alone unless `SIM_CAMERAS=1`. Go
 back to the fictional campus with `.\dev.ps1 -SimClock -SimSetup -Reset`.
 
 | | |
 |---|---|
 | Admin login | `cdso.demo@slc-sflu.edu.ph` / `Demo@2026!` |
-| 2FA code | authenticator key `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`, or `python manage.py sim_clock code` in the backend window |
+| 2FA code | not asked at login in the demo, at any date. Sensitive actions still ask: authenticator key `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`, or `python manage.py sim_clock code` in the backend window |
 | Emails | set `SIM_EMAIL_TO=you@example.com` in `backend/.env` to receive them; otherwise they are printed in the backend window. Every email goes to that one inbox, never to the address on the record. |
 
 ## Move the date
@@ -39,9 +40,16 @@ Admin sidebar → **System → Test Clock**:
 
 * **Enable simulated date**, then pick a date and time, or press **+1 hour**,
   **+1 day**, **+1 working day**, **+1 week**.
-* **Run Time Based Jobs Now** does at once what the scheduler does by itself
-  within the hour: expires overdue applications, sends payment reminders,
-  archives expired accounts.
+* **Run Time Based Jobs Now** runs the scheduler's whole pass at the
+  simulated date: takes the backups that are due, expires overdue applications,
+  sends payment reminders, archives expired accounts (closing their violations
+  unless the owner is banned), and applies data retention. Moving the clock
+  starts the same pass by itself.
+* Backups follow the simulated date and are saved in `backend/sim_backups`.
+  Moving the clock back removes the ones dated after the new date, since at
+  that date they have not been taken yet.
+* **Do not change the Windows date.** It moves every program on this PC, the
+  campus app included, which would apply the date to the live database.
 * **Back to the real date** resets it.
 
 From a terminal (backend window): `python manage.py sim_clock status | set 2026-10-09 10:00 | advance 2wd | reset | run-jobs`.

@@ -340,6 +340,76 @@ class AccountExpiryArchiveTests(TestCase):
         self.assertTrue(resp.data.get('registration_banned'))
 
 
+    def test_unbanned_owner_violations_are_archived_with_the_account(self):
+        """A warning on an owner who expires below the 3rd offence closes with
+        the account; cleared and lifted ones keep their own record."""
+        from vehicles.models import Vehicle
+        from violations.models import Violation
+        from vehicles.tasks import auto_archive_expired_accounts
+
+        owner, _ = self._make_owner_with_reg()
+        veh = Vehicle.objects.create(plate_number='OWN111', vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        by_fk = Violation.objects.create(vehicle=veh, owner=owner, violation_type='unauthorized_entry',
+                                         offense_number=1, status='warning')
+        by_vehicle = Violation.objects.create(vehicle=veh, violation_type='double_parking',
+                                              offense_number=2, status='warning')
+        cleared = Violation.objects.create(vehicle=veh, owner=owner, violation_type='no_sticker',
+                                           offense_number=1, status='cleared', is_resolved=True)
+        lifted = Violation.objects.create(vehicle=veh, owner=owner, violation_type='no_sticker',
+                                          offense_number=1, status='lifted', is_resolved=True)
+
+        self._expire_now(owner)
+        result = auto_archive_expired_accounts()
+        self.assertEqual(result['violations_archived'], 2)
+
+        for v in (by_fk, by_vehicle):
+            v.refresh_from_db()
+            self.assertEqual(v.status, Violation.Status.ARCHIVED)
+            self.assertTrue(v.is_resolved)
+        cleared.refresh_from_db(); lifted.refresh_from_db()
+        self.assertEqual(cleared.status, 'cleared')
+        self.assertEqual(lifted.status, 'lifted')
+        owner.refresh_from_db()
+        self.assertFalse(Violation.active_for_owner(owner).exists())
+
+        from accounts.models import AuditLog
+        line = AuditLog.objects.get(action=AuditLog.Action.USER_ARCHIVED, target_user=owner).details
+        self.assertIn('2 violation(s) archived', line)
+
+    def test_banned_owner_violations_stay_standing(self):
+        from vehicles.models import Vehicle
+        from violations.models import Violation
+        from vehicles.tasks import auto_archive_expired_accounts
+
+        owner, _ = self._make_owner_with_reg()
+        veh = Vehicle.objects.create(plate_number='OWN111', vehicle_type='car',
+                                     is_authorized=True, user=owner)
+        third = Violation.objects.create(vehicle=veh, owner=owner, violation_type='unauthorized_entry',
+                                         offense_number=3, status='warning', registration_blocked=True)
+        self._expire_now(owner)
+        result = auto_archive_expired_accounts()
+        self.assertEqual(result['violations_archived'], 0)
+        third.refresh_from_db()
+        self.assertEqual(third.status, 'warning')
+        self.assertFalse(third.is_resolved)
+        self.assertTrue(third.registration_blocked)
+
+    def test_unlinked_violation_under_the_same_email_is_archived(self):
+        """A row with no owner but the owner's email would otherwise count
+        against a new account registered under the same address."""
+        from violations.models import Violation
+        from vehicles.tasks import auto_archive_expired_accounts
+
+        owner, _ = self._make_owner_with_reg()
+        stray = Violation.objects.create(violation_type='unauthorized_entry', offense_number=1,
+                                         status='warning', owner_email='OWNER@example.com')
+        self._expire_now(owner)
+        auto_archive_expired_accounts()
+        stray.refresh_from_db()
+        self.assertEqual(stray.status, Violation.Status.ARCHIVED)
+
+
 class ConductionPlateTests(TestCase):
     """Registration accepts a plate OR a conduction number (never both), and the
     gate/parking resolver finds a vehicle by either."""

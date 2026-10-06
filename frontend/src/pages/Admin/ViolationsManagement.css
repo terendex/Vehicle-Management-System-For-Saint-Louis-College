@@ -455,6 +455,9 @@
 /* Voided as a false alarm — deliberately not green like "cleared": nothing
    was settled, the violation was withdrawn. */
 .vm-status-lifted   { background: #F4F0FA; color: #5B3FA8; }
+/* Closed with an expired account: grey, like the Archived badge in User
+   Management. Not green either, nothing was settled. */
+.vm-status-archived { background: #EEF0F3; color: #5B6573; }
 
 /* ── Action buttons ────────────────────────────────────────────── */
 

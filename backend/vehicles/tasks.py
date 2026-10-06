@@ -129,6 +129,11 @@ def auto_archive_expired_accounts():
     active_reg = [VehicleRegistration.Status.PENDING, VehicleRegistration.Status.ACCEPTED]
 
     with transaction.atomic():
+        # An unbanned owner's warnings close with the account; a banned owner's
+        # 3rd offence stays standing, as the record of the ban. Before the
+        # vehicle unlink below, which one of the matches goes through.
+        archived_violations = Violation.archive_standing_for_owners(unbanned)
+
         for group, is_banned in ((banned, True), (unbanned, False)):
             if not group:
                 continue
@@ -163,7 +168,9 @@ def auto_archive_expired_accounts():
                 action=AuditLog.Action.USER_ARCHIVED,
                 target_user=user,
                 details=(f"Account auto-archived on expiry | Expired: {user.expires_at} | "
-                         f"{user.email}" + (" | BANNED (max violations)" if user.pk in banned_ids else "")),
+                         f"{user.email}" + (" | BANNED (max violations)" if user.pk in banned_ids else "")
+                         + (f" | {archived_violations[user.pk]} violation(s) archived"
+                            if archived_violations.get(user.pk) else "")),
             )
             for user in due
         ])
@@ -179,7 +186,8 @@ def auto_archive_expired_accounts():
 
     log.info("[auto_archive_expired_accounts] Archived %d expired owner account(s), %d banned (today=%s)",
              len(due), len(banned), today)
-    return {"archived": len(due), "banned": len(banned)}
+    return {"archived": len(due), "banned": len(banned),
+            "violations_archived": sum(archived_violations.values())}
 
 
 @shared_task(name="vehicles.expire_unpaid_registrations")
@@ -336,7 +344,7 @@ def scheduled_backup():
     """
     from accounts.backup_utils import (
         BackupFolderError, SCHEDULED_PREFIX, latest_scheduled_backup, prune_scheduled,
-        scheduled_dir, scheduled_slots, write_backup,
+        scheduled_dir, scheduled_folder_setting, scheduled_slots, write_backup,
     )
     from django.utils.dateparse import parse_datetime
     from .models import SystemSettings
@@ -345,7 +353,7 @@ def scheduled_backup():
     if cfg.scheduled_backup_frequency == 'off':
         return {"skipped": "scheduled backups are off"}
 
-    folder_setting = (cfg.scheduled_backup_folder or '').strip()
+    folder_setting = scheduled_folder_setting()           # the configured folder, or the demo's own
     if folder_setting and not os.path.isabs(folder_setting):
         return {"skipped": "folder is not on this machine"}
     try:

@@ -4,7 +4,7 @@ import {
   AlertTriangle, CheckCircle, Filter,
   RotateCcw, Search, Bell, X,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2,
-  FileText, ShieldOff, ClipboardCheck, Timer,
+  FileText, ShieldOff, ClipboardCheck, Timer, Archive,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import { formatDistanceToNow, format, parseISO } from 'date-fns'
@@ -31,11 +31,13 @@ const FILTER_OPTIONS = [
 // the buttons and the report query alike — a badge that disagrees with the
 // list it opens reads as the page being wrong.
 //
-// `settled` spans three things because three different endpoints end a
-// violation: clearing sets CLEARED, lifting sets LIFTED, and the plain
-// resolve PATCH only sets is_resolved and leaves the status at 'warning'.
-// Checking status alone left a resolved warning counted as an active one.
-const isSettled     = v => v.is_resolved || v.status === 'cleared' || v.status === 'lifted'
+// `settled` spans several things because several paths end a violation:
+// clearing sets CLEARED, lifting sets LIFTED, the expiry job sets ARCHIVED
+// when the owner's account expires unbanned, and the plain resolve PATCH only
+// sets is_resolved and leaves the status at 'warning'. Checking status alone
+// left a resolved warning counted as an active one.
+const ENDED_STATUSES = ['cleared', 'lifted', 'archived']
+const isSettled     = v => v.is_resolved || ENDED_STATUSES.includes(v.status)
 const isActiveWarn  = v => !isSettled(v) && v.status === 'warning'
 // The penalty keys on the offence number, not on a status. 'fee_imposed' is
 // kept in the test only so any legacy row that escaped migration 0016 still
@@ -450,6 +452,13 @@ export default function ViolationsManagement() {
           <ShieldOff size={12} /> Lifted <em>· false alarm</em>
         </span>
       )
+    // Also resolved, so checked before the cleared test for the same reason.
+    if (v.status === 'archived')
+      return (
+        <span className="vm-status vm-status-archived" title="Closed when the owner's account expired">
+          <Archive size={12} /> Archived <em>· account expired</em>
+        </span>
+      )
     if (v.status === 'cleared' || (v.is_resolved && !v.offense_number))
       return <span className="vm-status vm-status-resolved"><CheckCircle size={12} /> Cleared</span>
     if (v.status === 'fee_imposed') {
@@ -479,11 +488,11 @@ export default function ViolationsManagement() {
         {busy ? <Loader2 size={13} className="vm-spin" /> : <ShieldOff size={13} />} Lift
       </button>
     )
-    const canLift = v.status !== 'cleared' && v.status !== 'lifted'
+    const canLift = !ENDED_STATUSES.includes(v.status)
 
     // New-style offense violations
     if (v.offense_number) {
-      if (v.status === 'lifted' || v.status === 'cleared') return null
+      if (ENDED_STATUSES.includes(v.status)) return null
       if (v.status === 'fee_imposed') {
         return (
           <div className="vm-actions">
@@ -517,7 +526,7 @@ export default function ViolationsManagement() {
     }
 
     // Non-offense violations (owner is auto-emailed at creation) — just Resolve
-    if (v.status === 'lifted') return null
+    if (ENDED_STATUSES.includes(v.status)) return null
     if (v.is_resolved) return null
     return (
       <div className="vm-actions">

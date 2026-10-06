@@ -348,6 +348,11 @@ class ViolationViewSet(viewsets.ModelViewSet):
                 {'detail': 'This violation was already settled with an Official Receipt. '
                            'Lifting it would imply a refund that this action cannot make.'},
                 status=http_status.HTTP_400_BAD_REQUEST)
+        if violation.status == Violation.Status.ARCHIVED:
+            return Response(
+                {'detail': "This violation was closed when the owner's account expired. "
+                           'It no longer counts, so there is nothing to lift.'},
+                status=http_status.HTTP_400_BAD_REQUEST)
 
         reason = (request.data.get('reason') or '').strip()
         if not reason:
@@ -475,13 +480,13 @@ VIOLATION_REPORT_ALL_WIDTHS_MM = [10, 42, 32, 68, 70, 45]
 _OFFENCE = {1: '1st', 2: '2nd', 3: '3rd'}
 
 
-# A violation stops counting in three different ways, because three endpoints
-# end one: clearing sets CLEARED, lifting sets LIFTED, and the plain resolve
-# PATCH only flips is_resolved and leaves the status at 'warning'. Anything that
-# asks "is this still standing?" has to test all three or it counts a resolved
-# warning as an active one.
-_SETTLED_Q = Q(is_resolved=True) | Q(status__in=(Violation.Status.CLEARED,
-                                                 Violation.Status.LIFTED))
+# A violation stops counting in several ways, because several paths end one:
+# clearing sets CLEARED, lifting sets LIFTED, the expiry job sets ARCHIVED, and
+# the plain resolve PATCH only flips is_resolved and leaves the status at
+# 'warning'. Anything that asks "is this still standing?" has to test them all
+# or it counts a resolved warning as an active one.
+_ENDED_STATUSES = (Violation.Status.CLEARED, Violation.Status.LIFTED, Violation.Status.ARCHIVED)
+_SETTLED_Q = Q(is_resolved=True) | Q(status__in=_ENDED_STATUSES)
 
 # The management screen's status buttons are buckets, not raw model statuses:
 # "Cleared / Resolved" spans the three endings above, and "Confiscated (3rd)" is
@@ -509,7 +514,7 @@ _REPORT_GROUPS = (
 
 
 def _report_group(v):
-    if v.is_resolved or v.status in (Violation.Status.CLEARED, Violation.Status.LIFTED):
+    if v.is_resolved or v.status in _ENDED_STATUSES:
         return 'resolved'
     if v.offense_number == 3 or v.status == Violation.Status.FEE_IMPOSED:
         return 'confiscated'
@@ -590,7 +595,7 @@ def _report_status(v):
     if group == 'confiscated':
         return 'Confiscated (3rd offence)'
     if group == 'resolved':
-        if v.status in (Violation.Status.CLEARED, Violation.Status.LIFTED):
+        if v.status in _ENDED_STATUSES:
             return v.get_status_display()
         return 'Resolved'
     offence = _OFFENCE.get(v.offense_number)

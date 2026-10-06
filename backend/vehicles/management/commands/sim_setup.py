@@ -56,6 +56,7 @@ class Command(BaseCommand):
 
         if from_live:
             self._copy_live(db, name)
+            self._clear_backups()
             self.stdout.write('Applying this code\'s migrations on the copy...')
             call_command('migrate', interactive=False, verbosity=0)
             self._copy_live_media()
@@ -64,6 +65,8 @@ class Command(BaseCommand):
             return
 
         created = self._create(db, name, reset)
+        if created == 'copied':
+            self._clear_backups()
         if created == 'copied' and os.path.isdir(TEMPLATE_MEDIA):
             if reset and os.path.isdir(settings.MEDIA_ROOT):
                 shutil.rmtree(settings.MEDIA_ROOT)
@@ -87,6 +90,13 @@ class Command(BaseCommand):
         return not User.objects.filter(email='cdso.demo@slc-sflu.edu.ph').exists()
 
     # ── The database ────────────────────────────────────────────────────────
+    def _clear_backups(self):
+        """A fresh copy starts with no backups: the old ones hold the data it replaced."""
+        folder = getattr(settings, 'BACKUP_DIR', None)
+        if folder and os.path.isdir(folder):
+            shutil.rmtree(folder)
+            self.stdout.write(f'Cleared the demo backups in {folder}.')
+
     def _create(self, db, name, reset):
         import psycopg2
         from psycopg2 import sql

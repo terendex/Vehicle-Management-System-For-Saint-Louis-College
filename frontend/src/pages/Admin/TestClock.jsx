@@ -127,9 +127,11 @@ export default function TestClock() {
         <section className="tc-card">
           <h2>Run time based jobs now</h2>
           <p className="tc-muted">
-            Expires overdue applications, sends payment reminders, archives expired accounts and
-            rolls events and scheduled visits over, at the simulated date. The scheduler does the
-            same by itself within the hour.
+            Takes the backups that are due, expires overdue applications, sends payment reminders,
+            archives expired accounts (with their violations, unless banned), rolls events and
+            scheduled visits over and applies data retention, at the simulated date. Moving the
+            clock also starts this pass by itself. Demo backups are saved in backend/sim_backups only,
+            and moving the clock back removes the ones dated after the new date.
           </p>
           <button
             type="button"

@@ -88,6 +88,10 @@ class Violation(models.Model):
         # should never have been issued, so it stops counting toward the
         # offence ladder and the remaining ones renumber beneath it.
         LIFTED      = 'lifted',      'Lifted (False Alarm)'
+        # Closed by the expiry job when the owner's account was archived without
+        # reaching a 3rd offence: the record stays, but nothing about it is still
+        # standing. A banned owner's violations are never moved here.
+        ARCHIVED    = 'archived',    'Archived (Account Expired)'
 
     id             = models.BigAutoField(primary_key=True, db_column='violation_id')
     # SET_NULL, not CASCADE. A violation is a disciplinary and financial record;
@@ -177,7 +181,7 @@ class Violation(models.Model):
         ]
 
     # Statuses that stop a violation counting toward the offence ladder.
-    INACTIVE_STATUSES = ('cleared', 'lifted')
+    INACTIVE_STATUSES = ('cleared', 'lifted', 'archived')
 
     # How this violation names its vehicle on screen, without depending on the
     # vehicle row still existing.
@@ -282,10 +286,11 @@ class Violation(models.Model):
     def active_for_owner(cls, owner):
         """Every violation still counting toward this account's ladder.
 
-        Cleared ones are settled and lifted ones never happened, so neither
-        counts. Falls back to the email snapshot so offences issued before the
-        owner FK existed — or after the account row was replaced — still count
-        against the same person.
+        Cleared ones are settled, lifted ones never happened and archived ones
+        closed with an expired account, so none of them counts. Falls back to
+        the email snapshot so offences issued before the owner FK existed — or
+        after the account row was replaced — still count against the same
+        person.
         """
         if owner is None:
             return cls.objects.none()                # an empty result, not an error
@@ -294,7 +299,52 @@ class Violation(models.Model):
         if owner.email:
             q |= Q(owner__isnull=True, owner_email__iexact=owner.email)   # plus unlinked rows carrying their email
         return (cls.objects.filter(q, offense_number__isnull=False)       # ladder types only; legacy rows have no number
-                           .exclude(status__in=cls.INACTIVE_STATUSES))    # drop cleared and lifted
+                           .exclude(status__in=cls.INACTIVE_STATUSES))    # drop cleared, lifted and archived
+
+    # Closes what still stands against owners whose accounts expired unbanned.
+    @classmethod
+    def archive_standing_for_owners(cls, users) -> dict:
+        """Move every standing violation of `users` to ARCHIVED.
+
+        For owners archived on expiry WITHOUT a 3rd offence: the account is
+        closed, so nothing on it is still a live warning. Standing means a
+        warning (or a legacy fee) not yet resolved; cleared and lifted ones
+        keep their own record. is_resolved is set too, because every "is it
+        settled?" check in the system already reads it.
+
+        Matched the three ways a violation belongs to a person: the owner FK,
+        the vehicle's owner (rows issued before the FK existed; call this
+        before the vehicles are unlinked), and the email snapshot on rows with
+        no owner, which active_for_owner would otherwise count against a new
+        account under the same address.
+
+        Returns {user pk: number archived}.
+        """
+        from django.db.models import Q
+        from django.db.models.functions import Lower
+        users = list(users)
+        if not users:
+            return {}
+        ids = [u.pk for u in users]
+        by_email = {u.email.lower(): u.pk for u in users if u.email}
+        rows = list(
+            cls.objects.annotate(_email=Lower('owner_email'))
+            .filter(Q(owner_id__in=ids) | Q(vehicle__user_id__in=ids)
+                    | Q(owner__isnull=True, _email__in=list(by_email)),
+                    is_resolved=False,
+                    status__in=(cls.Status.WARNING, cls.Status.FEE_IMPOSED))
+            .values_list('pk', 'owner_id', 'vehicle__user_id', '_email')
+        )
+        if not rows:
+            return {}
+        counts = {}
+        for _, owner_id, vehicle_user_id, email in rows:
+            pk = owner_id if owner_id in ids else (
+                vehicle_user_id if vehicle_user_id in ids else by_email.get(email))
+            counts[pk] = counts.get(pk, 0) + 1
+        cls.objects.filter(pk__in=[r[0] for r in rows]).update(
+            status=cls.Status.ARCHIVED, is_resolved=True)
+        return counts
 
     # What strike the next offence would be.
     @classmethod

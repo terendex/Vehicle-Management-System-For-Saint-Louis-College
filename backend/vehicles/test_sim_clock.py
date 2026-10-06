@@ -146,7 +146,7 @@ class RedirectEmailTests(SimpleTestCase):
 
 
 class DemoSafeguardTests(TestCase):
-    """A demo holding a copy of the live data writes no backups and opens no cameras."""
+    """A deployment can leave jobs out, and the demo opens no cameras."""
 
     @override_settings(SCHEDULER_SKIP_JOBS=('auto_backup', 'scheduled_backup'))
     def test_skipped_jobs_never_run(self):
@@ -167,3 +167,69 @@ class DemoSafeguardTests(TestCase):
             cap = ffmpeg_capture.open_capture('rtsp://admin:x@10.243.40.80:554/onvif1')
         self.assertFalse(cap.isOpened())
         cv2_open.assert_not_called()
+
+
+class DemoBackupTests(TestCase):
+    """Demo backups follow the simulated date and stay in the demo's own folders."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.scheduled = os.path.join(self.tmp, 'scheduled')
+        self.live_folder = os.path.join(self.tmp, 'live-folder')     # stands in for D:\SLC Backups
+        self.addCleanup(__import__('shutil').rmtree, self.tmp, True)
+        self.demo = override_settings(BACKUP_DIR=self.tmp, SIM_SCHEDULED_BACKUP_DIR=self.scheduled)
+
+    def test_the_real_system_keeps_its_backups_folder(self):
+        from django.conf import settings
+        from accounts.backup_utils import backup_dir
+        self.assertIsNone(getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None))
+        self.assertEqual(backup_dir(), os.path.join(settings.BASE_DIR, 'backups'))
+
+    def test_every_backup_goes_to_the_demo_folders(self):
+        from datetime import time
+        from vehicles import tasks
+        from vehicles.models import SystemSettings
+        cfg = SystemSettings.get()
+        cfg.auto_backup_frequency = 'daily'
+        cfg.scheduled_backup_frequency = 'daily'
+        cfg.scheduled_backup_time = time(0, 0)
+        cfg.scheduled_backup_folder = self.live_folder                # what a live copy carries
+        cfg.save()
+        with self.demo, mock.patch('accounts.backup_utils.dump_backup', return_value='[]'):
+            auto = tasks.auto_backup()
+            scheduled = tasks.scheduled_backup()
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, auto['created'])))
+        self.assertEqual(scheduled['folder'], self.scheduled)
+        self.assertTrue(os.path.isfile(os.path.join(self.scheduled, scheduled['created'])))
+        self.assertFalse(os.path.exists(self.live_folder))
+
+    def test_the_folder_write_test_stays_in_the_demo(self):
+        from accounts.backup_utils import check_scheduled_dir
+        with self.demo:
+            self.assertEqual(check_scheduled_dir(self.live_folder), self.scheduled)
+        self.assertFalse(os.path.exists(self.live_folder))
+
+    def test_moving_back_removes_backups_dated_after_the_new_date(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from accounts.backup_utils import AUTO_PREFIX, SCHEDULED_PREFIX
+        os.makedirs(self.scheduled)
+        stamp = lambda days: timezone.localtime(timezone.now() + timedelta(days=days)).strftime('%Y%m%d-%H%M%S')
+        names = {
+            os.path.join(self.tmp, f'{AUTO_PREFIX}{stamp(-3)}.json'): True,          # in the past: kept
+            os.path.join(self.tmp, f'{AUTO_PREFIX}{stamp(30)}.json'): False,         # in the future: removed
+            os.path.join(self.scheduled, f'{SCHEDULED_PREFIX}{stamp(365)}.json'): False,
+            os.path.join(self.tmp, 'notes.txt'): True,                               # not a backup: untouched
+        }
+        for path in names:
+            open(path, 'w').close()
+        with self.demo:
+            sim_clock_actions._drop_future_backups()
+        for path, kept in names.items():
+            self.assertEqual(os.path.exists(path), kept, path)
+
+    def test_run_jobs_now_is_the_schedulers_whole_pass(self):
+        from vehicles.scheduler import DAILY_JOBS
+        self.assertEqual(tuple(sim_clock_actions.DEMO_JOBS), tuple(DAILY_JOBS))
+        self.assertEqual(set(sim_clock_actions.JOB_LABELS), set(DAILY_JOBS))

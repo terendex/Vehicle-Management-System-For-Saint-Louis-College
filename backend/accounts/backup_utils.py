@@ -67,8 +67,12 @@ _STAMP_RE = re.compile(r'(\d{8})-(\d{4,6})')
 
 
 def backup_dir() -> str:
-    """Absolute path to the backups directory, created if missing."""
-    path = os.path.join(settings.BASE_DIR, 'backups')
+    """Absolute path to the backups directory, created if missing.
+
+    settings.BACKUP_DIR moves it; only the instructor demo sets it
+    (sim_settings.py), so its backups never land beside the real ones.
+    """
+    path = getattr(settings, 'BACKUP_DIR', None) or os.path.join(settings.BASE_DIR, 'backups')
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -127,7 +131,15 @@ class BackupFolderError(Exception):
 
 
 def scheduled_folder_setting() -> str:
-    """The folder exactly as configured; '' means the backups directory."""
+    """The folder exactly as configured; '' means the backups directory.
+
+    The instructor demo replaces it (settings.SIM_SCHEDULED_BACKUP_DIR): a copy
+    of the live system carries the live folder, a real drive on the campus PC,
+    and the demo must not write into it.
+    """
+    override = getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None)
+    if override:
+        return override
     from vehicles.models import SystemSettings
     try:
         return (SystemSettings.get().scheduled_backup_folder or '').strip()
@@ -168,8 +180,11 @@ def check_scheduled_dir(folder: str) -> str:
     A folder can exist and still refuse writes (a read-only share, a
     permissions mismatch with the service account), and finding that out at
     5 PM on Friday is worse than finding it out on Save.
+
+    In the instructor demo the write test goes to the demo's own folder, the
+    only place its backups are written, whatever folder was picked.
     """
-    path = scheduled_dir(folder)
+    path = scheduled_dir(getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None) or folder)
     probe = os.path.join(path, f'.slc-write-test-{os.getpid()}')
     try:
         with open(probe, 'w', encoding='utf-8') as fh:

@@ -194,3 +194,36 @@ class LiftViolationTests(APITestCase):
         by_id = {row['id']: row for row in rows}
         self.assertEqual(by_id[first.id]['status'], 'lifted')
         self.assertEqual(by_id[second.id]['offense_number'], 1)
+
+
+class ArchivedViolationTests(APITestCase):
+    """A violation closed with an expired account: not liftable, settled in reports."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_user(
+            email='arch-admin@slc.edu.ph', last_name='ADMIN', first_name='ADMIN', password='x', role='admin')
+        cls.owner = User.objects.create_user(
+            email='arch-owner@slc.edu.ph', last_name='OWNER', first_name='OWNER', password='x', role='vehicle_owner')
+
+    def setUp(self):
+        vehicle = Vehicle.objects.create(plate_number='ARCH001', vehicle_type='car', user=self.owner)
+        self.v = Violation.objects.create(
+            vehicle=vehicle, owner=self.owner, violation_type=UE, offense_number=1,
+            status=Violation.Status.ARCHIVED, is_resolved=True, is_released=True)
+
+    def test_an_archived_violation_cannot_be_lifted(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.post(f'/api/violations/{self.v.id}/lift/', {'reason': 'x'}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.v.refresh_from_db()
+        self.assertEqual(self.v.status, Violation.Status.ARCHIVED)
+
+    def test_reports_list_it_as_archived(self):
+        from violations.views import _report_group, _report_status
+        self.assertEqual(_report_group(self.v), 'resolved')
+        self.assertEqual(_report_status(self.v), 'Archived (Account Expired)')
+
+    def test_it_does_not_count_toward_the_ladder(self):
+        self.assertFalse(Violation.active_for_owner(self.owner).exists())
+        self.assertEqual(Violation.compute_offense_number(self.owner), 1)
