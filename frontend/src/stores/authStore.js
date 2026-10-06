@@ -22,6 +22,7 @@ import { create } from 'zustand'
 import { authApi } from '../api/auth'
 import { deviceToken } from '../api/twofa'
 import { clearStepUpToken, setStepUpToken } from '../api/stepUpToken'
+import { realNow } from '../utils/clock'
 
 // Pages anyone may open without an account (see the public routes in App.jsx).
 //
@@ -80,7 +81,9 @@ function _scheduleRefresh(accessToken, refreshFn, logoutFn) {
   const exp = _jwtExp(accessToken)
   if (!exp) return                              // unreadable token: leave it to the interceptor's reactive 401 path
 
-  const delay = exp - Date.now() - _REFRESH_AHEAD_MS
+  // realNow, not Date.now: the token's exp is on the server's real clock even
+  // when the instructor demo has moved the page's (utils/clock.js).
+  const delay = exp - realNow() - _REFRESH_AHEAD_MS
   if (delay <= 0) {
     // Already expired or about to — refresh immediately
     // Happens on a reload after the laptop has been asleep, and on a token

@@ -162,15 +162,26 @@ def _claim_key(job: str) -> str:
     return f'{key}:h{timezone.localtime():%H}' if hourly else key
 
 
+# One pass at a time in this process. The claims already stop two processes
+# doing the same day's job, but the instructor demo's Run jobs now runs the
+# jobs without a claim, in the same process, often right as a clock move has
+# woken this thread: two purges or two backups would then run side by side.
+pass_lock = threading.Lock()
+
+
 def run_due_jobs(force: bool = False) -> dict:
     """Run each daily job that has not run today. Safe to call at any time."""
+    with pass_lock:
+        return _run_due_jobs(force)
+
+
+def _run_due_jobs(force: bool) -> dict:
     from . import tasks
 
     today = timezone.localdate()
     outcomes: dict[str, str] = {}
 
-    # A deployment may leave jobs out (the instructor demo skips backups: its
-    # copy of the data must not add files beside the real backups).
+    # A deployment may leave jobs out (SCHEDULER_SKIP_JOBS).
     from django.conf import settings
     skip_jobs = set(getattr(settings, 'SCHEDULER_SKIP_JOBS', ()))
     for job in DAILY_JOBS:

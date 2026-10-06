@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { setClockOffset } from '../utils/clock'
 
 /* The instructor demo's simulated clock, as /api/deployment/ reports it.
 
@@ -10,7 +11,12 @@ import { create } from 'zustand'
 
 export const useSimClock = create((set) => ({
   sim: null,          // null: no simulated clock on this server
-  setSim: (sim) => set({ sim: sim ?? null }),
+  setSim: (sim) => {
+    // The page's "now" follows the server's date, so "2 days ago", overdue
+    // and today's filters agree with the timestamps it sends (utils/clock.js).
+    setClockOffset(sim?.enabled ? (sim.offset_seconds || 0) * 1000 : 0)
+    set({ sim: sim ?? null })
+  },
 }))
 
 const POLL_MS = 20000

@@ -150,7 +150,13 @@ def reset():
 def run_jobs():
     """Run DEMO_JOBS now, at the simulated time, and say what each one did."""
     _require()
-    from vehicles import tasks
+    from vehicles import scheduler, tasks
+    with scheduler.pass_lock:                             # never alongside the scheduler's own pass
+        results = _run_each(tasks)
+    return {**status(), 'jobs': results}
+
+
+def _run_each(tasks):
     results = []
     for job in DEMO_JOBS:
         try:
@@ -158,7 +164,7 @@ def run_jobs():
             results.append({'job': job, 'label': JOB_LABELS[job], 'ok': True, 'result': _summarise(outcome)})
         except Exception as exc:                          # noqa: BLE001 — one failing job must not hide the rest
             results.append({'job': job, 'label': JOB_LABELS[job], 'ok': False, 'result': f'failed: {exc}'})
-    return {**status(), 'jobs': results}
+    return results
 
 
 JOB_LABELS = {
