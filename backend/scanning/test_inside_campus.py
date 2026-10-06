@@ -19,8 +19,7 @@ class InsideCampusTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
 
-    def enter(self, plate, category, minutes_ago=1, owner=None, **extra):
-        vehicle = None
+    def enter(self, plate, category, minutes_ago=1, owner=None, vehicle=None, **extra):
         if owner:
             vehicle = Vehicle.objects.create(plate_number=plate, vehicle_type='car', user=owner,
                                              is_authorized=True)
@@ -75,3 +74,52 @@ class InsideCampusTests(TestCase):
         self.enter('', 'unknown', is_unrecognized=True, driver_name='PEDRO')
         [row] = self.client.get('/api/scan/inside/').data['results']
         self.assertEqual(row['name'], 'PEDRO')
+
+    def test_a_visitor_row_carries_their_pass_matched_by_vehicle(self):
+        from scanning.models import VisitorPass
+        car = Vehicle.objects.create(plate_number='VIS5005', vehicle_type='car')
+        pass_ = VisitorPass.objects.create(vehicle=car, plate_number='VIS5005', visitor_name='MARIA SANTOS',
+                                           status='active', valid_date=timezone.localdate(),
+                                           expires_at=timezone.now() + timedelta(minutes=40))
+        # Spelt with a space on the entry: the plate alone would not match.
+        log = self.enter('VIS 5005', 'visitor', vehicle=car)
+        data = self.client.get('/api/scan/inside/').data
+        [row] = data['results']
+        self.assertEqual(row['id'], log.pk)
+        self.assertEqual(row['name'], 'MARIA SANTOS')
+        self.assertEqual(row['pass']['id'], pass_.pk)
+        self.assertEqual(row['slip_code'], pass_.qr_payload)
+        self.assertEqual(data['passes_not_inside'], [])
+
+    def test_a_walk_in_with_no_plate_is_listed_once(self):
+        from scanning.models import VisitorPass
+        walk_in = Vehicle.objects.create(plate_number='WALKIN 2', vehicle_type='car')
+        pass_ = VisitorPass.objects.create(vehicle=walk_in, plate_number='', visitor_name='JUAN CRUZ',
+                                           status='active', valid_date=timezone.localdate())
+        self.enter('', 'visitor', vehicle=walk_in)
+        data = self.client.get('/api/scan/inside/').data
+        [row] = data['results']
+        self.assertEqual(row['pass']['id'], pass_.pk)
+        self.assertEqual(data['passes_not_inside'], [])
+        self.assertEqual(data['counts']['all'], 1)
+
+    def test_a_pass_with_no_entry_is_listed_but_not_counted(self):
+        from scanning.models import VisitorPass
+        car = Vehicle.objects.create(plate_number='NOPRINT1', vehicle_type='car')
+        pass_ = VisitorPass.objects.create(vehicle=car, plate_number='NOPRINT1', status='active',
+                                           valid_date=timezone.localdate())   # slip never printed
+        VisitorPass.objects.create(vehicle=car, plate_number='NOPRINT1', status='exited',
+                                   valid_date=timezone.localdate())
+        data = self.client.get('/api/scan/inside/').data
+        self.assertEqual(data['counts']['all'], 0)
+        self.assertEqual([p['id'] for p in data['passes_not_inside']], [pass_.pk])
+
+    def test_an_owner_row_has_no_pass_and_a_no_plate_row_has_its_slip(self):
+        student = User.objects.create_user(email='in-st2@slc.edu.ph', last_name='Reyes', first_name='Ben',
+                                           password='pw', role='vehicle_owner', owner_type='student')
+        self.enter('STU 1002', 'student', owner=student)
+        noplate = self.enter('', 'unknown', is_unrecognized=True, driver_name='PEDRO')
+        rows = {r['plate']: r for r in self.client.get('/api/scan/inside/').data['results']}
+        self.assertIsNone(rows['STU 1002']['pass'])
+        self.assertEqual(rows['STU 1002']['slip_code'], '')
+        self.assertEqual(rows[f'NP-{noplate.pk}']['slip_code'], f'SLC-NOPLATE:{noplate.pk}')

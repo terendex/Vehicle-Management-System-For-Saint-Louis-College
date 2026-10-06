@@ -309,13 +309,12 @@ export const SHOTS = [
   }),
   fig(AD, '11-operations-gate-records', {
     who: 'admin', path: '/admin/entries', title: 'Operations Center: gate records',
-    caption: 'Visitors still on campus, cross-gate records and confiscated accounts.',
+    caption: 'Cross-gate records and confiscated accounts. Everyone on campus is on the Active Owners tab.',
     prepare: async (p) => { await clickTab(p, /Gate Records/) },
     marks: [
-      m(1, 'Active Visitors', 'Visitor passes still inside, with the office visited, who issued the pass, and time left (or how long they have overstayed).', union(text('Active Visitors'), (p) => p.locator('main').getByText('HJK7021').first())),
-      m(2, 'Cross-Gate Records', 'Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.', union(text('Cross-Gate Records'), (p) => p.locator('main .oc-xg-table').first())),
-      m(3, 'Confiscated accounts', 'Owners serving a violation penalty and when it ends.', card(text('Confiscated accounts'))),
-      m(4, 'Lift', 'Ends a confiscation early. The violations themselves stay on record.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
+      m(1, 'Cross-Gate Records', 'Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.', union(text('Cross-Gate Records'), (p) => p.locator('main .oc-xg-table').first())),
+      m(2, 'Confiscated accounts', 'Owners serving a violation penalty and when it ends.', card(text('Confiscated accounts'))),
+      m(3, 'Lift', 'Ends a confiscation early. The violations themselves stay on record.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
     ],
   }),
   fig(AD, '12-parking-spaces', {

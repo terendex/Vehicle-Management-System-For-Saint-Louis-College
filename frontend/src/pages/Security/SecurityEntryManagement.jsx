@@ -29,6 +29,7 @@ import { useGates } from '../../hooks/useGates'
 import { formatPlateNumber, isValidPlateNumber, isValidConductionNumber } from '../../utils/plateFormat'
 import { feedState, FEED_LABEL, FEED_DOT } from '../../utils/feedState'
 import { displayStatus } from '../../utils/logStatus'
+import { activeOwnerItems, activeOwnerChips, filterActiveOwners } from '../../utils/activeOwners'
 import '../../styles/camera-monitor.css'
 import './SecurityEntryManagement.css'
 
@@ -886,7 +887,7 @@ function OwnerLookupModal({ data, onPick, onClose }) {
 // History: every slip already recorded, any day, searched and paged by the
 // server — kept apart so the To record list does not fill up with finished
 // ones. Newest entry first in both. Picking a row opens the record form (the
-// edit form for a History row) — the same one the Active Visitors row opens.
+// edit form for a History row) — the same one the Active Owners row opens.
 const SLIP_PAGE_SIZE = 8
 // Plates are matched without spaces or dashes, so "ASD234" finds "ASD 234".
 const slipKey = (s) => (s || '').toUpperCase().replace(/[\s-]/g, '')
@@ -1947,30 +1948,13 @@ export default function SecurityEntryManagement() {
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Active Owners: every vehicle inside. A visitor on a pass shows as the pass
-  // (time left, +30m, slip), so its entry row is dropped by plate; the rest
-  // come from the inside list as they are. Passes first, they need watching.
-  const plateKey = (pl) => (pl || '').toUpperCase().replace(/\s+/g, '')
-  const passPlates = new Set(passes.map(p => plateKey(p.plate_number)).filter(Boolean))
-  const activeAll = [
-    ...passes.map(p => ({ key: `pass-${p.id}`, group: 'visitor', pass: p,
-                          search: `${p.plate_number} ${p.visitor_name || ''}` })),
-    ...(inside?.results ?? [])
-      .filter(r => !passPlates.has(plateKey(r.plate)))
-      .map(r => ({ key: `in-${r.id}`, group: r.group, row: r, search: `${r.plate} ${r.name || ''}` })),
-  ]
-  const activeCounts = activeAll.reduce((c, a) => ({ ...c, [a.group]: (c[a.group] || 0) + 1 }), {})
-  // Only the chips that have someone in them; supplier and event vehicles
-  // ('other') are under All only, as on the admin's Inside Campus tab.
-  const activeChips = [{ key: 'all', label: 'All', count: activeAll.length },
-    ...(inside?.groups ?? [{ key: 'visitor', label: 'Visitors' }])
-      .filter(g => activeCounts[g.key])
-      .map(g => ({ ...g, count: activeCounts[g.key] }))]
-  const activeGroup = activeChips.some(c => c.key === insideGroup) ? insideGroup : 'all'
-  const activeQuery = insideSearch.trim().toLowerCase().replace(/\s+/g, '')
-  const activeRows = activeAll.filter(a =>
-    (activeGroup === 'all' || a.group === activeGroup)
-    && (!activeQuery || a.search.toLowerCase().replace(/\s+/g, '').includes(activeQuery)))
+  // Active Owners: everyone inside, the same list the Operations Center shows
+  // (utils/activeOwners.js). A visitor's row carries their pass, read from
+  // this page's own fresher copy, so +30m shows without waiting for a poll.
+  const activeAll   = activeOwnerItems(inside, passes)
+  const activeChips = activeOwnerChips(activeAll, inside?.groups ?? [{ key: 'visitor', label: 'Visitors' }])
+  const { group: activeGroup, rows: activeRows } =
+    filterActiveOwners(activeAll, activeChips, insideGroup, insideSearch)
 
   // Walk-ins inside whose slip has not been typed in yet.
   const unrecordedCount = recordable.filter(p => !p.visitor_name).length
@@ -2782,14 +2766,14 @@ export default function SecurityEntryManagement() {
               </section>
             )}
 
-            {/* Active owners — every vehicle inside the campus, from every gate.
-                Visitors keep their pass row (time left, +30m, slip); owners,
-                fetchers and unregistered vehicles show how long they have
-                been in. */}
+            {/* Active owners — every vehicle inside the campus, from every gate,
+                as the Operations Center lists it. Visitors keep their pass row
+                (time left, +30m, slip); owners, fetchers and unregistered
+                vehicles show how long they have been in. */}
             <section className="cm-panel">
               <div className="cm-panel-head">
                 <span className="cm-panel-title"><Users size={14} /> Active Owners</span>
-                <div className="cm-panel-end"><span className="cm-count" title="Vehicles inside the campus now">{activeAll.length}</span></div>
+                <div className="cm-panel-end"><span className="cm-count" title="Vehicles inside the campus now">{activeChips[0].count}</span></div>
               </div>
               {activeAll.length === 0 ? (
                 <p className="cm-empty">No one is inside the campus right now.</p>
@@ -2824,7 +2808,7 @@ export default function SecurityEntryManagement() {
                   ) : (
                     <div className="em-side-list em-active-list">
                       {activeRows.map(a => {
-                        if (a.row) {
+                        if (!a.pass) {
                           const r = a.row
                           return (
                             <div key={a.key} className="em-visitor-row">
@@ -2841,15 +2825,33 @@ export default function SecurityEntryManagement() {
                                 title={`Came in at ${fmtClock(r.entered_at)}`}>
                                 {fmtShort(r.minutes_inside)}
                               </span>
+                              {r.slip_code && (
+                                <button
+                                  type="button"
+                                  className="em-visitor-extend"
+                                  onClick={() => openSlip(r.slip_code)}
+                                  title="Open the no plate slip, reprint it, or record the exit"
+                                  aria-label={`Open the slip for ${r.plate}`}
+                                >
+                                  <Ticket size={12} />
+                                </button>
+                              )}
                             </div>
                           )
                         }
                         const p = a.pass
                         const t = passTimeInfo(p)
                         return (
-                          <div key={p.id} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
+                          <div key={a.key} className={`em-visitor-row${t.overdue ? ' overdue' : ''}`}>
                             <div className="em-visitor-main">
                               <span className="em-visitor-plate">{p.plate_number}</span>
+                              {/* Open, but no entry inside: the slip never printed
+                                  (the entry is logged on print), or it has gone stale. */}
+                              {a.notInside && (
+                                <span className="em-visitor-sub em-active-flag">
+                                  {p.printed_at ? 'No entry logged' : 'Slip not printed'}
+                                </span>
+                              )}
                               {p.visitor_name ? (
                                 <span className="em-visitor-sub">
                                   {`${p.visitor_name} · `}

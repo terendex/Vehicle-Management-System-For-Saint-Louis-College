@@ -3651,21 +3651,27 @@ class InsideCampusView(APIView):
                 seen.add(key)
                 occupants.append(log)
 
-        # A visitor's name is on their pass, not on the entry row.
-        visitor_names = dict(
+        # A visitor's name, office and time left are on their pass, not on the
+        # entry row. Matched by vehicle, which is what VisitorPassPrintedView
+        # writes on the entry: a plate can be blank or spelt with a space.
+        # Newest last, so a visitor back on a second pass gets that one.
+        active_passes = list(
             VisitorPass.objects
             .filter(valid_date=timezone.localdate(), status=VisitorPass.Status.ACTIVE)
-            .exclude(visitor_name='')
-            .exclude(plate_number='')                     # a walk-in with no plate names nobody's car
-            .values_list('plate_number', 'visitor_name'))
+            .select_related('vehicle', 'office', 'issued_by')
+            .order_by('entered_at'))
+        pass_of_vehicle = {p.vehicle_id: p for p in active_passes}
         gates = dict(Gate.objects.values_list('gate_id', 'label'))
         categories = dict(AccessLog.Category.choices)
 
         counts = {key: 0 for key, _, _ in INSIDE_GROUPS}
-        rows = []
+        rows, matched = [], set()
         wanted = (request.query_params.get('category') or '').strip()
         for log in occupants:
             group = _INSIDE_GROUP_OF.get(log.entrant_category or '', 'other')
+            pass_ = pass_of_vehicle.get(log.vehicle_id) if log.vehicle_id else None
+            if pass_:
+                matched.add(pass_.pk)
             if group in counts:
                 counts[group] += 1
             if wanted and wanted != 'all' and group != wanted:
@@ -3675,8 +3681,15 @@ class InsideCampusView(APIView):
                 'id':             log.pk,
                 'plate':          log.plate_number or f'NP-{log.pk}',
                 'name':           (owner.full_name if owner else '')
-                                  or (visitor_names.get(log.plate_number, '') if log.plate_number else '')
+                                  or (pass_.visitor_name if pass_ else '')
                                   or log.driver_name or '',
+                # The visitor pass this vehicle is in on: the screens show its
+                # time left, and the guard extends it or opens its slip.
+                'pass':           VisitorPassSerializer(pass_).data if pass_ else None,
+                # A no-plate entry has a slip of its own (slips.noplate_slip),
+                # which is where the guard records its exit.
+                'slip_code':      (pass_.qr_payload if pass_
+                                   else f'SLC-NOPLATE:{log.pk}' if log.is_unrecognized else ''),
                 'category':       log.entrant_category or 'unknown',
                 'category_label': categories.get(log.entrant_category or 'unknown', 'Unregistered'),
                 'group':          group,
@@ -3686,10 +3699,15 @@ class InsideCampusView(APIView):
                 'entered_at':     log.scanned_at.isoformat(),
                 'minutes_inside': max(0, int((now - log.scanned_at).total_seconds() // 60)),
             })
+        # Today's passes still open but with no entry inside: the slip never
+        # printed (the entry is only logged on print), or the entry has gone
+        # stale. Not counted as inside, but listed so nobody loses track of them.
+        loose = [p for p in reversed(active_passes) if p.pk not in matched]
         return Response({
             'groups':  [{'key': key, 'label': label} for key, label, _ in INSIDE_GROUPS],
             'counts':  {**counts, 'all': len(occupants)},
             'results': rows,
+            'passes_not_inside': VisitorPassSerializer(loose, many=True).data,
         })
 
 

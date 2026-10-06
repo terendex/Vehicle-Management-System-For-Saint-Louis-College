@@ -107,7 +107,7 @@ export const getGuardMonitor = () => api.get('/scan/guard-monitor/')
 // Cross-gate records (Operations Center → Gate Records), paged.
 export const getCrossGate = (params) => api.get('/scan/cross-gate/', { params })
 
-// Every vehicle on campus now, with its owner (Operations Center, Inside Campus).
+// Everyone on campus now, visitors with their pass (Operations Center and guard Active Owners).
 export const getInsideCampus = (params) => api.get('/scan/inside/', { params })
 
 // QR code scan login — exchanges guard's QR token for JWT (registered at /api/auth/qr-login/)

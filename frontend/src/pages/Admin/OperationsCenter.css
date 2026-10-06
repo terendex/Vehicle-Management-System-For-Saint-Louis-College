@@ -68,7 +68,7 @@
   gap: 12px;
   box-shadow: 0 1px 4px rgba(3, 57, 108, 0.04);
 }
-/* The Vehicles Inside card opens the Inside Campus tab. */
+/* The Vehicles Inside card opens the Active Owners tab. */
 .oc-stat-card--link {
   font: inherit;
   text-align: left;

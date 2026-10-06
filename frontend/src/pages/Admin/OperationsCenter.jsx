@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
-  Shield, Users, AlertTriangle, RefreshCw, Clock,
+  Shield, Users, RefreshCw, Clock,
   CheckCircle, XCircle, HelpCircle, ArrowRightLeft,
   UserCheck, Video, Wifi, MonitorDot, ParkingCircle,
   ChevronLeft, ChevronRight, Search, X, Maximize2, Minimize2, Layers, VideoOff, Car,
 } from 'lucide-react'
 import { formatDistanceToNow, format } from 'date-fns'
 import { toast } from '../../components/Feedback/notify'
-import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor, getVisitorPasses,
+import { getCurrentShifts, getShifts, getAccessLogs, getGuardMonitor,
          getCrossGate, getInsideCampus } from '../../api/scanning'
-import InsideCampus from './InsideCampus'
+import ActiveOwners from './ActiveOwners'
 import { camerasApi } from '../../api/cameras'
 import { displayStatus } from '../../utils/logStatus'
 import { useCameraContext } from '../../context/CameraContext'
@@ -60,14 +60,6 @@ function shiftDur(start) {
   const mins = Math.floor((Date.now() - new Date(start).getTime()) / 60000)
   if (mins < 60) return `${mins}m`
   return `${Math.floor(mins / 60)}h ${mins % 60}m`
-}
-
-// Time-left / overstay for an active visitor pass (mirrors the guard entry page)
-function passTimeInfo(p) {
-  if (!p.expires_at) return { label: 'No limit', overdue: false, soon: false }
-  const diffMin = Math.round((new Date(p.expires_at).getTime() - Date.now()) / 60000)
-  if (diffMin >= 0) return { label: `${diffMin}m left`, overdue: false, soon: diffMin <= 10 }
-  return { label: `Overstay +${-diffMin}m`, overdue: true, soon: false }
 }
 
 // ─── Pager (matches the violations table pagination) ──────────────────────────
@@ -598,7 +590,7 @@ function CrossGateRecords({ gateLabel, refreshKey }) {
    anything wrong right now", which is the question on every tab. */
 const TABS = [
   { id: 'live',    label: 'Live Monitor', icon: MonitorDot },
-  { id: 'inside',  label: 'Inside Campus', icon: Car },
+  { id: 'inside',  label: 'Active Owners', icon: Users },
   { id: 'guards',  label: 'Guards',       icon: Shield },
   { id: 'records', label: 'Gate Records', icon: ArrowRightLeft },
 ]
@@ -610,8 +602,7 @@ export default function OperationsCenter() {
   const [crossToday,    setCrossToday]    = useState(0)   // vehicles in by one gate, out by another, today
   const [shiftHistory,  setShiftHistory]  = useState([])
   const [guards,        setGuards]        = useState([])
-  const [visitorPasses, setVisitorPasses] = useState([]) // active passes — vehicles currently inside
-  const [inside,        setInside]        = useState(null) // every vehicle on campus now (GET /scan/inside/)
+  const [inside,        setInside]        = useState(null) // everyone on campus now, visitors with their pass (GET /scan/inside/)
   const [loading,       setLoading]       = useState(true)
   const [lastRefresh,   setLastRefresh]   = useState(null)
   const [tab,           setTab]           = useState('live')
@@ -626,11 +617,10 @@ export default function OperationsCenter() {
     try {
       // One log request per gate, so gates added in System Settings get a feed
       // without touching this file.
-      const [shiftsRes, monitorRes, historyRes, passesRes, insideRes, ...logResults] = await Promise.allSettled([
+      const [shiftsRes, monitorRes, historyRes, insideRes, ...logResults] = await Promise.allSettled([
         getCurrentShifts(),
         getGuardMonitor(),
         getShifts({ limit: 100 }),
-        getVisitorPasses(),
         getInsideCampus(),
         ...gateIds.map(id => getAccessLogs({ gate_id: id, limit: 12 })),
       ])
@@ -653,12 +643,6 @@ export default function OperationsCenter() {
         setShiftHistory(historyRes.value.data?.results ?? historyRes.value.data ?? [])
 
       if (insideRes.status === 'fulfilled') setInside(insideRes.value.data)
-
-      if (passesRes.status === 'fulfilled') {
-        const list = (passesRes.value.data?.results ?? passesRes.value.data ?? [])
-          .filter(p => p.status === 'active')
-        setVisitorPasses(list)
-      }
 
       setLastRefresh(new Date())
     } catch {
@@ -728,7 +712,7 @@ export default function OperationsCenter() {
               <p className="oc-stat-lbl">Guards On Duty</p>
             </div>
           </div>
-          {/* The same count the Inside Campus tab lists, one tap away. */}
+          {/* The same count the Active Owners tab lists, one tap away. */}
           <button type="button" className="oc-stat-card oc-stat-card--link" onClick={() => setTab('inside')}>
             <div className="oc-stat-icon green"><Car size={18} /></div>
             <div>
@@ -864,63 +848,14 @@ export default function OperationsCenter() {
 
         </div>
 
-        {/* ── Inside Campus ── */}
+        {/* ── Active Owners: everyone inside, visitors with their pass time.
+               The guard entry page's Active Owners panel lists the same. ── */}
         <div className="oc-tabpanel" hidden={tab !== 'inside'}>
-          <InsideCampus data={inside} loading={loading} />
+          <ActiveOwners data={inside} loading={loading} />
         </div>
 
         {/* ── Gate Records ── */}
         <div className="oc-tabpanel" hidden={tab !== 'records'}>
-
-        {/* ── Active Visitors (vehicles currently inside on a visitor pass) ── */}
-        <div className="oc-section">
-          <div className="oc-section-head">
-            <UserCheck size={15} />
-            <span>Active Visitors</span>
-            <span className="oc-duty-count">{visitorPasses.length} inside</span>
-          </div>
-          <div className="oc-card">
-            {visitorPasses.length === 0 ? (
-              <div className="oc-clear">
-                <CheckCircle size={18} />
-                <span>No visitors currently inside</span>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 8 }}>
-                {visitorPasses.map(p => {
-                  const t = passTimeInfo(p)
-                  return (
-                    <div
-                      key={p.id}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8,
-                        background: t.overdue ? '#FCEDED' : '#F7FAFC',
-                        border: `1px solid ${t.overdue ? '#F3C0C0' : '#D3E1EC'}`,
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span className="oc-log-plate">{p.plate_number}</span>
-                        <div style={{ fontSize: 11, color: '#5C7B92', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {p.office_name || 'No office'}{p.purpose ? ` · ${p.purpose}` : ''}
-                        </div>
-                        {p.issued_by_name && (
-                          <div style={{ fontSize: 10.5, color: '#64839C' }}>Issued by {p.issued_by_name}</div>
-                        )}
-                      </div>
-                      <span style={{
-                        fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-                        color: t.overdue ? '#C62828' : t.soon ? '#8A6B00' : '#0F7A5A',
-                      }}>
-                        {t.overdue && <AlertTriangle size={11} style={{ verticalAlign: -1, marginRight: 3 }} />}
-                        {t.label}
-                      </span>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
 
         {/* Cross-gate records — paged, every day */}
         <CrossGateRecords gateLabel={gateLabel} refreshKey={lastRefresh} />
