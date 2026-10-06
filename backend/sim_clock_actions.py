@@ -93,20 +93,35 @@ def _drop_future_backups():
 
     Moving the clock back means those backups have not been taken yet. Left in
     place they would make the next one look not due, and rotation (newest N by
-    date) would delete a fresh backup before them. Only the demo's own folders,
-    which sim_settings always sets, are ever touched.
+    date) would delete a fresh backup before them.
+
+    Two places, and only demo files in either: the demo's own backups folder
+    (sim_settings BACKUP_DIR, which holds nothing else), and the scheduled
+    folder picked in System Settings, where only names with the demo's
+    scheduled prefix are touched. A real backup kept in that folder is never
+    looked at.
     """
     import os
-    from accounts.backup_utils import _NAME_RE, taken_at
+    from accounts.backup_utils import (
+        BackupFolderError, _NAME_RE, scheduled_dir, scheduled_prefix, taken_at,
+    )
     now = timezone.now()
+    own = getattr(settings, 'BACKUP_DIR', None)
+    folders = [(own, '')] if own else []
+    try:
+        chosen = scheduled_dir(create=False)
+    except BackupFolderError:
+        chosen = None                                    # a drive that is not plugged in
+    if chosen and (not own or os.path.realpath(chosen) != os.path.realpath(own)):
+        folders.append((chosen, scheduled_prefix()))
     removed = []
-    for folder in (getattr(settings, 'BACKUP_DIR', None),
-                   getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None)):
-        if not folder or not os.path.isdir(folder):
+    for folder, prefix in folders:
+        if not os.path.isdir(folder):
             continue
         for name in os.listdir(folder):
             path = os.path.join(folder, name)
-            if _NAME_RE.match(name) and os.path.isfile(path) and taken_at(name, path) > now:
+            if (name.startswith(prefix) and _NAME_RE.match(name) and os.path.isfile(path)
+                    and taken_at(name, path) > now):
                 os.remove(path)
                 removed.append(name)
     return removed

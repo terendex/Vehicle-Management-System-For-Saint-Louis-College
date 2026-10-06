@@ -259,7 +259,7 @@ if (-not $SkipDoctor) {
 # First say plainly whether background jobs will run, before anything starts.
 if ($schedulerOn -or $autodetectOn) {
     Write-Host "`n== Background jobs: ON ==" -ForegroundColor Yellow
-    if ($schedulerOn -and $SimClock) { Write-Host "   Daily scheduler WILL run: backups into backend\sim_backups, archive expired accounts, purge old records." -ForegroundColor Yellow }
+    if ($schedulerOn -and $SimClock) { Write-Host "   Daily scheduler WILL run: demo backups (backend\sim_backups or the picked folder), archive expired accounts, purge old records." -ForegroundColor Yellow }
     elseif ($schedulerOn) { Write-Host "   Daily scheduler WILL run: automatic backup, archive expired accounts, purge old records." -ForegroundColor Yellow }
     else               { Write-Host "   Daily scheduler: off (DISABLE_DAILY_SCHEDULER=$(Get-Switch 'DISABLE_DAILY_SCHEDULER'))" -ForegroundColor Gray }
     if ($autodetectOn) { Write-Host "   Parking-camera auto-detection WILL run and keep writing bay occupancy." -ForegroundColor Yellow }

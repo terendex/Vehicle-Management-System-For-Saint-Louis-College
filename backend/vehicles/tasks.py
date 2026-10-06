@@ -343,8 +343,8 @@ def scheduled_backup():
     this machine's job and is skipped.
     """
     from accounts.backup_utils import (
-        BackupFolderError, SCHEDULED_PREFIX, latest_scheduled_backup, prune_scheduled,
-        scheduled_dir, scheduled_folder_setting, scheduled_slots, write_backup,
+        BackupFolderError, latest_scheduled_backup, prune_scheduled, scheduled_dir,
+        scheduled_folder_setting, scheduled_prefix, scheduled_slots, write_backup,
     )
     from django.utils.dateparse import parse_datetime
     from .models import SystemSettings
@@ -353,7 +353,7 @@ def scheduled_backup():
     if cfg.scheduled_backup_frequency == 'off':
         return {"skipped": "scheduled backups are off"}
 
-    folder_setting = scheduled_folder_setting()           # the configured folder, or the demo's own
+    folder_setting = scheduled_folder_setting()
     if folder_setting and not os.path.isabs(folder_setting):
         return {"skipped": "folder is not on this machine"}
     try:
@@ -366,7 +366,7 @@ def scheduled_backup():
     if latest and parse_datetime(latest['created_at']) >= previous:
         return {"skipped": "not due", "next_due": upcoming.isoformat()}
 
-    name, size = write_backup(SCHEDULED_PREFIX, folder=folder)
+    name, size = write_backup(scheduled_prefix(), folder=folder)
     removed = prune_scheduled(cfg.scheduled_backup_keep, folder)
 
     log.info("[scheduled_backup] wrote %s to %s (%d bytes); pruned %d old backup(s)",

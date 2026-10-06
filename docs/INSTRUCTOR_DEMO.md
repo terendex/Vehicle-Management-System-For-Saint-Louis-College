@@ -24,8 +24,9 @@ touching it; if a demo port is taken, the launcher stops and says why.
 copies the live database and uploaded files (read-only on the live side) into
 the demo, and you log in with your own live account. It holds real people's
 data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, its
-backups go to `backend/sim_backups` only (never the real backup folders), and it
-leaves the real cameras alone unless `SIM_CAMERAS=1`. Go
+backups go to `backend/sim_backups` (scheduled ones to the folder you pick in
+System Settings, named `demo-scheduled-backup-…`), and it leaves the real
+cameras alone unless `SIM_CAMERAS=1`. Go
 back to the fictional campus with `.\dev.ps1 -SimClock -SimSetup -Reset`.
 
 | | |
@@ -45,9 +46,15 @@ Admin sidebar → **System → Test Clock**:
   sends payment reminders, archives expired accounts (closing their violations
   unless the owner is banned), and applies data retention. Moving the clock
   starts the same pass by itself.
-* Backups follow the simulated date and are saved in `backend/sim_backups`.
-  Moving the clock back removes the ones dated after the new date, since at
-  that date they have not been taken yet.
+* Backups follow the simulated date. Automatic and manual ones are saved in
+  `backend/sim_backups`. Scheduled ones go to the folder picked under
+  **System Settings → Backup → Save to folder → Browse…** (`backend/sim_backups`
+  when none is; a fresh live copy starts with none), named
+  `demo-scheduled-backup-…`. The real system ignores those names, so a demo
+  backup in the same folder as real ones is never counted, listed or rotated as
+  a real one, and the demo never touches the real ones.
+* Moving the clock back removes the demo backups dated after the new date,
+  since at that date they have not been taken yet.
 * **Do not change the Windows date.** It moves every program on this PC, the
   campus app included, which would apply the date to the live database.
 * **Back to the real date** resets it.

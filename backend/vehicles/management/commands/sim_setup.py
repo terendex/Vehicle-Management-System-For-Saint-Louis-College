@@ -59,6 +59,7 @@ class Command(BaseCommand):
             self._clear_backups()
             self.stdout.write('Applying this code\'s migrations on the copy...')
             call_command('migrate', interactive=False, verbosity=0)
+            self._forget_live_backup_folder()
             self._copy_live_media()
             actions.reset()
             self._summary('live')
@@ -90,6 +91,15 @@ class Command(BaseCommand):
         return not User.objects.filter(email='cdso.demo@slc-sflu.edu.ph').exists()
 
     # ── The database ────────────────────────────────────────────────────────
+    def _forget_live_backup_folder(self):
+        """The copy brings the live scheduled-backup folder, a real drive on the
+        campus PC. Blank it, so the demo saves to backend/sim_backups until a
+        folder is picked in the demo's own System Settings (Browse...)."""
+        from vehicles.models import SystemSettings
+        if SystemSettings.objects.exclude(scheduled_backup_folder='').update(scheduled_backup_folder=''):
+            self.stdout.write('Scheduled backups in the demo save to backend/sim_backups '
+                              '(pick another folder in System Settings).')
+
     def _clear_backups(self):
         """A fresh copy starts with no backups: the old ones hold the data it replaced."""
         folder = getattr(settings, 'BACKUP_DIR', None)

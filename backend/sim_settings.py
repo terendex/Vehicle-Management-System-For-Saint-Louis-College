@@ -66,13 +66,15 @@ EMAIL_TRANSPORT_BACKEND = 'sim_clock.RedirectEmailBackend'
 if EMAIL_BACKEND == _REAL_TRANSPORT:          # outbox switched off: send through the redirect directly
     EMAIL_BACKEND = EMAIL_TRANSPORT_BACKEND
 
-# Backups run on the demo's date like every other job, but only ever into
-# backend/sim_backups: its data may be a copy of the live database, and the
-# configured scheduled folder is the live one, a real drive on the campus PC.
-# Automatic, scheduled, manual and pre-restore backups, the backup list and
-# restore all use these folders (accounts/backup_utils.py). Git-ignored.
+# Backups run on the demo's date like every other job. Automatic, manual and
+# pre-restore backups go to backend/sim_backups (git-ignored: the data may be a
+# copy of the live database). Scheduled ones go to the folder picked in System
+# Settings (Browse...), backend/sim_backups when none is, under their own name,
+# so a demo backup saved beside real ones is never mistaken for one of them
+# (accounts/backup_utils.py scheduled_prefix). sim_setup clears the folder a
+# live copy brings along, which is the live one on the campus PC.
 BACKUP_DIR = os.path.join(BASE_DIR, 'sim_backups')
-SIM_SCHEDULED_BACKUP_DIR = os.path.join(BACKUP_DIR, 'scheduled')
+SCHEDULED_BACKUP_PREFIX = 'demo-scheduled-backup-'
 
 # Sign in on the password alone: no authenticator code at login, whatever the
 # date (accounts/twofa.py). Sensitive actions still ask for a code.

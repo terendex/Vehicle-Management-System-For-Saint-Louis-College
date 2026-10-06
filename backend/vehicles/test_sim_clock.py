@@ -170,63 +170,92 @@ class DemoSafeguardTests(TestCase):
 
 
 class DemoBackupTests(TestCase):
-    """Demo backups follow the simulated date and stay in the demo's own folders."""
+    """Demo backups follow the simulated date, save where the demo was told to,
+    and never mix with real backups in the same folder."""
 
     def setUp(self):
+        import shutil
         import tempfile
         self.tmp = tempfile.mkdtemp()
-        self.scheduled = os.path.join(self.tmp, 'scheduled')
-        self.live_folder = os.path.join(self.tmp, 'live-folder')     # stands in for D:\SLC Backups
-        self.addCleanup(__import__('shutil').rmtree, self.tmp, True)
-        self.demo = override_settings(BACKUP_DIR=self.tmp, SIM_SCHEDULED_BACKUP_DIR=self.scheduled)
+        self.own = os.path.join(self.tmp, 'sim_backups')
+        self.chosen = os.path.join(self.tmp, 'picked folder')        # what Browse... filled in
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.demo = override_settings(BACKUP_DIR=self.own, SCHEDULED_BACKUP_PREFIX='demo-scheduled-backup-')
 
-    def test_the_real_system_keeps_its_backups_folder(self):
-        from django.conf import settings
-        from accounts.backup_utils import backup_dir
-        self.assertIsNone(getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None))
-        self.assertEqual(backup_dir(), os.path.join(settings.BASE_DIR, 'backups'))
-
-    def test_every_backup_goes_to_the_demo_folders(self):
+    def _schedule(self, folder):
         from datetime import time
-        from vehicles import tasks
         from vehicles.models import SystemSettings
         cfg = SystemSettings.get()
         cfg.auto_backup_frequency = 'daily'
         cfg.scheduled_backup_frequency = 'daily'
         cfg.scheduled_backup_time = time(0, 0)
-        cfg.scheduled_backup_folder = self.live_folder                # what a live copy carries
+        cfg.scheduled_backup_folder = folder
+        cfg.scheduled_backup_keep = 1
         cfg.save()
+
+    def _stamp(self, days):
+        from datetime import timedelta
+        from django.utils import timezone
+        return timezone.localtime(timezone.now() + timedelta(days=days)).strftime('%Y%m%d-%H%M%S')
+
+    def test_the_real_system_keeps_its_folder_and_names(self):
+        from django.conf import settings
+        from accounts.backup_utils import SCHEDULED_PREFIX, backup_dir, scheduled_prefix
+        self.assertEqual(backup_dir(), os.path.join(settings.BASE_DIR, 'backups'))
+        self.assertEqual(scheduled_prefix(), SCHEDULED_PREFIX)
+
+    def test_scheduled_backups_save_to_the_browsed_folder(self):
+        from vehicles import tasks
+        self._schedule(self.chosen)
         with self.demo, mock.patch('accounts.backup_utils.dump_backup', return_value='[]'):
             auto = tasks.auto_backup()
             scheduled = tasks.scheduled_backup()
-        self.assertTrue(os.path.isfile(os.path.join(self.tmp, auto['created'])))
-        self.assertEqual(scheduled['folder'], self.scheduled)
-        self.assertTrue(os.path.isfile(os.path.join(self.scheduled, scheduled['created'])))
-        self.assertFalse(os.path.exists(self.live_folder))
+        self.assertTrue(os.path.isfile(os.path.join(self.own, auto['created'])))
+        self.assertEqual(scheduled['folder'], self.chosen)
+        self.assertTrue(scheduled['created'].startswith('demo-scheduled-backup-'))
+        self.assertTrue(os.path.isfile(os.path.join(self.chosen, scheduled['created'])))
 
-    def test_the_folder_write_test_stays_in_the_demo(self):
-        from accounts.backup_utils import check_scheduled_dir
-        with self.demo:
-            self.assertEqual(check_scheduled_dir(self.live_folder), self.scheduled)
-        self.assertFalse(os.path.exists(self.live_folder))
+    def test_no_folder_picked_saves_beside_the_demos_own_backups(self):
+        from vehicles import tasks
+        self._schedule('')
+        with self.demo, mock.patch('accounts.backup_utils.dump_backup', return_value='[]'):
+            scheduled = tasks.scheduled_backup()
+        self.assertEqual(scheduled['folder'], self.own)
 
-    def test_moving_back_removes_backups_dated_after_the_new_date(self):
-        from datetime import timedelta
-        from django.utils import timezone
+    def test_real_backups_in_the_same_folder_are_left_alone(self):
+        """keep=1 rotates the demo's own files only; the real system does not
+        list the demo's, so it never counts one as its backup."""
+        from accounts.backup_utils import SCHEDULED_PREFIX, latest_scheduled_backup
+        from vehicles import tasks
+        os.makedirs(self.chosen)
+        real = os.path.join(self.chosen, f'{SCHEDULED_PREFIX}{self._stamp(-10)}.json')
+        open(real, 'w').close()
+        self._schedule(self.chosen)
+        with self.demo, mock.patch('accounts.backup_utils.dump_backup', return_value='[]'):
+            open(os.path.join(self.chosen, f'demo-scheduled-backup-{self._stamp(-5)}.json'), 'w').close()
+            tasks.scheduled_backup()
+            demo_files = [n for n in os.listdir(self.chosen) if n.startswith('demo-')]
+        self.assertTrue(os.path.isfile(real))
+        self.assertEqual(len(demo_files), 1)                          # rotated down to keep=1
+        self.assertEqual(latest_scheduled_backup(self.chosen)['name'], os.path.basename(real))
+
+    def test_moving_back_removes_only_demo_backups_dated_after_the_new_date(self):
         from accounts.backup_utils import AUTO_PREFIX, SCHEDULED_PREFIX
-        os.makedirs(self.scheduled)
-        stamp = lambda days: timezone.localtime(timezone.now() + timedelta(days=days)).strftime('%Y%m%d-%H%M%S')
-        names = {
-            os.path.join(self.tmp, f'{AUTO_PREFIX}{stamp(-3)}.json'): True,          # in the past: kept
-            os.path.join(self.tmp, f'{AUTO_PREFIX}{stamp(30)}.json'): False,         # in the future: removed
-            os.path.join(self.scheduled, f'{SCHEDULED_PREFIX}{stamp(365)}.json'): False,
-            os.path.join(self.tmp, 'notes.txt'): True,                               # not a backup: untouched
+        os.makedirs(self.own)
+        os.makedirs(self.chosen)
+        self._schedule(self.chosen)
+        files = {
+            os.path.join(self.own, f'{AUTO_PREFIX}{self._stamp(-3)}.json'): True,       # past: kept
+            os.path.join(self.own, f'{AUTO_PREFIX}{self._stamp(30)}.json'): False,      # future: removed
+            os.path.join(self.chosen, f'demo-scheduled-backup-{self._stamp(365)}.json'): False,
+            os.path.join(self.chosen, f'{SCHEDULED_PREFIX}{self._stamp(365)}.json'): True,   # a real one: untouched
+            os.path.join(self.chosen, 'notes.txt'): True,
         }
-        for path in names:
+        for path in files:
             open(path, 'w').close()
         with self.demo:
             sim_clock_actions._drop_future_backups()
-        for path, kept in names.items():
+        for path, kept in files.items():
             self.assertEqual(os.path.exists(path), kept, path)
 
     def test_run_jobs_now_is_the_schedulers_whole_pass(self):

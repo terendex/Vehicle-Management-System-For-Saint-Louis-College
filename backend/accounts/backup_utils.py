@@ -106,6 +106,17 @@ def write_backup(prefix: str, payload: str | None = None,
     return name, os.path.getsize(path)
 
 
+def scheduled_prefix() -> str:
+    """The name scheduled backups are written and recognised under.
+
+    The instructor demo sets its own (settings.SCHEDULED_BACKUP_PREFIX,
+    'demo-scheduled-backup-'), so a demo backup saved into a real folder is
+    never listed, counted as done or rotated by the real system, and the demo
+    never touches the real ones there either.
+    """
+    return getattr(settings, 'SCHEDULED_BACKUP_PREFIX', None) or SCHEDULED_PREFIX
+
+
 def kind_of(name: str) -> str:
     if name.startswith(AUTO_PREFIX):
         return 'auto'
@@ -113,7 +124,7 @@ def kind_of(name: str) -> str:
         return 'safety'
     if name.startswith(MANUAL_PREFIX):
         return 'manual'
-    if name.startswith(SCHEDULED_PREFIX):
+    if name.startswith(scheduled_prefix()):
         return 'scheduled'
     return 'other'
 
@@ -131,15 +142,7 @@ class BackupFolderError(Exception):
 
 
 def scheduled_folder_setting() -> str:
-    """The folder exactly as configured; '' means the backups directory.
-
-    The instructor demo replaces it (settings.SIM_SCHEDULED_BACKUP_DIR): a copy
-    of the live system carries the live folder, a real drive on the campus PC,
-    and the demo must not write into it.
-    """
-    override = getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None)
-    if override:
-        return override
+    """The folder exactly as configured; '' means the backups directory."""
     from vehicles.models import SystemSettings
     try:
         return (SystemSettings.get().scheduled_backup_folder or '').strip()
@@ -180,11 +183,8 @@ def check_scheduled_dir(folder: str) -> str:
     A folder can exist and still refuse writes (a read-only share, a
     permissions mismatch with the service account), and finding that out at
     5 PM on Friday is worse than finding it out on Save.
-
-    In the instructor demo the write test goes to the demo's own folder, the
-    only place its backups are written, whatever folder was picked.
     """
-    path = scheduled_dir(getattr(settings, 'SIM_SCHEDULED_BACKUP_DIR', None) or folder)
+    path = scheduled_dir(folder)
     probe = os.path.join(path, f'.slc-write-test-{os.getpid()}')
     try:
         with open(probe, 'w', encoding='utf-8') as fh:
@@ -309,7 +309,7 @@ def _scheduled_items(folder: str) -> list[dict]:
     except OSError:
         return items
     for name in names:
-        if not (name.startswith(SCHEDULED_PREFIX) and _NAME_RE.match(name)):
+        if not (name.startswith(scheduled_prefix()) and _NAME_RE.match(name)):
             continue
         path = os.path.join(folder, name)
         if os.path.isfile(path):
@@ -425,7 +425,7 @@ def safe_path(name: str) -> str | None:
     # A scheduled backup may live in the admin's chosen folder instead. Only a
     # scheduled-prefix name is looked for there, so this cannot be used to read
     # or delete anything else the admin keeps in that folder.
-    if name.startswith(SCHEDULED_PREFIX):
+    if name.startswith(scheduled_prefix()):
         custom = _custom_scheduled_dir()
         if custom:
             roots.insert(0, custom)
