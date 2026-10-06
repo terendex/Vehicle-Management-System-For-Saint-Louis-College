@@ -76,7 +76,9 @@ class UserSerializer(serializers.ModelSerializer):
         model  = User
         # full_name is the computed display name (read-only); the three parts
         # are what an edit form fills its boxes from.
-        fields = ['id', 'user_code', 'full_name', 'last_name', 'first_name', 'middle_initial', 'email', 'role', 'is_active', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type', 'contact', 'address']
+        fields = ['id', 'user_code', 'full_name', 'last_name', 'first_name', 'middle_initial', 'email', 'role', 'is_active', 'is_archived', 'registration_banned', 'date_joined', 'must_change_password', 'photo_url', 'gate_assignment', 'agency', 'qr_token', 'registrant_type', 'contact', 'address']
+        # Set only by the expiry job: an archived owner comes back by registering again.
+        read_only_fields = ['is_archived', 'registration_banned']
 
     def get_photo_url(self, obj):
         if not obj.photo:

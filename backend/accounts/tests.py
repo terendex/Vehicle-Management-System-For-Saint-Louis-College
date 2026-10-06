@@ -315,3 +315,51 @@ class AdminReplaceAtomicityTests(TestCase):
         self.assertEqual(User.objects.count(), before)
         self.assertFalse(User.objects.filter(email='new.cdso@slc.edu.ph').exists())
         self.assertTrue(User.objects.filter(pk=self.old.pk).exists())
+
+
+class ArchivedAccountStatusTests(TestCase):
+    """An owner archived on expiry is its own status in User Management,
+    and Enable cannot bring it back (a new registration does)."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        self.admin = User.objects.create_user(
+            email='archive-admin@test.local', last_name='Admin', first_name='Admin', password='Passw0rd!23', role='admin',
+        )
+        self.archived = User.objects.create_user(
+            email='archived-owner@test.local', last_name='Owner', first_name='Archived', password='Passw0rd!23',
+            role='vehicle_owner', is_active=False, is_archived=True,
+        )
+        self.disabled = User.objects.create_user(
+            email='disabled-owner@test.local', last_name='Owner', first_name='Disabled', password='Passw0rd!23',
+            role='vehicle_owner', is_active=False,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+    def _emails(self, status_filter):
+        res = self.client.get('/api/accounts/users/', {'status': status_filter, 'page_size': 100})
+        self.assertEqual(res.status_code, 200)
+        rows = res.data['results'] if isinstance(res.data, dict) else res.data
+        return {r['email']: r for r in rows}
+
+    def test_archived_and_disabled_filter_apart(self):
+        archived = self._emails('archived')
+        disabled = self._emails('disabled')
+        self.assertIn(self.archived.email, archived)
+        self.assertNotIn(self.disabled.email, archived)
+        self.assertIn(self.disabled.email, disabled)
+        self.assertNotIn(self.archived.email, disabled)
+        self.assertTrue(archived[self.archived.email]['is_archived'])
+
+    def test_enable_refuses_an_archived_account(self):
+        res = self.client.post(f'/api/accounts/users/{self.archived.pk}/toggle-status/')
+        self.assertEqual(res.status_code, 400)
+        self.archived.refresh_from_db()
+        self.assertFalse(self.archived.is_active)
+
+    def test_a_disabled_account_still_toggles(self):
+        res = self.client.post(f'/api/accounts/users/{self.disabled.pk}/toggle-status/')
+        self.assertEqual(res.status_code, 200)
+        self.disabled.refresh_from_db()
+        self.assertTrue(self.disabled.is_active)

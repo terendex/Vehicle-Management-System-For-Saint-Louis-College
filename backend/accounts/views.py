@@ -208,13 +208,16 @@ class UserListView(generics.ListAPIView):
             # owner with two registrations of the same type would appear twice.
             qs = qs.filter(registrations__registrant_type=registrant_type).distinct()
 
-        # Written as two explicit branches rather than a boolean cast, so any
-        # third value (or none) leaves the list unfiltered.
+        # Written as explicit branches rather than a boolean cast, so any other
+        # value (or none) leaves the list unfiltered. Archived accounts are
+        # inactive too, but they are their own status: expired, not switched off.
         status_param = self.request.query_params.get('status', '').strip()
         if status_param == 'active':
             qs = qs.filter(is_active=True)
         elif status_param == 'disabled':
-            qs = qs.filter(is_active=False)
+            qs = qs.filter(is_active=False, is_archived=False)
+        elif status_param == 'archived':
+            qs = qs.filter(is_archived=True)
 
         return qs                            # unevaluated; the pagination class applies the LIMIT
 
@@ -321,6 +324,15 @@ class UserToggleStatusView(APIView):
         if user.role == 'admin':
             return Response(
                 {'detail': 'Cannot disable an admin account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if user.is_archived:
+            # Enabling would leave a live-looking account that login still
+            # refuses (it only accepts is_archived=False). An expired owner
+            # comes back through a new registration, which makes a new account.
+            return Response(
+                {'detail': 'This account was archived when it expired. The owner registers again '
+                           'in the next registration period to get a new account.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         old_status = user.is_active          # read but not used further; the new value is what the audit action is chosen from

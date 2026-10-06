@@ -174,6 +174,11 @@
   color: #C62828;
 }
 
+.um-stat-icon.archived-stat {
+  background: #EEF0F3;
+  color: #5B6573;
+}
+
 .um-stat-info h4 {
   margin: 0 0 4px;
   font-size: 12px;
@@ -428,6 +433,16 @@
 
 .um-status-badge.disabled .status-dot {
   background: #C62828;
+}
+
+/* Expired and archived by the system, not switched off by an admin. */
+.um-status-badge.archived {
+  background: #EEF0F3;
+  color: #5B6573;
+}
+
+.um-status-badge.archived .status-dot {
+  background: #5B6573;
 }
 
 @keyframes pulse-green {
@@ -1190,6 +1205,11 @@
 .um-stat-icon.disabled-stat {
   background: #FCEDED;
   color: #C62828;
+}
+
+.um-stat-icon.archived-stat {
+  background: #EEF0F3;
+  color: #5B6573;
 }
 
 .um-stat-info h4 {

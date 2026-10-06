@@ -17,7 +17,7 @@ import {
   Search, UserPlus, Eye, Ban, CheckCircle, X,
   Users, UserCheck, UserX, AlertTriangle, ShieldAlert,
   MoreVertical, ChevronLeft, ChevronRight, QrCode, Pencil,
-  Shield, Info, Lock, Smartphone, ClipboardList, History,
+  Shield, Info, Lock, Smartphone, ClipboardList, History, Archive,
 } from 'lucide-react'
 import notify, { toast } from '../../components/Feedback/notify'
 import './UserManagement.css'
@@ -256,7 +256,8 @@ export default function UserManagement() {
   /* ── user stats ── */
   const totalUsers    = users.length
   const activeUsers   = users.filter((u) => u.is_active).length
-  const disabledUsers = users.filter((u) => !u.is_active).length
+  const disabledUsers = users.filter((u) => !u.is_active && !u.is_archived).length
+  const archivedUsers = users.filter((u) => u.is_archived).length
 
   /* ── close menu on outside click, scroll or resize ──
      The menu is portalled to <body> at fixed coordinates, so any scroll would
@@ -489,6 +490,17 @@ export default function UserManagement() {
   }
 
   const formatDate    = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+  // Archived is its own status: the account expired, nobody switched it off.
+  // It is inactive too, so it is checked before is_active.
+  const statusBadge   = (user) => {
+    if (user.is_archived) return {
+      cls: 'archived', label: user.registration_banned ? 'Archived (banned)' : 'Archived',
+      title: user.registration_banned
+        ? 'Expired with the maximum violations: may not register again'
+        : 'Expired: the owner registers again for a new account',
+    }
+    return user.is_active ? { cls: 'active', label: 'Active' } : { cls: 'disabled', label: 'Disabled' }
+  }
   const roleLabel     = (user) => {
     if (user.role === 'security') return 'Security Personnel'
     if (user.role === 'vehicle_owner') {
@@ -562,6 +574,10 @@ export default function UserManagement() {
           <div className="um-stat-icon disabled-stat"><UserX size={20} /></div>
           <div className="um-stat-info"><h4>Disabled</h4><span>{disabledUsers}</span></div>
         </div>
+        <div className="um-stat-card">
+          <div className="um-stat-icon archived-stat"><Archive size={20} /></div>
+          <div className="um-stat-info"><h4>Archived</h4><span>{archivedUsers}</span></div>
+        </div>
       </div>
 
       {/* Table */}
@@ -595,6 +611,7 @@ export default function UserManagement() {
               <option value="">All Statuses</option>
               <option value="active">Active</option>
               <option value="disabled">Disabled</option>
+              <option value="archived">Archived</option>
             </select>
           </div>
         </div>
@@ -643,9 +660,9 @@ export default function UserManagement() {
                       <span className={`um-role-badge ${roleBadgeClass(u)}`}>{roleLabel(u)}</span>
                     </td>
                     <td>
-                      <span className={`um-status-badge ${u.is_active ? 'active' : 'disabled'}`}>
+                      <span className={`um-status-badge ${statusBadge(u).cls}`} title={statusBadge(u).title}>
                         <span className="status-dot" />
-                        {u.is_active ? 'Active' : 'Disabled'}
+                        {statusBadge(u).label}
                       </span>
                     </td>
                     {/* QR lives in View Profile — no column here */}
@@ -685,12 +702,15 @@ export default function UserManagement() {
                               <Smartphone size={15} /> Reset 2FA
                             </button>
                           )}
-                          <button
-                            className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
-                            onClick={() => { openToggle(u); closeMenu() }}
-                          >
-                            {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
-                          </button>
+                          {/* An archived owner comes back by registering again, not by Enable (the server refuses it). */}
+                          {!u.is_archived && (
+                            <button
+                              className={`um-dropdown-item ${u.is_active ? 'disable' : 'enable'}`}
+                              onClick={() => { openToggle(u); closeMenu() }}
+                            >
+                              {u.is_active ? <><Ban size={15} /> Disable</> : <><CheckCircle size={15} /> Enable</>}
+                            </button>
+                          )}
                         </div>,
                         document.body
                       )}
@@ -923,8 +943,8 @@ export default function UserManagement() {
                 <div className="um-profile-grid">
                   <div className="um-profile-item">
                     <span className="um-profile-label">Status</span>
-                    <span className={`um-status-badge ${selectedUser.is_active ? 'active' : 'disabled'}`}>
-                      <span className="status-dot" />{selectedUser.is_active ? 'Active' : 'Disabled'}
+                    <span className={`um-status-badge ${statusBadge(selectedUser).cls}`} title={statusBadge(selectedUser).title}>
+                      <span className="status-dot" />{statusBadge(selectedUser).label}
                     </span>
                   </div>
                   <div className="um-profile-item">
