@@ -37,7 +37,10 @@ from django.core.management.base import BaseCommand, CommandError
 TEMPLATE_DB = 'slc_manual_demo'
 TEMPLATE_MEDIA = os.path.join(settings.BASE_DIR, '..', 'docs', 'user-manual', 'capture', 'demo_media')
 TEMPLATE_FIXTURE = os.path.join(settings.BASE_DIR, '..', 'docs', 'user-manual', 'capture', 'demo_campus.json')
-PG_BIN = r'C:\Program Files\PostgreSQL\18\bin'
+# Where the PostgreSQL installer puts its tools: one folder per major version.
+PG_ROOT = r'C:\Program Files\PostgreSQL'
+# pg_dump refuses a server newer than itself, and the live (Neon) one runs 18.
+PG_MIN_MAJOR = 18
 
 
 class Command(BaseCommand):
@@ -186,13 +189,19 @@ class Command(BaseCommand):
 
     # ── A copy of the live system ──────────────────────────────────────────
     def _tool(self, exe):
-        path = os.path.join(PG_BIN, exe)
-        if not os.path.exists(path):
-            found = shutil.which(exe)
-            if not found:
-                raise CommandError(f'{exe} not found (looked in {PG_BIN} and PATH).')
-            path = found
-        return path
+        """The newest installed copy of a PostgreSQL tool (the installer does not add it to PATH)."""
+        majors = sorted((int(v) for v in (os.listdir(PG_ROOT) if os.path.isdir(PG_ROOT) else [])
+                         if v.isdigit() and os.path.exists(os.path.join(PG_ROOT, v, 'bin', exe))), reverse=True)
+        if majors and majors[0] >= PG_MIN_MAJOR:
+            return os.path.join(PG_ROOT, str(majors[0]), 'bin', exe)
+        found = shutil.which(exe)
+        if found:
+            return found
+        if majors:
+            raise CommandError(f'{exe} is from PostgreSQL {majors[0]}, but copying the live database '
+                               f'needs PostgreSQL {PG_MIN_MAJOR} or newer. Install it and run this again.')
+        raise CommandError(f'{exe} not found (looked in {PG_ROOT} and PATH). '
+                           f'Install PostgreSQL {PG_MIN_MAJOR} or newer.')
 
     def _copy_live(self, db, name):
         import psycopg2

@@ -23,8 +23,10 @@ touching it; if a demo port is taken, the launcher stops and says why.
 **On another PC (a fresh clone):** install these three first, then double-click
 the same launcher:
 
-1. **PostgreSQL** (https://www.postgresql.org/download/windows/), keeping the
-   password you choose during the install.
+1. **PostgreSQL 18** (https://www.postgresql.org/download/windows/), keeping
+   the password you choose during the install. An older version runs the
+   fictional campus, but a live copy needs 18, the version the live database
+   runs.
 2. **Python 3.12** (python.org, or `winget install Python.Python.3.12`).
 3. **Node.js** (nodejs.org, the LTS version).
 
@@ -52,6 +54,14 @@ data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, its
 backups go to `backend/sim_backups` (scheduled ones to the folder you pick in
 System Settings, named `demo-scheduled-backup-…`). Go
 back to the fictional campus with `.\dev.ps1 -SimClock -SimSetup -Reset`.
+
+A live copy on another PC needs the live keys in that PC's `backend/.env`:
+`DATABASE_URL` (the Neon connection string) and `R2_ACCOUNT_ID`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME` (the uploads).
+Hand them over privately, never through git. Read-only keys are enough and
+are the safer ones to give: a Neon role granted `pg_read_all_data`, and an R2
+API token with Object Read only. With the full keys, a plain `.\dev.ps1`
+(without `-SimClock`) on that PC works on the live database.
 
 **Cameras and detection:** the demo opens cameras like the campus app, so the
 gate scan (plate detection and OCR) and parking auto-detection run on real
