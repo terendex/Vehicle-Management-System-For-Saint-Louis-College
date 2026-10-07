@@ -583,9 +583,9 @@ export default function ViolationsManagement() {
       typeCounts[key] = (typeCounts[key] || 0) + 1
     }
     // The highest offense still standing is where the person sits on the
-    // ladder; with nothing standing, the highest they ever reached.
-    const ranked = open.length ? open : items
-    const topOffense = Math.max(0, ...ranked.map(v => v.offense_number || 0))
+    // ladder. Settled ones (cleared, lifted, archived) no longer count, so a
+    // person with nothing open has no standing at all.
+    const topOffense = Math.max(0, ...open.map(v => v.offense_number || 0))
     // Penalty state is per person, so every row carries the same one; the
     // newest row's is the freshest.
     const confiscation = items.find(v => v.confiscation)?.confiscation ?? null
@@ -632,7 +632,10 @@ export default function ViolationsManagement() {
                 {violationTypeName(type)}{n > 1 && <b className="vm-type-count">×{n}</b>}
               </span>
             ))}
-            {topOffense > 0 && <OffenseBadge num={topOffense} />}
+            {/* A lone violation shows its own number, as its status beside it
+                says whether it still counts; a group shows where the person
+                stands now. */}
+            <OffenseBadge num={single ? latest.offense_number : topOffense} />
           </div>
         </td>
         <td className="vm-cell-notes" data-label="Notes">
