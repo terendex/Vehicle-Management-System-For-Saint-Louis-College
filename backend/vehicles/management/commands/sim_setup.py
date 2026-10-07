@@ -18,8 +18,9 @@ restored into a fresh slc_sim_demo, then this code's pending migrations, then
 every uploaded file from the R2 bucket (read-only) into backend/sim_media.
 Nothing on the live side is written. The copy is left exactly as live has it
 (no period is activated). It holds real people's data: it stays on this PC,
-emails from it only ever reach SIM_EMAIL_TO, and cameras stay closed unless
-SIM_CAMERAS=1 (sim_settings.py). Drop it with -Reset when done.
+emails from it only ever reach SIM_EMAIL_TO, and its real cameras are opened
+unless the demo starts with -NoCameras (SIM_CAMERAS=0, sim_settings.py). Drop
+it with -Reset when done.
 """
 import os
 import shutil

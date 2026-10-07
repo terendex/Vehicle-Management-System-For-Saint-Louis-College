@@ -25,9 +25,14 @@ copies the live database and uploaded files (read-only on the live side) into
 the demo, and you log in with your own live account. It holds real people's
 data, so it stays on this PC: its emails only reach `SIM_EMAIL_TO`, its
 backups go to `backend/sim_backups` (scheduled ones to the folder you pick in
-System Settings, named `demo-scheduled-backup-…`), and it leaves the real
-cameras alone unless `SIM_CAMERAS=1`. Go
+System Settings, named `demo-scheduled-backup-…`). Go
 back to the fictional campus with `.\dev.ps1 -SimClock -SimSetup -Reset`.
+
+**Cameras and detection:** the demo opens cameras like the campus app, so the
+gate scan (plate detection and OCR) and parking auto-detection run on real
+video. A camera added in the demo connects if this PC can reach it. A live
+copy's cameras are the real ones, watched a second time beside the campus app;
+`.\dev.ps1 -SimClock -NoCameras` keeps every camera closed.
 
 | | |
 |---|---|

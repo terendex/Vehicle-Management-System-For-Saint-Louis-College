@@ -61,8 +61,9 @@
     Start the INSTRUCTOR DEMO instead: a local copy of the system (database
     slc_sim_demo on this PC's PostgreSQL, never the live one) whose date can
     be moved from the admin sidebar's Test Clock page. Uses
-    backend/sim_settings.py. The health check is skipped and parking-camera
-    auto-detection is off; the daily scheduler runs, so time-based jobs fire
+    backend/sim_settings.py. The health check is skipped. Cameras open as on
+    campus, so the gate scan and parking-camera auto-detection run on real
+    video (see -NoCameras); the daily scheduler runs, so time-based jobs fire
     by themselves. Emails go to SIM_EMAIL_TO from backend/.env, or are only
     printed in the backend window when it is not set.
 
@@ -83,9 +84,14 @@
 .PARAMETER FromLive
     With -SimClock -SimSetup: fill the demo with a COPY OF THE LIVE system
     (database and uploaded files, read-only on the live side) instead of the
-    fictional campus. Always starts over. The copy stays on this PC; its
-    emails only reach SIM_EMAIL_TO and real cameras stay closed unless
-    SIM_CAMERAS=1. Log in with your own live account.
+    fictional campus. Always starts over. The copy stays on this PC and its
+    emails only reach SIM_EMAIL_TO. Its cameras are the REAL ones, opened as a
+    second viewer beside the campus app (add -NoCameras to leave them alone).
+    Log in with your own live account.
+
+.PARAMETER NoCameras
+    With -SimClock: keep every camera closed (SIM_CAMERAS=0) and parking-camera
+    auto-detection off. Without it the demo opens cameras like the campus app.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\dev.ps1
@@ -112,7 +118,8 @@ param(
     [switch]$SimClock,
     [switch]$SimSetup,
     [switch]$Reset,
-    [switch]$FromLive
+    [switch]$FromLive,
+    [switch]$NoCameras
 )
 
 # Stop at the first unexpected error instead of carrying on half-started.
@@ -177,9 +184,13 @@ if ($SimClock) {
 }
 
 if ($SimClock) {
-    # The demo's own database never has cameras to watch, and the doctor
-    # checks the normal settings' database, which the demo does not use.
-    $EnvSetup += "`$env:DISABLE_PARKING_AUTODETECT = '1'; "
+    # Cameras and parking auto-detection run in the demo unless -NoCameras.
+    # The doctor checks the normal settings' database, which the demo does not use.
+    if ($NoCameras) {
+        $EnvSetup += "`$env:SIM_CAMERAS = '0'; `$env:DISABLE_PARKING_AUTODETECT = '1'; "
+    } else {
+        $EnvSetup += "`$env:SIM_CAMERAS = '1'; `$env:DISABLE_PARKING_AUTODETECT = '0'; "
+    }
     $SkipDoctor = $true
     Write-Host "`n== INSTRUCTOR DEMO: simulated clock, local database slc_sim_demo ==" -ForegroundColor Red
     Write-Host "   Nothing here touches the live database. Move the date from the admin" -ForegroundColor Red
@@ -199,8 +210,8 @@ if ($SimClock) {
             Pop-Location
         }
     }
-} elseif ($SimSetup -or $Reset -or $FromLive) {
-    Write-Host '-SimSetup, -Reset and -FromLive only apply together with -SimClock.' -ForegroundColor Red
+} elseif ($SimSetup -or $Reset -or $FromLive -or $NoCameras) {
+    Write-Host '-SimSetup, -Reset, -FromLive and -NoCameras only apply together with -SimClock.' -ForegroundColor Red
     exit 1
 }
 
@@ -231,7 +242,7 @@ if ($NoBackgroundJobs) {
     $schedulerOn  = -not (Test-Disabled (Get-Switch 'DISABLE_DAILY_SCHEDULER'))
     $autodetectOn = -not (Test-Disabled (Get-Switch 'DISABLE_PARKING_AUTODETECT'))
 }
-if ($SimClock) { $autodetectOn = $false }       # switched off for the demo above
+if ($SimClock) { $autodetectOn = -not ($NoCameras -or $NoBackgroundJobs) }   # set for the demo above
 
 # -- Step 1: health check ---------------------------------------------------------
 if (-not $SkipDoctor) {
@@ -263,7 +274,7 @@ if ($schedulerOn -or $autodetectOn) {
     elseif ($schedulerOn) { Write-Host "   Daily scheduler WILL run: automatic backup, archive expired accounts, purge old records." -ForegroundColor Yellow }
     else               { Write-Host "   Daily scheduler: off (DISABLE_DAILY_SCHEDULER=$(Get-Switch 'DISABLE_DAILY_SCHEDULER'))" -ForegroundColor Gray }
     if ($autodetectOn) { Write-Host "   Parking-camera auto-detection WILL run and keep writing bay occupancy." -ForegroundColor Yellow }
-    elseif ($SimClock) { Write-Host "   Parking-camera auto-detection and camera streams: off in the demo (SIM_CAMERAS=1 allows streams)" -ForegroundColor Gray }
+    elseif ($SimClock -and $NoCameras) { Write-Host "   Parking-camera auto-detection and camera streams: off in the demo (-NoCameras)" -ForegroundColor Gray }
     else               { Write-Host "   Parking-camera auto-detection: off (DISABLE_PARKING_AUTODETECT=$(Get-Switch 'DISABLE_PARKING_AUTODETECT'))" -ForegroundColor Gray }
     if ($SimClock) { Write-Host "   They act on the demo database slc_sim_demo only." -ForegroundColor Yellow }
     else           { Write-Host "   They act on the database named in backend/.env (see the health check above)." -ForegroundColor Yellow }
@@ -271,6 +282,9 @@ if ($schedulerOn -or $autodetectOn) {
 } else {
     Write-Host "`n== Background jobs: OFF ==" -ForegroundColor Green
     Write-Host "   Nothing is backed up, archived, purged or auto-detected by itself in this backend." -ForegroundColor Green
+}
+if ($SimClock -and -not $NoCameras) {
+    Write-Host "   Camera streams: ON in the demo, on the same cameras the campus app watches. To leave them alone:  -NoCameras" -ForegroundColor Yellow
 }
 
 Write-Host "`n== Starting backend on http://127.0.0.1:$Port (new window) ==" -ForegroundColor Cyan

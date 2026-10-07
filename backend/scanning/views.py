@@ -2937,6 +2937,12 @@ class TestRtspView(APIView):
         if not rtsp_url.lower().startswith('rtsp://'):
             return Response({'ok': False, 'message': 'URL must start with rtsp://'}, status=400)
 
+        # The demo started with -NoCameras opens nothing; say so rather than
+        # blame the URL or the network (vehicles/ffmpeg_capture.py).
+        from django.conf import settings
+        if getattr(settings, 'SIM_CLOCK_ENABLED', False) and not getattr(settings, 'SIM_CAMERAS', False):
+            return Response({'ok': False, 'message': 'Cameras are off in this demo. Start it again without -NoCameras to connect.'})
+
         def _probe():
             # Both backends, exactly as the live feed opens it — otherwise this
             # test can pass on a camera the feed cannot show, or fail on one it

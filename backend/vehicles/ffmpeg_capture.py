@@ -687,11 +687,11 @@ def open_capture(url: str, open_timeout: float = OPEN_TIMEOUT_SECONDS):
     """
     # The instructor demo (sim_settings) can hold a copy of the live
     # database, real camera addresses included. A second stream from it can
-    # overload a real camera (the Yoosee reboots under probe load), so the
-    # demo leaves cameras alone unless SIM_CAMERAS=1 asks otherwise.
+    # overload a real camera (the Yoosee reboots under probe load), so
+    # SIM_CAMERAS=0 (dev.ps1 -NoCameras) keeps the demo off every camera.
     from django.conf import settings
     if getattr(settings, 'SIM_CLOCK_ENABLED', False) and not getattr(settings, 'SIM_CAMERAS', False):
-        log.info('[capture] instructor demo: not opening %s (set SIM_CAMERAS=1 to allow)', _redact(url))
+        log.info('[capture] instructor demo: cameras are off (-NoCameras), not opening %s', _redact(url))
         import cv2
         return cv2.VideoCapture('')          # closed, so isOpened() is False
 

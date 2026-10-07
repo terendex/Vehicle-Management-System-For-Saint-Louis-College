@@ -80,8 +80,10 @@ SCHEDULED_BACKUP_PREFIX = 'demo-scheduled-backup-'
 # date (accounts/twofa.py). Sensitive actions still ask for a code.
 SIM_SKIP_2FA_LOGIN = True
 
-# Real cameras are left alone unless asked: SIM_CAMERAS=1.
-SIM_CAMERAS = os.environ.get('SIM_CAMERAS', '').strip().lower() in ('1', 'true', 'yes')
+# Cameras open in the demo like on campus, so the gate scan and parking
+# detection run on real video. SIM_CAMERAS=0 (dev.ps1 -NoCameras) keeps every
+# camera closed, e.g. when a live copy's cameras must not get a second viewer.
+SIM_CAMERAS = os.environ.get('SIM_CAMERAS', '').strip().lower() not in ('0', 'false', 'no')
 
 # The clock itself. Installed now, before any app or model module is imported,
 # so even a field's default=timezone.now picks up the simulated one.

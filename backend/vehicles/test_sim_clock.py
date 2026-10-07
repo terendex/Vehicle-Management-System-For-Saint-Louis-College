@@ -161,12 +161,35 @@ class DemoSafeguardTests(TestCase):
         self.assertNotIn('auto_backup', outcomes)
 
     @override_settings(SIM_CLOCK_ENABLED=True, SIM_CAMERAS=False)
-    def test_the_demo_does_not_open_real_cameras(self):
+    def test_no_cameras_keeps_the_demo_off_real_cameras(self):
         from vehicles import ffmpeg_capture
         with mock.patch.object(ffmpeg_capture, '_try_cv2') as cv2_open:
             cap = ffmpeg_capture.open_capture('rtsp://admin:x@10.243.40.80:554/onvif1')
         self.assertFalse(cap.isOpened())
         cv2_open.assert_not_called()
+
+    @override_settings(SIM_CLOCK_ENABLED=True, SIM_CAMERAS=True)
+    def test_the_demo_opens_cameras_by_default(self):
+        from vehicles import ffmpeg_capture
+        opened = mock.Mock()
+        with mock.patch.object(ffmpeg_capture, '_prefers_ffmpeg', return_value=False), \
+             mock.patch.object(ffmpeg_capture, '_try_cv2', return_value=opened) as cv2_open:
+            cap = ffmpeg_capture.open_capture('rtsp://admin:x@10.243.40.80:554/onvif1')
+        self.assertIs(cap, opened)
+        cv2_open.assert_called_once()
+
+    @override_settings(SIM_CLOCK_ENABLED=True, SIM_CAMERAS=False)
+    def test_connection_test_says_the_demo_cameras_are_off(self):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from scanning.views import TestRtspView
+        request = APIRequestFactory().post('/api/scanning/test-rtsp/',
+                                           {'rtsp_url': 'rtsp://10.243.40.80/onvif1'}, format='json')
+        force_authenticate(request, user=mock.Mock(is_authenticated=True))
+        with mock.patch('vehicles.ffmpeg_capture.open_capture') as opener:
+            response = TestRtspView.as_view()(request)
+        self.assertFalse(response.data['ok'])
+        self.assertIn('-NoCameras', response.data['message'])
+        opener.assert_not_called()
 
 
 class DemoBackupTests(TestCase):
