@@ -10,8 +10,9 @@ import { notify } from '../../components/Feedback/notify'
 import {
   Search, Car, Filter, RefreshCw, ChevronLeft, ChevronRight,
   X, Calendar, DoorOpen, CheckCircle, XCircle, HelpCircle, AlertTriangle,
-  Download, FileText, Users, CalendarClock,
+  Download, FileText, Users, CalendarClock, Loader2,
 } from 'lucide-react'
+import '../../styles/export-buttons.css'
 import './VehicleLog.css'
 
 // Gate movement, not account administration — the Audit Log next door records
@@ -294,22 +295,22 @@ export default function VehicleLog() {
               <span>{totalCount} {totalCount === 1 ? 'record' : 'records'}</span>
             </div>
             <button
-              className="vl-export-btn"
+              className="export-btn"
               onClick={exportPdf}
               disabled={exportingPdf || totalCount === 0}
               title="Download all filtered entries as a branded PDF report"
             >
-              <FileText size={14} />
-              <span>{exportingPdf ? 'Exporting…' : 'Export PDF'}</span>
+              {exportingPdf ? <Loader2 size={14} className="export-btn-spin" /> : <FileText size={14} />}
+              <span>Export PDF</span>
             </button>
             <button
-              className="vl-export-btn"
+              className="export-btn"
               onClick={exportExcel}
               disabled={exporting || totalCount === 0}
               title="Download all filtered entries as an Excel report"
             >
-              <Download size={14} />
-              <span>{exporting ? 'Exporting…' : 'Export Excel'}</span>
+              {exporting ? <Loader2 size={14} className="export-btn-spin" /> : <Download size={14} />}
+              <span>Export Excel</span>
             </button>
           </div>
         </div>

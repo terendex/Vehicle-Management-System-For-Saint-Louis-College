@@ -55,34 +55,6 @@
   white-space: nowrap;
 }
 
-.vl-export-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1.5px solid #D3E1EC;
-  background: #FFFFFF;
-  color: #4A6B85;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.vl-export-btn:hover:not(:disabled) {
-  background: #F4F8FB;
-  color: #03396C;
-  border-color: #BDD4E5;
-}
-
-.vl-export-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* ── Toolbar ──────────────────────────────────────────────── */
 
 .vl-toolbar {
@@ -571,7 +543,7 @@
      row; full width so the two buttons split it evenly. */
   .vl-header-actions { width: 100%; flex-wrap: wrap; }
   .vl-stats-badge { flex: 1 1 auto; justify-content: center; }
-  .vl-export-btn { flex: 1 1 140px; justify-content: center; }
+  .vl-header-actions .export-btn { flex: 1 1 140px; justify-content: center; }
 }
 
 @media (max-width: 768px) {
@@ -622,7 +594,7 @@
 @media (max-width: 400px) {
   .vl-title { font-size: 18px; }
   .vl-toolbar { padding: 10px; }
-  .vl-export-btn { flex: 1 1 100%; }
+  .vl-header-actions .export-btn { flex: 1 1 100%; }
   .vl-table th,
   .vl-table td { padding: 9px 10px; font-size: 13px; }
 }

@@ -4,6 +4,7 @@ import { toast } from './Feedback/notify'
 import { reportFileName } from '../utils/reportName'
 import { openReportTab, downloadBlob, saveReportFile } from '../utils/saveFile'
 import { confirmPdfExport } from '../utils/confirmReport'
+import '../styles/export-buttons.css'
 import './ReportExportBar.css'
 
 // Reusable report controls: Date From / Date To (validated) + branded PDF/Excel
@@ -155,20 +156,20 @@ export default function ReportExportBar({ label = 'Report', fetchBlob, extraRepo
           aria-label="Date To"
         />
       </div>
-      <button className="report-bar-btn report-bar-btn--pdf" disabled={busy !== null} onClick={() => run('pdf')}>
-        {busy === 'pdf' ? <Loader2 size={14} className="report-bar-spin" /> : <FileText size={14} />} PDF
+      <button className="export-btn" disabled={busy !== null} onClick={() => run('pdf')}>
+        {busy === 'pdf' ? <Loader2 size={14} className="export-btn-spin" /> : <FileText size={14} />} Export PDF
       </button>
-      <button className="report-bar-btn report-bar-btn--excel" disabled={busy !== null} onClick={() => run('excel')}>
-        {busy === 'excel' ? <Loader2 size={14} className="report-bar-spin" /> : <Download size={14} />} Excel
+      <button className="export-btn" disabled={busy !== null} onClick={() => run('excel')}>
+        {busy === 'excel' ? <Loader2 size={14} className="export-btn-spin" /> : <Download size={14} />} Export Excel
       </button>
       {extraReports.map((r) => (
         <button
           key={r.key}
-          className="report-bar-btn report-bar-btn--summary"
+          className="export-btn"
           disabled={busy !== null}
           onClick={() => download(r.key, r.fetch, reportFileName(r.fileBase || r.label, 'pdf'), r.label, r.label)}
         >
-          {busy === r.key ? <Loader2 size={14} className="report-bar-spin" /> : <FileBarChart2 size={14} />} {r.label}
+          {busy === r.key ? <Loader2 size={14} className="export-btn-spin" /> : <FileText size={14} />} Export {r.label}
         </button>
       ))}
     </div>

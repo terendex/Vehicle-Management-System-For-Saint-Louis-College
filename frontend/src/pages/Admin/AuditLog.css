@@ -51,34 +51,6 @@
   color: #03396C;
 }
 
-.al-export-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1.5px solid #D3E1EC;
-  background: #FFFFFF;
-  color: #4A6B85;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.al-export-btn:hover:not(:disabled) {
-  background: #F4F8FB;
-  color: #03396C;
-  border-color: #BDD4E5;
-}
-
-.al-export-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .al-toolbar {
   display: flex;
   flex-direction: column;
@@ -550,7 +522,7 @@
     flex-wrap: wrap;
   }
 
-  .al-export-btn {
+  .al-header-actions .export-btn {
     flex: 1 1 140px;
     justify-content: center;
   }
@@ -662,7 +634,7 @@
     padding: 10px;
   }
 
-  .al-export-btn {
+  .al-header-actions .export-btn {
     flex: 1 1 100%;
   }
 

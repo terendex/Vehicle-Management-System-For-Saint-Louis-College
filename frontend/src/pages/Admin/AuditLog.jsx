@@ -3,12 +3,13 @@ import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import { usersApi } from '../../api/users'
 import {
   Search, ClipboardList, Filter,
-  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar
+  RefreshCw, ChevronLeft, ChevronRight, Download, X, FileText, Calendar, Loader2
 } from 'lucide-react'
 import { reportFileName } from '../../utils/reportName'
 import { openReportTab, saveReportFile } from '../../utils/saveFile'
 import { notify } from '../../components/Feedback/notify'
 import { confirmPdfExport } from '../../utils/confirmReport'
+import '../../styles/export-buttons.css'
 import './AuditLog.css'
 
 // Must stay in step with AuditLog.Action on the backend. Vehicle-owner gate
@@ -250,13 +251,13 @@ export default function AuditLog() {
               <ClipboardList size={16} />
               <span>{totalCount} events</span>
             </div>
-            <button className="al-export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Open all filtered entries as a branded PDF report">
-              <FileText size={14} />
-              <span>{exportingPdf ? 'Exporting…' : 'Export PDF'}</span>
+            <button className="export-btn" onClick={exportPdf} disabled={exportingPdf || totalCount === 0} title="Open all filtered entries as a branded PDF report">
+              {exportingPdf ? <Loader2 size={14} className="export-btn-spin" /> : <FileText size={14} />}
+              <span>Export PDF</span>
             </button>
-            <button className="al-export-btn" onClick={exportExcel} disabled={exporting || totalCount === 0} title="Download all filtered entries as an Excel report">
-              <Download size={14} />
-              <span>{exporting ? 'Exporting…' : 'Export Excel'}</span>
+            <button className="export-btn" onClick={exportExcel} disabled={exporting || totalCount === 0} title="Download all filtered entries as an Excel report">
+              {exporting ? <Loader2 size={14} className="export-btn-spin" /> : <Download size={14} />}
+              <span>Export Excel</span>
             </button>
           </div>
         </div>
