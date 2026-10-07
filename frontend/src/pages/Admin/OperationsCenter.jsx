@@ -590,7 +590,7 @@ function CrossGateRecords({ gateLabel, refreshKey }) {
    anything wrong right now", which is the question on every tab. */
 const TABS = [
   { id: 'live',    label: 'Live Monitor', icon: MonitorDot },
-  { id: 'inside',  label: 'Active Owners', icon: Users },
+  { id: 'inside',  label: 'Vehicles Inside', icon: Users },
   { id: 'guards',  label: 'Guards',       icon: Shield },
   { id: 'records', label: 'Gate Records', icon: ArrowRightLeft },
 ]
@@ -712,7 +712,7 @@ export default function OperationsCenter() {
               <p className="oc-stat-lbl">Guards On Duty</p>
             </div>
           </div>
-          {/* The same count the Active Owners tab lists, one tap away. */}
+          {/* The same count the Vehicles Inside tab lists, one tap away. */}
           <button type="button" className="oc-stat-card oc-stat-card--link" onClick={() => setTab('inside')}>
             <div className="oc-stat-icon green"><Car size={18} /></div>
             <div>
@@ -848,8 +848,8 @@ export default function OperationsCenter() {
 
         </div>
 
-        {/* ── Active Owners: everyone inside, visitors with their pass time.
-               The guard entry page's Active Owners panel lists the same. ── */}
+        {/* ── Vehicles Inside: everyone inside, visitors with their pass time.
+               The guard entry page's Vehicles Inside panel lists the same. ── */}
         <div className="oc-tabpanel" hidden={tab !== 'inside'}>
           <ActiveOwners data={inside} loading={loading} />
         </div>

@@ -233,7 +233,7 @@
 }
 .em-visitor-extend:hover { background: #EEF4F9; }
 
-/* ─── Active Owners panel ──────────────────────────────────────────
+/* ─── Vehicles Inside panel ──────────────────────────────────────────
    Everyone inside the campus: the visitor rows above plus an owner row
    per vehicle. Chips and the search narrow it; the list scrolls so a
    full campus does not push the panels below off the column. */
@@ -285,7 +285,7 @@
 .em-active-stay { color: #2E4C63; }
 .em-active-flag { color: #8A6B00; font-weight: 600; }
 
-/* Who came in, same colours as the admin's Active Owners table. */
+/* Who came in, same colours as the admin's Vehicles Inside table. */
 .em-cat {
   padding: 1px 7px;
   border-radius: 999px;

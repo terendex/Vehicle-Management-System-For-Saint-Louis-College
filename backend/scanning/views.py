@@ -3640,7 +3640,7 @@ class InsideCampusView(APIView):
     STALE_ENTRY_HOURS, one row per vehicle (plate, or the row for a vehicle
     with no plate). So the total here is the parking screens' On Campus count.
 
-    The guard's Active Owners panel lists the same rows, so guards read it too.
+    The guard's Vehicles Inside panel lists the same rows, so guards read it too.
     """
     permission_classes = [IsGuardOrAdmin]
 

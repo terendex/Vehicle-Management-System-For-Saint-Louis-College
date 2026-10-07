@@ -309,7 +309,7 @@ export const SHOTS = [
   }),
   fig(AD, '11-operations-gate-records', {
     who: 'admin', path: '/admin/entries', title: 'Operations Center: gate records',
-    caption: 'Cross-gate records and confiscated accounts. Everyone on campus is on the Active Owners tab.',
+    caption: 'Cross-gate records and confiscated accounts. Everyone on campus is on the Vehicles Inside tab.',
     prepare: async (p) => { await clickTab(p, /Gate Records/) },
     marks: [
       m(1, 'Cross-Gate Records', 'Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.', union(text('Cross-Gate Records'), (p) => p.locator('main .oc-xg-table').first())),
@@ -509,7 +509,7 @@ export const SHOTS = [
       m(5, 'Scan QR', 'Scan the QR code on the owner’s vehicle pass, or on any printed slip — a visitor slip, a supplier or event pass, or the entry slip given to a vehicle with no plate. A slip opens rather than acting: you then press Record Exit or Reprint, so looking one up cannot let a vehicle out by accident.', btn(/Scan QR/)),
       m(6, 'No Plate?', 'Record a vehicle with no plate or conduction sticker by describing it. Its entry slip prints on the thermal printer for the driver to keep.', btn(/No Plate/)),
       m(7, 'Recent Entries', 'Latest decisions at this gate, plus the plates and names you looked up. The chips count entries by category.', card(text('Recent Entries'))),
-      m(8, 'Active Owners', 'Everyone inside the campus: owners, fetchers and unregistered vehicles with how long they have been in, plus visitor passes with time left. +30m extends a pass.', card(text('Active Owners'))),
+      m(8, 'Vehicles Inside', 'Everyone inside the campus: owners, fetchers and unregistered vehicles with how long they have been in, plus visitor passes with time left. +30m extends a pass.', card(text('Vehicles Inside'))),
       m(9, 'Confiscated accounts', 'Owners serving a violation penalty. They may not enter or park.', card(text('Confiscated accounts'))),
       m(10, 'Shift controls', 'On-duty timer, Help, Policy, Change Shift (hand over the gate) and Log Out.', css('aside .sidebar-footer')),
     ],

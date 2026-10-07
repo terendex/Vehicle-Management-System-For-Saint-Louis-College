@@ -887,7 +887,7 @@ function OwnerLookupModal({ data, onPick, onClose }) {
 // History: every slip already recorded, any day, searched and paged by the
 // server — kept apart so the To record list does not fill up with finished
 // ones. Newest entry first in both. Picking a row opens the record form (the
-// edit form for a History row) — the same one the Active Owners row opens.
+// edit form for a History row) — the same one the Vehicles Inside row opens.
 const SLIP_PAGE_SIZE = 8
 // Plates are matched without spaces or dashes, so "ASD234" finds "ASD 234".
 const slipKey = (s) => (s || '').toUpperCase().replace(/[\s-]/g, '')
@@ -1683,7 +1683,7 @@ export default function SecurityEntryManagement() {
   const [offices, setOffices]         = useState([])
   const [passes, setPasses]           = useState(loadCachedPasses) // today's ACTIVE visitor passes (hydrated from cache)
   const [inside, setInside]           = useState(null)  // every vehicle on campus now (GET /scan/inside/)
-  const [insideGroup, setInsideGroup] = useState('all') // Active Owners chip
+  const [insideGroup, setInsideGroup] = useState('all') // Vehicles Inside chip
   const [insideSearch, setInsideSearch] = useState('')
   const [expected, setExpected]       = useState([])    // today's scheduled visits, waiting first
   const [checkIn, setCheckIn]         = useState(null)  // the scheduled visit being checked in from the panel
@@ -1948,7 +1948,7 @@ export default function SecurityEntryManagement() {
     return () => clearInterval(t)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Active Owners: everyone inside, the same list the Operations Center shows
+  // Vehicles Inside: everyone inside, the same list the Operations Center shows
   // (utils/activeOwners.js). A visitor's row carries their pass, read from
   // this page's own fresher copy, so +30m shows without waiting for a poll.
   const activeAll   = activeOwnerItems(inside, passes)
@@ -2766,13 +2766,13 @@ export default function SecurityEntryManagement() {
               </section>
             )}
 
-            {/* Active owners — every vehicle inside the campus, from every gate,
+            {/* Vehicles Inside — every vehicle inside the campus, from every gate,
                 as the Operations Center lists it. Visitors keep their pass row
                 (time left, +30m, slip); owners, fetchers and unregistered
                 vehicles show how long they have been in. */}
             <section className="cm-panel">
               <div className="cm-panel-head">
-                <span className="cm-panel-title"><Users size={14} /> Active Owners</span>
+                <span className="cm-panel-title"><Users size={14} /> Vehicles Inside</span>
                 <div className="cm-panel-end"><span className="cm-count" title="Vehicles inside the campus now">{activeChips[0].count}</span></div>
               </div>
               {activeAll.length === 0 ? (

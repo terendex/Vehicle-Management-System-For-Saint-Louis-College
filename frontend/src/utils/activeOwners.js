@@ -1,4 +1,4 @@
-/* Active Owners: everyone inside the campus, as GET /scan/inside/ returns it.
+/* Vehicles Inside: everyone inside the campus, as GET /scan/inside/ returns it.
    Shared by the guard's entry page panel and the admin's Operations Center
    table, so the two always list the same people the same way.
 

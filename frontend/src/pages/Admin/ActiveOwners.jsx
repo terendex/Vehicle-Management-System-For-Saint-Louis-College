@@ -5,10 +5,10 @@ import TableLoader from '../../components/TableLoader'
 import { activeOwnerItems, activeOwnerChips, filterActiveOwners } from '../../utils/activeOwners'
 import './ActiveOwners.css'
 
-/* Operations Center, Active Owners tab: everyone on campus now, from
+/* Operations Center, Vehicles Inside tab: everyone on campus now, from
    GET /scan/inside/ (fetched by the page's own refresh, so the stat card and
    this table always agree). The same list the guard's entry page shows in its
-   Active Owners panel (utils/activeOwners.js); here it is a table. A visitor's
+   Vehicles Inside panel (utils/activeOwners.js); here it is a table. A visitor's
    row carries their pass, so its time left and overstay show in Time Left. */
 
 function stayText(minutes) {
@@ -36,7 +36,7 @@ export default function ActiveOwners({ data, loading }) {
   if (!data) {
     return (
       <div className="oc-section">
-        <div className="oc-section-head"><Users size={15} /><span>Active Owners</span></div>
+        <div className="oc-section-head"><Users size={15} /><span>Vehicles Inside</span></div>
         {loading ? <TableLoader label="Loading who is inside…" /> : <p className="ic-empty">Could not load who is inside.</p>}
       </div>
     )
@@ -50,7 +50,7 @@ export default function ActiveOwners({ data, loading }) {
     <div className="oc-section">
       <div className="oc-section-head">
         <Users size={15} />
-        <span>Active Owners</span>
+        <span>Vehicles Inside</span>
         <span className="oc-duty-count">{chips[0].count} inside</span>
       </div>
 
