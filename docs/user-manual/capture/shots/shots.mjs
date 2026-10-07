@@ -373,8 +373,8 @@ export const SHOTS = [
       m(3, 'Status filter', 'All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.', union(btn(/^All$/, 'main'), btn(/Cleared \/ Resolved/))),
       m(4, 'Type and period', 'Filter by violation type, and by Today, Week, Month or Year.', union(css('main select >> nth=0'), btn('Year', 'main'))),
       m(5, 'Search', 'Find by plate, conduction number, owner or notes. The arrow button resets all filters.', union(ph(/Search plate, owner/), (p) => p.locator('main').getByPlaceholder(/Search plate, owner/).locator('xpath=following::button[1]'))),
-      m(6, 'Violations table', 'Plate, owner, type with offense number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.', css('main table')),
-      m(7, 'Lift', 'Voids a violation as a false alarm. It stops counting, and later offenses are renumbered.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
+      m(6, 'Violations table', 'One row per person: plate, owner, type with offense number (1st, 2nd, 3rd), latest notes, when it was issued, confiscation and status.', css('main table')),
+      m(7, 'View', 'Opens the violation profile: every violation in full, with Lift to void one as a false alarm. A lifted one stops counting, and later offenses are renumbered.', (p) => p.locator('main').getByRole('button', { name: /View violations/ }).first()),
     ],
   }),
   fig(AD, '16-vehicle-log', {

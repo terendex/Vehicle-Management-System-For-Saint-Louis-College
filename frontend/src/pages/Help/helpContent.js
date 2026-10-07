@@ -478,7 +478,8 @@ export const HELP_TOPICS = [
       ] },
       { type: 'figure', id: 'cdso-violations' },
       { type: 'note', text: 'The report bar\'s Date From / Date To narrow the table on screen as well as the exported file, so what you are looking at is what the report will contain. Where they are set, they override the Today / Week / Month / Year buttons.' },
-      { type: 'note', text: 'Lift a violation that should never have been issued (a false alarm). It stops counting, and the owner’s remaining offenses are renumbered.' },
+      { type: 'p', text: 'The table has one row per person. Press the eye button (or click the row) to open their violation profile: where they stand on the ladder, their confiscation, and every violation on record in full, newest first.' },
+      { type: 'note', text: 'Lift a violation that should never have been issued (a false alarm) from inside the profile. It stops counting, and the owner’s remaining offenses are renumbered.' },
     ],
   },
   {

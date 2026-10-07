@@ -281,7 +281,7 @@
   /* Stays a table on every screen: below this width the card scrolls
      sideways rather than the columns crushing their contents. It is the
      fixed columns below plus room for Owner and Notes. */
-  min-width: 1040px;
+  min-width: 1000px;
 }
 
 /* Column widths. The columns that hold buttons, pills and the countdown get
@@ -293,7 +293,7 @@
 .vm-col-issued   { width: 150px; }
 .vm-col-conf     { width: 180px; }
 .vm-col-status   { width: 128px; }
-.vm-col-actions  { width: 156px; }
+.vm-col-actions  { width: 96px; }
 
 /* Nothing may be wider than its cell: a long type pill ("Activity While
    Confiscated") wraps instead of spilling into Notes. */
@@ -343,7 +343,7 @@
 .vm-row-resolved > td.vm-cell-actions > * { opacity: 0.55; }
 
 /* Actions stays pinned to the right edge when the card scrolls sideways,
-   so Lift / Resolve never leave the screen. It takes its row's background
+   so the eye that opens a profile never leaves the screen. It takes its row's background
    so hover and the group tints carry across it. */
 .vm-table th:last-child,
 .vm-table td.vm-cell-actions {
@@ -943,7 +943,7 @@
 
 /* A little tighter on narrower cards, so 8 columns still breathe. The
    fixed columns shrink with the padding; each still fits its widest
-   content ("Confiscation ended", "Lift" + "Resolve", "2 offenses"). */
+   content ("Confiscation ended", the eye with its count). */
 @container vm-card (max-width: 1180px) {
   .vm-table th,
   .vm-table td { padding: 11px 10px; }
@@ -953,7 +953,7 @@
   .vm-col-issued  { width: 120px; }
   .vm-col-conf    { width: 160px; }
   .vm-col-status  { width: 120px; }
-  .vm-col-actions { width: 136px; }
+  .vm-col-actions { width: 84px; }
 }
 
 /* ── Responsive page ─────────────────────────────────────────────
@@ -1084,12 +1084,11 @@
   }
 }
 
-/* ── Grouped rows ────────────────────────────────────────────────── */
-/* One row per owner (or per plate with no account behind it); the
-   individual offenses open beneath it. */
-.vm-table tbody tr.vm-group-row { cursor: pointer; }
-.vm-table tbody tr.vm-group-row.is-open { background: #F4F8FB; }
-.vm-table tbody tr.vm-group-row.is-open td { border-bottom-color: #D3E1EC; }
+/* ── Person rows ─────────────────────────────────────────────────── */
+/* One row per owner (or per plate with no account behind it). The whole
+   row opens the profile, as the eye button does. */
+.vm-table tbody tr.vm-person-row { cursor: pointer; }
+.vm-table tbody tr.vm-person-row:hover { background: #EEF4F9; }
 
 .vm-group-plates {
   display: flex;
@@ -1108,24 +1107,287 @@
   color: #4A6B85;
 }
 
-.vm-btn-expand {
+/* The eye. With several violations it carries their count. */
+.vm-btn-view {
+  gap: 5px;
+  padding: 6px 10px;
   background: #F4F8FB;
   border-color: #D3E1EC;
   color: #03396C;
-  white-space: nowrap;
 }
-.vm-btn-expand:hover { background: #EAF2F8; }
+.vm-btn-view:hover:not(:disabled) { background: #EAF2F8; border-color: #BDD4E5; }
+.vm-view-count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #03396C;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
 
-/* Offenses under an open group: tinted and inset on the plate column so
-   they read as belonging to the row above. */
-.vm-table tbody tr.vm-subrow { background: #FAFCFE; }
-.vm-table tbody tr.vm-subrow td { border-bottom-color: #EEF4F9; }
-/* These backgrounds outrank the table's plain row hover, so they restate it. */
-.vm-table tbody tr.vm-group-row:hover,
-.vm-table tbody tr.vm-subrow:hover { background: #EEF4F9; }
-.vm-table tbody tr.vm-subrow .vm-cell-plate {
-  padding-left: 26px;
-  box-shadow: inset 3px 0 0 #BDD4E5;
-  font-weight: 600;
+/* ── Violation profile ───────────────────────────────────────────── */
+/* Same frame as User Management's View Profile: header, scrolling body,
+   footer. Wider than the confirm dialogs, for the stacked violations. */
+.vm-profile {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 680px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(3, 57, 108, 0.15), 0 0 0 1px rgba(3, 57, 108, 0.05);
+  animation: vm-profile-in 0.25s ease;
+  text-align: left;
+}
+@keyframes vm-profile-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.vm-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #D3E1EC;
+  flex-shrink: 0;
+}
+.vm-profile-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #03396C;
+  margin: 0;
+}
+.vm-profile-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   color: #4A6B85;
+  cursor: pointer;
+}
+.vm-profile-close:hover { background: #EEF4F9; color: #0B2340; }
+
+/* Only the body scrolls, so the title and Close stay in view. */
+.vm-profile-body {
+  padding: 24px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.vm-profile-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 22px;
+}
+.vm-profile-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #DCE9F2;
+  color: #03396C;
+  font-size: 26px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+.vm-profile-name {
+  margin: 0;
+  color: #0B2340;
+  font-size: 18px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.vm-profile-email {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #64839C;
+  overflow-wrap: anywhere;
+}
+.vm-profile-plates {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.vm-profile-plate {
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: #0B2340;
+  background: #F4F8FB;
+  border: 1px solid #D3E1EC;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+
+.vm-profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 24px;
+  row-gap: 16px;
+  align-items: start;
+  padding: 16px 18px;
+  background: #F8FAFC;
+  border: 1px solid #E3ECF3;
+  border-radius: 12px;
+}
+.vm-profile-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.vm-profile-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #64839C;
+  margin-bottom: 5px;
+}
+.vm-profile-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #0B2340;
+}
+
+.vm-profile-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #03396C;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.vm-profile-section span {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #DCE9F2;
+  color: #03396C;
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+
+/* Each violation as a card, newest first. */
+.vm-vlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.vm-vcard {
+  border: 1px solid #D3E1EC;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Settled ones step back so the open ones lead. */
+.vm-vcard.is-settled { background: #FAFCFD; }
+.vm-vcard.is-settled > *:not(.vm-vcard-head) { opacity: 0.7; }
+
+.vm-vcard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.vm-vcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.vm-vcard .vm-type-pill { white-space: normal; }
+.vm-vcard-plate {
+  font-family: monospace;
+  font-weight: 700;
+  font-size: 12px;
+  color: #4A6B85;
+}
+.vm-vcard-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: #64839C;
+}
+.vm-vcard-notes {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #2E4C63;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.vm-vcard-extra {
+  margin: 0;
+  font-size: 12.5px;
+  color: #4A6B85;
+  overflow-wrap: anywhere;
+}
+.vm-vcard-extra strong { color: #2E4C63; }
+.vm-vcard .vm-actions { justify-content: flex-end; }
+
+.vm-profile-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 24px;
+  border-top: 1px solid #D3E1EC;
+  flex-shrink: 0;
+}
+.vm-profile-btn {
+  padding: 10px 20px;
+  background: #fff;
+  color: #4A6B85;
+  border: 1.5px solid #D3E1EC;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.vm-profile-btn:hover { background: #F4F8FB; border-color: #BDD4E5; }
+
+@media (max-width: 640px) {
+  .vm-profile { max-height: 94vh; }
+  .vm-profile-header,
+  .vm-profile-footer { padding: 14px 16px; }
+  .vm-profile-body { padding: 16px; }
+  .vm-profile-grid { column-gap: 14px; row-gap: 12px; padding: 14px; }
+  .vm-vcard-head { flex-direction: column; }
+  .vm-profile-btn { width: 100%; }
+}
+
+/* The four summary values are short enough to stay two-up on a phone;
+   only the narrowest screens stack them. */
+@media (max-width: 360px) {
+  .vm-profile-grid { grid-template-columns: 1fr; }
 }
