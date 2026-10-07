@@ -20,6 +20,31 @@ year, and sets the clock to the real date. The browser opens
 ports (8765 and 5174), so it runs beside the campus app on 8000 without
 touching it; if a demo port is taken, the launcher stops and says why.
 
+**On another PC (a fresh clone):** install these three first, then double-click
+the same launcher:
+
+1. **PostgreSQL** (https://www.postgresql.org/download/windows/), keeping the
+   password you choose during the install.
+2. **Python 3.12** (python.org, or `winget install Python.Python.3.12`).
+3. **Node.js** (nodejs.org, the LTS version).
+
+The first run asks for the PostgreSQL password and saves it in `backend/.env`,
+makes the backend's Python environment (10 to 30 minutes, about 3 GB) and
+installs the npm packages. The fictional campus comes from
+`docs/user-manual/capture/demo_campus.json`, which is in git, so that PC gets
+the same accounts, logs and pictures as this one. Later runs start in about a
+minute. Plate reading on a live camera also needs PaddlePaddle, which is not
+installed; the demo campus's cameras are offline, so nothing else needs it.
+
+After changing the demo campus (`slc_manual_demo`), save it for the other PCs
+and commit the file:
+
+```powershell
+. docs\user-manual\capture\demo-env.ps1
+cd backend
+venv\Scripts\python.exe -X utf8 manage.py export_demo_campus
+```
+
 **A copy of the live system instead:** `.\dev.ps1 -SimClock -SimSetup -FromLive`
 copies the live database and uploaded files (read-only on the live side) into
 the demo, and you log in with your own live account. It holds real people's

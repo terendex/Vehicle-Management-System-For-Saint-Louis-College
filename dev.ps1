@@ -74,9 +74,10 @@
 
 .PARAMETER SimSetup
     With -SimClock: create the demo database first (a copy of the screenshot
-    demo database, slc_manual_demo), apply migrations, open a registration
-    period for the current school year and set the clock to the real date.
-    Safe to repeat: an existing demo database is kept.
+    demo database, slc_manual_demo, or on a PC without it the same campus
+    from docs/user-manual/capture/demo_campus.json), apply migrations, open a
+    registration period for the current school year and set the clock to the
+    real date. Safe to repeat: an existing demo database is kept.
 
 .PARAMETER Reset
     With -SimClock -SimSetup: drop the demo database and start over.
@@ -134,8 +135,9 @@ $Frontend = Join-Path $Root 'frontend'
 $Python   = Join-Path $Backend 'venv\Scripts\python.exe'
 
 # -- Check the basics before starting anything ----------------------------------
-# Without the backend's Python environment nothing below can run.
-if (-not (Test-Path $Python)) {
+# Without the backend's Python environment nothing below can run. The demo
+# makes it itself on a fresh clone (see "First run" below).
+if (-not (Test-Path $Python) -and -not $SimClock) {
     Write-Host "Backend Python not found at $Python" -ForegroundColor Red
     Write-Host "Create it first - see README, 'Getting Started'." -ForegroundColor Red
     exit 1
@@ -144,6 +146,71 @@ if (-not (Test-Path $Python)) {
 if (-not $NoFrontend -and -not (Get-Command npm -ErrorAction SilentlyContinue)) {
     Write-Host "npm not found - install Node.js, or run with -NoFrontend." -ForegroundColor Red
     exit 1
+}
+
+# -- First run of the demo on a fresh clone ------------------------------------------
+# A PC that only has what git carries gets the rest made here, once: a
+# backend/.env for its own PostgreSQL, the backend's Python environment and
+# the frontend's npm packages. The demo campus itself comes from git
+# (sim_setup loads docs/user-manual/capture/demo_campus.json). PostgreSQL,
+# Python 3.12 and Node.js have to be installed by hand.
+if ($SimClock) {
+    $EnvFile = Join-Path $Backend '.env'
+    if (-not (Test-Path $EnvFile)) {
+        Write-Host "`n== First run: backend\.env not found, making one for the demo ==" -ForegroundColor Cyan
+        $pgUser = Read-Host 'PostgreSQL user on this PC (press Enter for postgres)'
+        if (-not $pgUser) { $pgUser = 'postgres' }
+        $pgPass = Read-Host "Password of $pgUser (the one chosen when PostgreSQL was installed)"
+        $secret = [guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')
+        # Single quotes keep a # or $ in the password literal for python-dotenv.
+        [IO.File]::WriteAllLines($EnvFile, @(
+            '# Made by dev.ps1 -SimClock for the instructor demo on this PC.',
+            'DEBUG=True',
+            "SECRET_KEY=$secret",
+            "DB_USER=$pgUser",
+            "DB_PASSWORD='$($pgPass -replace "'", "\'")'"))
+        Write-Host "   Saved $EnvFile (edit it to change the password)." -ForegroundColor Gray
+    }
+
+    $pg = New-Object Net.Sockets.TcpClient
+    try { $pg.Connect('127.0.0.1', 5432) } catch {
+        Write-Host "`nPostgreSQL is not running on this PC (nothing answers on port 5432)." -ForegroundColor Red
+        Write-Host "   Install it from https://www.postgresql.org/download/windows/ and run this again." -ForegroundColor Red
+        exit 1
+    } finally { $pg.Dispose() }
+
+    if (-not (Test-Path $Python)) {
+        Write-Host "`n== First run: making the backend's Python environment ==" -ForegroundColor Cyan
+        Write-Host "   Installing its packages takes 10 to 30 minutes and about 3 GB." -ForegroundColor Gray
+        $pyExe = $null; $pyArgs = @()
+        cmd /c 'py -3.12 -c "import sys" >nul 2>&1'
+        if ($LASTEXITCODE -eq 0) { $pyExe = 'py'; $pyArgs = @('-3.12') }
+        else {
+            cmd /c 'python -c "import sys; sys.exit(sys.version_info[:2] != (3, 12))" >nul 2>&1'
+            if ($LASTEXITCODE -eq 0) { $pyExe = 'python' }
+        }
+        if (-not $pyExe) {
+            Write-Host "Python 3.12 not found. Install it (python.org, or: winget install Python.Python.3.12) and run this again." -ForegroundColor Red
+            exit 1
+        }
+        $VenvDir = Join-Path $Backend 'venv'
+        & $pyExe @pyArgs -m venv $VenvDir
+        if ($LASTEXITCODE -eq 0) { & $Python -m pip install --upgrade pip }
+        if ($LASTEXITCODE -eq 0) { & $Python -m pip install -r (Join-Path $Root 'requirements.txt') }
+        if ($LASTEXITCODE -ne 0) {
+            # Removed, so the next run tries again instead of starting on half the packages.
+            Remove-Item -Recurse -Force $VenvDir -ErrorAction SilentlyContinue
+            Write-Host 'Installing the Python packages failed (see above). Fix that and run this again.' -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    if (-not $NoFrontend -and -not (Test-Path (Join-Path $Frontend 'node_modules'))) {
+        Write-Host "`n== First run: installing the frontend's npm packages ==" -ForegroundColor Cyan
+        Push-Location $Frontend
+        try { npm ci } finally { Pop-Location }
+        if ($LASTEXITCODE -ne 0) { Write-Host 'npm ci failed (see above).' -ForegroundColor Red; exit 1 }
+    }
 }
 
 # -- A helper that opens a new PowerShell window running some commands ----------

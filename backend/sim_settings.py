@@ -27,6 +27,10 @@ os.environ['USE_R2'] = 'false'
 from debug_settings import *  # noqa: E401,F401,F403
 from config.settings import BASE_DIR, EMAIL_TRANSPORT_BACKEND as _REAL_TRANSPORT
 
+# A fresh clone's backend/.env may have no key; the demo signs only its own
+# local logins, so a fixed one is enough there.
+SECRET_KEY = SECRET_KEY or 'sim-demo-only-not-a-secret'  # noqa: F405
+
 SIM_DB_NAME = os.environ.get('SIM_DB_NAME', 'slc_sim_demo')
 DATABASES = {
     'default': {

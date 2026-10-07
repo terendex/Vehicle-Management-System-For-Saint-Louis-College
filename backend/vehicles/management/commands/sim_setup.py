@@ -4,8 +4,10 @@ Run by `.\\dev.ps1 -SimClock -SimSetup` (add -Reset to start over), under
 sim_settings. The demo database is a COPY of the local screenshot database,
 slc_manual_demo, which already holds a whole fictional campus (seed_demo.py):
 accounts, vehicles, registrations, logs and violations, all invented. Copying
-it leaves the screenshot database exactly as it was. Without it, an empty
-database is created and migrated instead.
+it leaves the screenshot database exactly as it was. A PC without it (a
+fresh clone) gets the same campus from docs/user-manual/capture/
+demo_campus.json, the copy of it kept in git (export_demo_campus): an empty
+database is migrated and the file loaded into it.
 
 Then: migrations are applied, a registration period for the current school
 year is made the active one, and the simulated clock is switched on at the
@@ -34,6 +36,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 TEMPLATE_DB = 'slc_manual_demo'
 TEMPLATE_MEDIA = os.path.join(settings.BASE_DIR, '..', 'docs', 'user-manual', 'capture', 'demo_media')
+TEMPLATE_FIXTURE = os.path.join(settings.BASE_DIR, '..', 'docs', 'user-manual', 'capture', 'demo_campus.json')
 PG_BIN = r'C:\Program Files\PostgreSQL\18\bin'
 
 
@@ -67,15 +70,17 @@ class Command(BaseCommand):
             return
 
         created = self._create(db, name, reset)
-        if created == 'copied':
+        if created in ('copied', 'fixture'):
             self._clear_backups()
-        if created == 'copied' and os.path.isdir(TEMPLATE_MEDIA):
+        if created in ('copied', 'fixture') and os.path.isdir(TEMPLATE_MEDIA):
             if reset and os.path.isdir(settings.MEDIA_ROOT):
                 shutil.rmtree(settings.MEDIA_ROOT)
             shutil.copytree(TEMPLATE_MEDIA, settings.MEDIA_ROOT, dirs_exist_ok=True)
             self.stdout.write(f'Copied the demo uploads to {settings.MEDIA_ROOT}.')
         self.stdout.write('Applying migrations...')
         call_command('migrate', interactive=False, verbosity=0)
+        if created == 'fixture':
+            self._load_fixture()
         if created == 'kept' and self._is_live_copy():
             # An earlier --from-live copy: keep it exactly as live has it.
             actions.reset()
@@ -138,10 +143,46 @@ class Command(BaseCommand):
                     self.stdout.write(f'Created {name} as a copy of {TEMPLATE_DB} (the fictional demo campus).')
                     return 'copied'
                 cur.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
+                if os.path.isfile(TEMPLATE_FIXTURE):
+                    self.stdout.write(f'Created {name}; the demo campus comes from demo_campus.json '
+                                      f'({TEMPLATE_DB} not on this PC).')
+                    return 'fixture'
                 self.stdout.write(f'Created an empty {name} ({TEMPLATE_DB} not found).')
                 return 'empty'
         finally:
             conn.close()
+
+    def _load_fixture(self):
+        """Fill the freshly migrated database with the demo campus from git.
+
+        The tables are emptied first: migrations seed some of them (reference
+        items, rules, gates), and the file holds the campus as a whole, those
+        rows included. It loads the way a backup restore does
+        (accounts.backup_utils.load_backup), so no notification or broadcast
+        fires per row. Fields the file has but this code no longer does are
+        dropped; fields added since it was saved take their defaults.
+        """
+        import json
+        from django.apps import apps
+        from django.db import connection, transaction
+        from accounts.backup_utils import load_backup
+
+        with open(TEMPLATE_FIXTURE, encoding='utf-8') as fh:
+            rows = json.load(fh)
+        for row in rows:
+            model = apps.get_model(row['model'])
+            known = {f.name for f in model._meta.get_fields()}
+            row['fields'] = {k: v for k, v in row['fields'].items() if k in known}
+
+        models = [m for label in ('accounts', 'vehicles', 'scanning', 'violations', 'realtime')
+                  for m in apps.get_app_config(label).get_models()
+                  if m._meta.managed and not m._meta.proxy]
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute('TRUNCATE {} RESTART IDENTITY CASCADE'.format(
+                    ', '.join(connection.ops.quote_name(m._meta.db_table) for m in models)))
+            result = load_backup(json.dumps(rows))
+        self.stdout.write(f'Loaded the demo campus ({result.records} rows) from demo_campus.json.')
 
     # ── A copy of the live system ──────────────────────────────────────────
     def _tool(self, exe):
