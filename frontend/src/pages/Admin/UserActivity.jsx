@@ -89,7 +89,7 @@ export function OwnerActivitySummary({ userId }) {
       <ScheduleBlock schedule={schedule} />
       {vehicles.length > 0 && (
         <div className="ua-block">
-          <h4><Car size={14} /> Vehicles</h4>
+          <h4><Car size={14} /> Plate Number/Conduction Number</h4>
           <p className="ua-line">{vehicles.map((v) => v.plate || 'No plate').join(' · ')}</p>
         </div>
       )}
