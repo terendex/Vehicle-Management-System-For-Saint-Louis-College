@@ -1235,8 +1235,8 @@ export default function RegisterPage() {
   const regOpen = regStatus?.is_open ?? true
 
   // The official program list (utils/collegePrograms) decides the year levels
-  // on offer: 1–4, 1–5 for BS Arch, 1–2 for JD and the School of Advanced
-  // Studies, whose programs also offer Residency.
+  // on offer: 1–4 (JD included), 1–5 for BS Arch, 1–2 for the School of
+  // Advanced Studies, whose programs also offer Residency.
   const yearOptions = yearsFor(formData.student_program)
   const selectedProgram = findProgram(formData.student_program)
 

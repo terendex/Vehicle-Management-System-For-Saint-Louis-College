@@ -36,9 +36,10 @@ class CatalogTests(SimpleTestCase):
         self.assertEqual(len(PROGRAM_YEARS), 30)
         self.assertEqual(PROGRAM_YEARS['BS Arch'], 5)
         doctorates = {'PhD', 'EdD'}
-        two_year = {'JD'} | {code for college, _, programs in COLLEGES if college == 'SAS'
-                             for code, _ in programs} - doctorates
-        self.assertEqual(len(two_year), 6)
+        two_year = {code for college, _, programs in COLLEGES if college == 'SAS'
+                    for code, _ in programs} - doctorates
+        self.assertEqual(len(two_year), 5)
+        self.assertEqual(PROGRAM_YEARS['JD'], 4)
         self.assertTrue(all(PROGRAM_YEARS[code] == 3 for code in doctorates))
         self.assertTrue(all(y == 2 for code, y in PROGRAM_YEARS.items() if code in two_year))
         self.assertTrue(all(y == 4 for code, y in PROGRAM_YEARS.items()
@@ -69,7 +70,7 @@ class CatalogTests(SimpleTestCase):
     def test_refusing(self):
         for bad in ('', 'BSIT', 'BSIT - 0', 'BSIT - 5', 'BSIT 12', 'BS Arch - 6',
                     'BSCS - 2', 'Info Tech - 1', 'SHS - STEM - Grade 11',
-                    'JD - 3', 'JD - 4', 'MBA - 3', 'PhD - 4', 'EdD - 4', 'MAEd EM - 1',
+                    'JD - 0', 'JD - 5', 'MBA - 3', 'PhD - 4', 'EdD - 4', 'MAEd EM - 1',
                     'BSIT - Residency', 'JD - Residency'):
             self.assertIsNone(normalize_program_year(bad), bad)
 
@@ -77,13 +78,13 @@ class CatalogTests(SimpleTestCase):
         names = all_program_years()
         self.assertIn('BS Arch - 5', names)
         self.assertNotIn('BSIT - 5', names)
-        self.assertIn('JD - 2', names)
-        self.assertNotIn('JD - 3', names)
+        self.assertIn('JD - 4', names)
+        self.assertNotIn('JD - 5', names)
         self.assertIn('MPA - Residency', names)
         self.assertIn('PhD - 3', names)
         self.assertNotIn('MBA - 3', names)
-        # 21 four-year programs, BS Arch, JD, 5 masterals, 2 doctorates, 7 Residency.
-        self.assertEqual(len(names), 21 * 4 + 5 + 2 + 5 * 2 + 2 * 3 + 7)
+        # 22 four-year programs (JD included), BS Arch, 5 masterals, 2 doctorates, 7 Residency.
+        self.assertEqual(len(names), 22 * 4 + 5 + 5 * 2 + 2 * 3 + 7)
 
 
 class SubmitTests(PaymentTestCase):

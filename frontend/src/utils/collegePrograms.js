@@ -20,8 +20,8 @@ export const findProgram = (code) => BY_CODE.get(code) || null
 
 export const RESIDENCY = 'Residency'
 
-/* The year levels a program offers: 1–4, 1–5 for BS Arch, 1–2 for JD and the
-   School of Advanced Studies, whose programs then offer Residency as well. */
+/* The year levels a program offers: 1–4 (JD included), 1–5 for BS Arch, 1–2
+   for the School of Advanced Studies, whose programs then offer Residency as well. */
 export const yearsFor = (code) => {
   const p = findProgram(code)
   if (!p) return []

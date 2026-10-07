@@ -36,9 +36,9 @@ COLLEGES = (
     # JD (Juris Doctor) admits only students who already hold a bachelor's
     # degree. That is the College of Law's admission rule, not something a
     # vehicle pass can check; the form says so beside the choice. The pass
-    # offers Year 1 and Year 2 only.
+    # offers Year 1 to Year 4.
     ('CLCJE', 'College of Law and Criminal Justice Education', (
-        ('BS Crim', 4), ('JD', 2),
+        ('BS Crim', 4), ('JD', 4),
     )),
     # The School of Advanced Studies' schedule of fees (S.Y. 2025-2026) is
     # the whole offering: the doctorates PhD and EdD (Year 1 to Year 3), and

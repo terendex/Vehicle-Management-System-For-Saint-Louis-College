@@ -43,7 +43,7 @@
     "name": "College of Law and Criminal Justice Education",
     "programs": [
       { "code": "BS Crim", "name": "Bachelor of Science in Criminology", "years": 4 },
-      { "code": "JD",      "name": "Juris Doctor",                      "years": 2, "requires_bachelors": true }
+      { "code": "JD",      "name": "Juris Doctor",                      "years": 4, "requires_bachelors": true }
     ]
   },
   {
