@@ -366,15 +366,15 @@ export const SHOTS = [
   }),
   fig(AD, '15-violations', {
     who: 'admin', path: '/admin/violations', title: 'Violations',
-    caption: 'Operations › Violations. The 3-offence penalty ladder and every recorded offence.',
+    caption: 'Operations › Violations. The 3-offense penalty ladder and every recorded offense.',
     marks: [
       m(1, 'Active warnings', 'How many violations are still counting against their owners.', card(text('Active Warnings', 'main', false))),
       m(2, 'Violations report', 'Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.', css('.report-bar')),
-      m(3, 'Status filter', 'All, Warnings, Confiscated (3rd offence) or Cleared / Resolved.', union(btn(/^All$/, 'main'), btn(/Cleared \/ Resolved/))),
+      m(3, 'Status filter', 'All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.', union(btn(/^All$/, 'main'), btn(/Cleared \/ Resolved/))),
       m(4, 'Type and period', 'Filter by violation type, and by Today, Week, Month or Year.', union(css('main select >> nth=0'), btn('Year', 'main'))),
       m(5, 'Search', 'Find by plate, conduction number, owner or notes. The arrow button resets all filters.', union(ph(/Search plate, owner/), (p) => p.locator('main').getByPlaceholder(/Search plate, owner/).locator('xpath=following::button[1]'))),
-      m(6, 'Violations table', 'Plate, owner, type with offence number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.', css('main table')),
-      m(7, 'Lift', 'Voids a violation as a false alarm. It stops counting, and later offences are renumbered.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
+      m(6, 'Violations table', 'Plate, owner, type with offense number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.', css('main table')),
+      m(7, 'Lift', 'Voids a violation as a false alarm. It stops counting, and later offenses are renumbered.', (p) => p.locator('main').getByRole('button', { name: /Lift/ }).first()),
     ],
   }),
   fig(AD, '16-vehicle-log', {
@@ -554,7 +554,7 @@ export const SHOTS = [
   }),
   fig(SE, '04-parking', {
     who: 'guard', path: '/security/parking', title: 'Parking monitor',
-    caption: 'Watch parking zones, see free spaces and act on parking offences.',
+    caption: 'Watch parking zones, see free spaces and act on parking offenses.',
     wait: 3500,
     routes: { '/parking-zones/camera-status/': { 1: { running: true, stream: 'online', offline_seconds: null }, 2: { running: true, stream: 'online', offline_seconds: null } } },
     marks: [
@@ -575,7 +575,7 @@ export const SHOTS = [
     after: async (p) => { await p.keyboard.press('Escape') },
     marks: [
       m(1, 'Plate or Conduction No.', 'The plate or conduction number of the double-parked vehicle. Required.', ph(/ABC 123/i)),
-      m(2, 'Double Parking', 'This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.', (p) => p.getByText('Issue Violation — Double Parking')),
+      m(2, 'Double Parking', 'This form issues Double Parking only — the gate records the other offenses itself. It counts toward the offense ladder, one offense per owner per day.', (p) => p.getByText('Issue Violation — Double Parking')),
       m(3, 'Notes', 'Optional details that help the CDSO review it.', ph(/Which bays/)),
       m(4, 'Issue Violation', 'Records the violation against the vehicle’s owner and applies the penalty. If they already have one today, it says so and records nothing new. Cancel closes without saving.', union(btn(/^Cancel$/), (p) => p.getByRole('button', { name: /Issue Violation/ }).last())),
     ],

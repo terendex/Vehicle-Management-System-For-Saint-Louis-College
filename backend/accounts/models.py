@@ -194,7 +194,7 @@ class User(AbstractUser):
     registration_banned = models.BooleanField(default=False, db_index=True)
 
     # ── Confiscation (violation penalty) ─────────────────────────────────────
-    # The penalty ladder replaced fines: 1st offence costs the account a week,
+    # The penalty ladder replaced fines: 1st offense costs the account a week,
     # 2nd two weeks, 3rd the rest of the registration period. A confiscated
     # account may not enter campus and may not park.
     #
@@ -206,7 +206,7 @@ class User(AbstractUser):
     # `confiscated_until` is a date rather than a flag so the penalty expires on
     # its own: is_confiscated compares it to today on every read, and no job has
     # to run for the account to come back. NULL with a level set means
-    # indefinite — the 3rd offence with no registration period to end against.
+    # indefinite — the 3rd offense with no registration period to end against.
     confiscation_level  = models.PositiveSmallIntegerField(
         default=0,
         help_text='0 = not confiscated. 1, 2 or 3 = which offence imposed it.',
@@ -296,8 +296,8 @@ class User(AbstractUser):
     # Lifts a penalty early, when the CDSO decides to.
     def clear_confiscation(self):
         """Lift the penalty. Leaves the violations themselves untouched — the
-        offence history is what the ladder counts, and forgiving the penalty is
-        not the same as saying the offences never happened."""
+        offense history is what the ladder counts, and forgiving the penalty is
+        not the same as saying the offenses never happened."""
         self.confiscation_level  = 0                     # back to "no penalty"
         self.confiscated_at      = None
         self.confiscated_until   = None

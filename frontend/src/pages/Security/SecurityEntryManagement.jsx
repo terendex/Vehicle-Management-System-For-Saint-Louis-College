@@ -269,7 +269,7 @@ function useIssueVisitorPass({ onCreated, onClose }) {
       setPrinting(true)
       await printPass(res.data)
     } catch (err) {
-      // A visitor still serving the penalty for an earlier offence. A refusal
+      // A visitor still serving the penalty for an earlier offense. A refusal
       // the guard must act on — turn the visitor away — so it is a modal they
       // acknowledge, and the form closes: no pass can be issued to them today.
       if (err?.response?.data?.error === 'visitor_confiscated') {
@@ -842,7 +842,7 @@ function OwnerLookupModal({ data, onPick, onClose }) {
                     <span className={`em-class-tag ${cm.cls}`}>{cm.label}</span>
                     {m.is_confiscated && (
                       <span className="em-class-tag em-tag-denied">
-                        <Ban size={9} style={{ verticalAlign: -1 }} /> Entry denied · offence {m.confiscation_level} of 3
+                        <Ban size={9} style={{ verticalAlign: -1 }} /> Entry denied · offense {m.confiscation_level} of 3
                       </span>
                     )}
                     {m.is_inside && (
@@ -1444,7 +1444,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
                   <span className="em-result-row-label">Violation</span>
                   <span className="em-violation-pill">
                     <AlertTriangle size={10} /> {result.violation.type_label}
-                    {result.violation.offense_number ? ` · offence ${result.violation.offense_number} of 3` : ''}
+                    {result.violation.offense_number ? ` · offense ${result.violation.offense_number} of 3` : ''}
                   </span>
                 </div>
                 {result.violation.penalty && (
@@ -1459,7 +1459,7 @@ function ResultModal({ result, offices, expected = [], onPassCreated, onOverride
               <div className="em-result-rows">
                 <div className="em-result-row">
                   <span className="em-result-row-label">Violation</span>
-                  <span className="em-result-row-value">Already recorded today — no new offence</span>
+                  <span className="em-result-row-value">Already recorded today — no new offense</span>
                 </div>
               </div>
             )}
@@ -1886,7 +1886,7 @@ export default function SecurityEntryManagement() {
     getOverstaying(gateId).then(r => setOverstaying(r.data?.results ?? [])).catch(() => {})
 
   // Acknowledging issues the Overstaying violation there and then, which runs
-  // the offence ladder — a first offence costs the owner a week of campus
+  // the offense ladder — a first offense costs the owner a week of campus
   // access. Too expensive for a single unconfirmed tap.
   const handleAcknowledgeOverstay = async (row) => {
     const who = [row.plate_number, row.conduction_number, row.owner_name].filter(Boolean).join(' — ')
@@ -1896,14 +1896,14 @@ export default function SecurityEntryManagement() {
              + `${fmtMinutes(row.over_minutes)} past the allowed `
              + `${fmtMinutes(row.max_minutes)} (${row.rule_name}).`,
       description: 'This issues an Overstaying violation now and applies the sanction '
-                 + 'for their offence number. They may still leave, but they cannot '
+                 + 'for their offense number. They may still leave, but they cannot '
                  + 'come back in until the confiscation ends.',
       confirmLabel: 'Record violation',
     }))) return
     setAckBusy(row.plate_number)
     try {
       const { data } = await acknowledgeOverstay(row.plate_number)
-      // One offence per vehicle per day. If the cap swallowed it, say so —
+      // One offense per vehicle per day. If the cap swallowed it, say so —
       // reporting a violation that was not written is worse than saying none.
       if (data?.status === 'already_recorded') {
         toast.info(data.detail || `${row.plate_number} was already recorded today.`)
@@ -2906,7 +2906,7 @@ export default function SecurityEntryManagement() {
 
             {/* Confiscated owners may not enter. The guard meeting the car at
                 the barrier is the person who has to know, and a car turning up
-                during the penalty is itself a further offence — so it sits in
+                during the penalty is itself a further offense — so it sits in
                 the column the guard is already reading, not under the fold. */}
             <ConfiscatedAccounts compact />
           </aside>

@@ -201,14 +201,14 @@ class OverstayCardTests(APITestCase):
         self.assertEqual(violation.offense_number, 1)
         self.assertIn('Overstay acknowledged at the gate', violation.notes)
 
-        # The ladder ran: a first offence costs a week of campus access.
+        # The ladder ran: a first offense costs a week of campus access.
         owner.refresh_from_db()
         self.assertEqual(owner.confiscation_level, 1)
         self.assertTrue(owner.is_confiscated)
 
     def test_acknowledging_twice_does_not_strike_twice(self):
         """The per-day cap in _auto_log_violation is what keeps the card and the
-        exit sweep from counting one overstay as two offences."""
+        exit sweep from counting one overstay as two offenses."""
         owner = self._owner('os14@slc.edu.ph', 'student')
         self._enter('ACK0002', owner, 130)
         self.client.force_authenticate(self.guard)

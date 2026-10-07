@@ -130,7 +130,7 @@ def auto_archive_expired_accounts():
 
     with transaction.atomic():
         # An unbanned owner's warnings close with the account; a banned owner's
-        # 3rd offence stays standing, as the record of the ban. Before the
+        # 3rd offense stays standing, as the record of the ban. Before the
         # vehicle unlink below, which one of the matches goes through.
         archived_violations = Violation.archive_standing_for_owners(unbanned)
 

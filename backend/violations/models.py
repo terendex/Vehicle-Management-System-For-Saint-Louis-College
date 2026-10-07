@@ -6,13 +6,13 @@
 # A violation is a disciplinary record: a vehicle did something it should not
 # have (entered without authorisation, parked across two bays, overstayed), and
 # the campus responds by withdrawing that account's access for a period that
-# grows with each offence. There is no fine any more; the older fine fields are
+# grows with each offense. There is no fine any more; the older fine fields are
 # kept only so historical rows still display.
 #
 # The two ideas to hold on to:
 #
-#   * The ladder counts per ACCOUNT, not per vehicle and not per offence type.
-#     Three different kinds of offence still reach a third strike, and swapping
+#   * The ladder counts per ACCOUNT, not per vehicle and not per offense type.
+#     Three different kinds of offense still reach a third strike, and swapping
 #     cars does not reset anything.
 #
 #   * Identity is SNAPSHOTTED onto the row when the violation is issued: plate,
@@ -32,16 +32,16 @@ REPEAT_THRESHOLD = 3                   # legacy
 # the old fine-based violation types. Nothing in the ladder below uses them.)
 
 # ── The penalty ladder ────────────────────────────────────────────────────────
-# Offences no longer carry a fine. Each one costs the owner their campus access
+# Offenses no longer carry a fine. Each one costs the owner their campus access
 # for a period that grows with the count:
 #
-#   1st offence — account confiscated for 1 week
-#   2nd offence — account confiscated for 2 weeks
-#   3rd offence — confiscated for the rest of the registration period, and the
+#   1st offense — account confiscated for 1 week
+#   2nd offense — account confiscated for 2 weeks
+#   3rd offense — confiscated for the rest of the registration period, and the
 #                 person may not register again unless the CDSO allows it
 #
 # The count is per ACCOUNT across every tracked type, not per type: three
-# different kinds of offence still add up to a third strike. Cleared and lifted
+# different kinds of offense still add up to a third strike. Cleared and lifted
 # violations drop out of the count.
 CONFISCATION_DAYS = {1: 7, 2: 14}     # 3 runs to the end of the registration period
 
@@ -59,7 +59,7 @@ NEW_STYLE_TYPES = {
 }
 
 
-# One recorded offence.
+# One recorded offense.
 class Violation(models.Model):
     # What was done. The first four (plus the legacy ones) are what a guard or
     # a camera can report; see NEW_STYLE_TYPES for which ones count.
@@ -71,7 +71,7 @@ class Violation(models.Model):
         EXPIRED_REGISTRATION = 'expired_registration', 'Expired Registration'
         # Logged when a confiscated account is caught entering or parking. The
         # penalty is meant to keep them off campus, so being detected during it
-        # is itself an offence and moves them up the ladder.
+        # is itself an offense and moves them up the ladder.
         CONFISCATED_ACTIVITY = 'confiscated_activity', 'Activity While Confiscated'
         UNAUTHORIZED         = 'unauthorized',          'Unauthorized (Legacy)'
         OTHER                = 'other',                'Other'
@@ -80,16 +80,16 @@ class Violation(models.Model):
     class Status(models.TextChoices):
         WARNING     = 'warning',     'Warning'          # issued and still counting
         # Kept so historical rows issued under the old fine system still render.
-        # Nothing sets it any more — offences cost access, not money.
+        # Nothing sets it any more — offenses cost access, not money.
         FEE_IMPOSED = 'fee_imposed', 'Fee Imposed (Legacy)'
         CLEARED     = 'cleared',     'Cleared'
         # Voided as a false alarm. Distinct from CLEARED: cleared means the
-        # offence happened and was settled (OR presented); lifted means it
+        # offense happened and was settled (OR presented); lifted means it
         # should never have been issued, so it stops counting toward the
-        # offence ladder and the remaining ones renumber beneath it.
+        # offense ladder and the remaining ones renumber beneath it.
         LIFTED      = 'lifted',      'Lifted (False Alarm)'
         # Closed by the expiry job when the owner's account was archived without
-        # reaching a 3rd offence: the record stays, but nothing about it is still
+        # reaching a 3rd offense: the record stays, but nothing about it is still
         # standing. A banned owner's violations are never moved here.
         ARCHIVED    = 'archived',    'Archived (Account Expired)'
 
@@ -99,7 +99,7 @@ class Violation(models.Model):
     # outlives the account it describes. Under CASCADE, deleting an owner took
     # every violation with it — which also erased the 3rd-offense
     # registration_blocked flags, so a deleted-and-re-registered owner came back
-    # with a clean record. That is the outcome the offence ladder exists to
+    # with a clean record. That is the outcome the offense ladder exists to
     # prevent.
     vehicle        = models.ForeignKey(
         Vehicle, on_delete=models.SET_NULL, null=True, blank=True,
@@ -117,7 +117,7 @@ class Violation(models.Model):
     owner_email       = models.CharField(max_length=254, blank=True, default='')   # also the fallback key in active_for_owner
 
     # The account the ladder is counted against. The snapshot fields above are
-    # for display and survive deletion; this FK is what the offence count and
+    # for display and survive deletion; this FK is what the offense count and
     # the confiscation are keyed on. SET_NULL for the same reason as `vehicle`
     # — the disciplinary record outlives the account.
     #
@@ -180,7 +180,7 @@ class Violation(models.Model):
             models.Index(fields=['is_resolved'], name='violation_is_resolved'),
         ]
 
-    # Statuses that stop a violation counting toward the offence ladder.
+    # Statuses that stop a violation counting toward the offense ladder.
     INACTIVE_STATUSES = ('cleared', 'lifted', 'archived')
 
     # How this violation names its vehicle on screen, without depending on the
@@ -288,7 +288,7 @@ class Violation(models.Model):
 
         Cleared ones are settled, lifted ones never happened and archived ones
         closed with an expired account, so none of them counts. Falls back to
-        the email snapshot so offences issued before the owner FK existed — or
+        the email snapshot so offenses issued before the owner FK existed — or
         after the account row was replaced — still count against the same
         person.
         """
@@ -306,7 +306,7 @@ class Violation(models.Model):
     def archive_standing_for_owners(cls, users) -> dict:
         """Move every standing violation of `users` to ARCHIVED.
 
-        For owners archived on expiry WITHOUT a 3rd offence: the account is
+        For owners archived on expiry WITHOUT a 3rd offense: the account is
         closed, so nothing on it is still a live warning. Standing means a
         warning (or a legacy fee) not yet resolved; cleared and lifted ones
         keep their own record. is_resolved is set too, because every "is it
@@ -346,13 +346,13 @@ class Violation(models.Model):
             status=cls.Status.ARCHIVED, is_resolved=True)
         return counts
 
-    # What strike the next offence would be.
+    # What strike the next offense would be.
     @classmethod
     def compute_offense_number(cls, owner) -> int:
-        """The strike number the next offence for this account will carry.
+        """The strike number the next offense for this account will carry.
 
         Counted per ACCOUNT across every tracked type — three different kinds
-        of offence still reach a third strike. Capped at 3: the ladder has no
+        of offense still reach a third strike. Capped at 3: the ladder has no
         rung above "confiscated for the rest of the period".
         """
         return min(cls.active_for_owner(owner).count() + 1, 3)   # count what stands, add this one, cap at 3

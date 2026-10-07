@@ -4,7 +4,7 @@
 #  What a violation IS, and what it costs, lives in models.py and penalty.py.
 #  This file is only the ways in and out of that: issuing one at the gate,
 #  listing them for a guard or an owner, exporting them, and the confiscation
-#  machinery that a third offence triggers.
+#  machinery that a third offense triggers.
 #
 #  Three audiences read from here and they see different things, which is the
 #  single rule that shapes most of the file:
@@ -76,7 +76,7 @@ class IsCDSOOrAdmin(permissions.BasePermission):
 # Two kinds of violation live behind this one set of endpoints, and telling
 # them apart is what most of perform_create is doing.
 #
-# NEW_STYLE_TYPES are the offence ladder: a first, second and third strike
+# NEW_STYLE_TYPES are the offense ladder: a first, second and third strike
 # against the OWNER rather than against the vehicle, each one counted by
 # compute_offense_number and each carrying a penalty the third of which holds
 # their registration. Those rows care about who owns the plate.
@@ -137,7 +137,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
 
         if vtype in NEW_STYLE_TYPES:
             # The ladder. Counted against the OWNER, not the vehicle: somebody
-            # with two cars does not get two first offences, and the count has
+            # with two cars does not get two first offenses, and the count has
             # to survive them changing vehicle.
             owner       = vehicle.user
             offense_num = Violation.compute_offense_number(owner)
@@ -290,12 +290,12 @@ class ViolationViewSet(viewsets.ModelViewSet):
             permission_classes=[IsCDSOOrAdmin])
     def clear_violation(self, request, pk=None):
         """
-        CDSO settles an offence — the owner has reported to the office and the
+        CDSO settles an offense — the owner has reported to the office and the
         matter is closed.
 
         There is no fee to collect any more, so this no longer demands an
         Official Receipt; a free-text `note` is accepted instead. Clearing takes
-        the offence out of the ladder, which pulls the account's confiscation
+        the offense out of the ladder, which pulls the account's confiscation
         back down a rung (or lifts it entirely if nothing is left).
         """
         violation = self.get_object()
@@ -329,13 +329,13 @@ class ViolationViewSet(viewsets.ModelViewSet):
     def lift_violation(self, request, pk=None):
         """Void a violation as a false alarm and renumber what is left.
 
-        Distinct from `clear`: clearing means the offence happened and the fee
+        Distinct from `clear`: clearing means the offense happened and the fee
         was settled against an Official Receipt. Lifting means it should never
         have been issued — an auto-logged camera artefact, a misread plate —
         so it stops counting and the owner's remaining violations of that type
         step back down (two warnings, lift one, the survivor becomes warning 1).
 
-        A reason is required: this erases an offence from someone's record and
+        A reason is required: this erases an offense from someone's record and
         the decision has to be answerable.
         """
         violation = self.get_object()
@@ -373,7 +373,7 @@ class ViolationViewSet(viewsets.ModelViewSet):
             'registration_blocked',
         ])
 
-        # A lifted offence never happened, so the account's penalty is
+        # A lifted offense never happened, so the account's penalty is
         # re-derived from what remains — dropping from 3 strikes to 2 shortens
         # the confiscation, and dropping to 0 lifts it.
         owner = violation.owner or (vehicle.user if vehicle else None)
@@ -490,7 +490,7 @@ _SETTLED_Q = Q(is_resolved=True) | Q(status__in=_ENDED_STATUSES)
 
 # The management screen's status buttons are buckets, not raw model statuses:
 # "Cleared / Resolved" spans the three endings above, and "Confiscated (3rd)" is
-# a rung of the offence ladder rather than a status at all. FEE_IMPOSED is only
+# a rung of the offense ladder rather than a status at all. FEE_IMPOSED is only
 # in that test so a legacy row that escaped migration 0016 still lands
 # somewhere; nothing has set it since the fine system was removed.
 _STATUS_GROUPS = {
@@ -498,17 +498,17 @@ _STATUS_GROUPS = {
                     'Active warnings'),
     'confiscated': (~_SETTLED_Q & (Q(offense_number=3)
                                    | Q(status=Violation.Status.FEE_IMPOSED)),
-                    'Confiscated (3rd offence)'),
+                    'Confiscated (3rd offense)'),
     'resolved':    (_SETTLED_Q, 'Cleared / resolved'),
 }
 
 
 # The sections an unfiltered report is grouped into, in print order. Every
 # violation falls in exactly one (_report_group), unlike the screen's buttons,
-# where a standing 3rd offence counts as a warning and as confiscated.
+# where a standing 3rd offense counts as a warning and as confiscated.
 _REPORT_GROUPS = (
     ('warning',     'Warnings'),
-    ('confiscated', 'Confiscated (3rd offence)'),
+    ('confiscated', 'Confiscated (3rd offense)'),
     ('resolved',    'Cleared / Resolved'),
 )
 
@@ -566,7 +566,7 @@ def _filter_violations_report(request):
         desc.append(f"Status: {label}")
 
     if type_f:
-        # A legacy "unauthorized" row is the same offence as Unauthorized Entry.
+        # A legacy "unauthorized" row is the same offense as Unauthorized Entry.
         types = [type_f, Violation.Type.UNAUTHORIZED] if type_f == Violation.Type.UNAUTHORIZED_ENTRY else [type_f]
         qs = qs.filter(violation_type__in=types)
         desc.append(f"Type: {type_labels.get(type_f, type_f)}")
@@ -590,16 +590,16 @@ def _filter_violations_report(request):
 # Turns rows into (group, cells) pairs both report formats take; the cells
 # carry no row number, which each format adds in its own order.
 def _report_status(v):
-    """'Warning (2nd offence)', 'Confiscated (3rd offence)', 'Cleared', ..."""
+    """'Warning (2nd offense)', 'Confiscated (3rd offense)', 'Cleared', ..."""
     group = _report_group(v)
     if group == 'confiscated':
-        return 'Confiscated (3rd offence)'
+        return 'Confiscated (3rd offense)'
     if group == 'resolved':
         if v.status in _ENDED_STATUSES:
             return v.get_status_display()
         return 'Resolved'
-    offence = _OFFENCE.get(v.offense_number)
-    return f'Warning ({offence} offence)' if offence else 'Warning'
+    offense = _OFFENCE.get(v.offense_number)
+    return f'Warning ({offense} offense)' if offense else 'Warning'
 
 
 def _violation_report_rows(qs):
@@ -736,7 +736,7 @@ class ViolationReportPdfView(APIView):
 # ── Confiscated accounts ──────────────────────────────────────────────────────
 # Guards need this at the gate and in the parking view: an account serving a
 # violation penalty may not enter and may not park, and a car turning up during
-# the penalty is a fresh offence. The list is read-only for guards and
+# the penalty is a fresh offense. The list is read-only for guards and
 # actionable for the CDSO.
 
 # One shape for a confiscated account, used by all three endpoints below so
@@ -821,8 +821,8 @@ class LiftConfiscationView(APIView):
     """CDSO lifts a confiscation early.
 
     Leaves the violations standing: forgiving the penalty is not the same as
-    saying the offences never happened, and wiping the ladder here would let
-    the next offence start again at strike one. Use the lift action on the
+    saying the offenses never happened, and wiping the ladder here would let
+    the next offense start again at strike one. Use the lift action on the
     violation itself for a genuine false alarm.
     """
     permission_classes = [IsCDSOOrAdmin]
@@ -839,12 +839,12 @@ class LiftConfiscationView(APIView):
         user.clear_confiscation()
         audit(request, AuditLog.Action.RECORD_UPDATED,
               f"Confiscation lifted | {user.full_name} ({user.user_code}) | "
-              f"Was offence {was} of 3 | By: {request.user.full_name}")
+              f"Was offense {was} of 3 | By: {request.user.full_name}")
         return Response(_confiscation_payload(user))
 
 
 class RegistrationPermissionView(APIView):
-    """Let a 3rd-offence owner register again, or withdraw that permission.
+    """Let a 3rd-offense owner register again, or withdraw that permission.
 
     The ladder blocks re-registration on the 3rd strike, but the rule is
     explicitly at the CDSO's discretion, so this is a deliberate, audited human

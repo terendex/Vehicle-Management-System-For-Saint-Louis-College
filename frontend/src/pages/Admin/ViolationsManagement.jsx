@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { useLiveUpdates } from '../../realtime/useLiveUpdates'
 import {
   AlertTriangle, CheckCircle, Filter,
@@ -39,7 +39,7 @@ const FILTER_OPTIONS = [
 const ENDED_STATUSES = ['cleared', 'lifted', 'archived']
 const isSettled     = v => v.is_resolved || ENDED_STATUSES.includes(v.status)
 const isActiveWarn  = v => !isSettled(v) && v.status === 'warning'
-// The penalty keys on the offence number, not on a status. 'fee_imposed' is
+// The penalty keys on the offense number, not on a status. 'fee_imposed' is
 // kept in the test only so any legacy row that escaped migration 0016 still
 // lands somewhere.
 const isConfiscated = v => !isSettled(v) && (v.offense_number === 3 || v.status === 'fee_imposed')
@@ -65,7 +65,7 @@ function getPeriodStart(period) {
 }
 
 // The table shows one entry per person rather than one per violation. A
-// registered owner is keyed by email, so offences on each of their vehicles
+// registered owner is keyed by email, so offenses on each of their vehicles
 // land together; anyone with no account behind the plate is keyed by the plate.
 function groupKey(v) {
   const email = v.owner_email?.trim().toLowerCase()
@@ -84,7 +84,7 @@ function fmtDate(ts) {
 function OffenseBadge({ num }) {
   if (!num) return null
   const cls = num === 3 ? 'vm-offense-3' : num === 2 ? 'vm-offense-2' : 'vm-offense-1'
-  return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`}</span>
+  return <span className={`vm-offense-badge ${cls}`}>{OFFENSE_LABELS[num] ?? `${num}th`} offense</span>
 }
 
 // ─── Confiscation column ──────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ function ConfiscationCell({ c }) {
   if (c.state === 'lifted') {
     return (
       <span className="vm-conf vm-conf-ended">
-        <CheckCircle size={12} /> Lifted early
+        <span className="vm-conf-label"><CheckCircle size={12} /> Lifted early</span>
         <small>by the CDSO</small>
       </span>
     )
@@ -124,7 +124,7 @@ function ConfiscationCell({ c }) {
   if (c.state === 'active' && c.indefinite) {
     return (
       <span className="vm-conf vm-conf-active">
-        <ShieldOff size={12} /> Confiscated
+        <span className="vm-conf-label"><ShieldOff size={12} /> Confiscated</span>
         <small>Indefinite — until the CDSO lifts it</small>
       </span>
     )
@@ -134,14 +134,14 @@ function ConfiscationCell({ c }) {
   if (!running) {
     return (
       <span className="vm-conf vm-conf-ended">
-        <CheckCircle size={12} /> Confiscation ended
+        <span className="vm-conf-label"><CheckCircle size={12} /> Confiscation ended</span>
         {endsAt && <small>{format(endsAt, 'MMM d, yyyy h:mm a')}</small>}
       </span>
     )
   }
   return (
     <span className="vm-conf vm-conf-active">
-      <Timer size={12} /> Confiscated
+      <span className="vm-conf-label"><Timer size={12} /> Confiscated</span>
       {/* The digits never split; only "left" may drop to the next line. */}
       <strong className="vm-conf-clock"><span>{countdownText(endsAt - now)}</span> left</strong>
       <small>Ends {format(endsAt, 'MMM d, yyyy h:mm a')}</small>
@@ -190,10 +190,10 @@ function ORModal({ violation, onClose, onConfirm }) {
 }
 
 // ─── Lift (False Alarm) Modal ─────────────────────────────────────────────────
-// Lifting is not the same as clearing. Clearing says the offence happened and
+// Lifting is not the same as clearing. Clearing says the offense happened and
 // the fee was settled; lifting says it should never have been issued, so it
 // stops counting and the owner's remaining violations of that type step back
-// down a number. The reason is mandatory — this erases an offence from someone's
+// down a number. The reason is mandatory — this erases an offense from someone's
 // record and the decision has to be answerable later.
 function LiftModal({ violation, onClose, onConfirm, busy }) {
   const [reason, setReason] = useState('')
@@ -206,7 +206,7 @@ function LiftModal({ violation, onClose, onConfirm, busy }) {
         <p className="vm-modal-body">
           Void this <strong>{violation.violation_type_display || violation.violation_type}</strong> for
           plate <strong>{violation.plate_number}</strong> as a false alarm.
-          It stops counting toward the offence ladder, and any later violations
+          It stops counting toward the offense ladder, and any later violations
           of the same type are renumbered down.
         </p>
         <textarea
@@ -327,9 +327,9 @@ export default function ViolationsManagement() {
     return list
   }, [violations, filter, typeFilter, datePeriod, search, exportRange])
 
-  // Grouped after filtering, so a group holds only the offences that match
+  // Grouped after filtering, so a group holds only the offenses that match
   // the filters on screen. `filtered` is newest first and a Map keeps insertion
-  // order, so groups are ordered by their latest offence and items[0] is it.
+  // order, so groups are ordered by their latest offense and items[0] is it.
   const groups = useMemo(() => {
     const map = new Map()
     for (const v of filtered) {
@@ -350,6 +350,20 @@ export default function ViolationsManagement() {
   })
 
   useEffect(() => { setPage(1) }, [filter, typeFilter, datePeriod, search, exportRange])
+
+  // Marks the card when the table is wider than it, so the pinned Actions
+  // column draws its edge shadow only while there is something beneath it.
+  const cardRef = useRef(null)
+  const [overflowing, setOverflowing] = useState(false)
+  useEffect(() => {
+    const card = cardRef.current
+    if (!card || typeof ResizeObserver === 'undefined') return
+    const check = () => setOverflowing(card.scrollWidth > card.clientWidth + 1)
+    const ro = new ResizeObserver(check)
+    ro.observe(card)
+    if (card.firstElementChild) ro.observe(card.firstElementChild)
+    return () => ro.disconnect()
+  }, [loading])
 
   const totalPages = Math.max(1, Math.ceil(groups.length / PAGE_SIZE))
   const paginated  = groups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -483,7 +497,7 @@ export default function ViolationsManagement() {
         className="vm-btn vm-btn-lift"
         disabled={busy}
         onClick={() => setLiftModal(v)}
-        title="Void as a false alarm and renumber the remaining offences"
+        title="Void as a false alarm and renumber the remaining offenses"
       >
         {busy ? <Loader2 size={13} className="vm-spin" /> : <ShieldOff size={13} />} Lift
       </button>
@@ -546,7 +560,7 @@ export default function ViolationsManagement() {
   // data-label names each cell in the stacked card layout, where the header
   // row is hidden (see .vm-card's container query in the CSS).
   //
-  // `sub` marks an offence listed under its person's group row: the owner and
+  // `sub` marks an offense listed under its person's group row: the owner and
   // the confiscation are the group's, already shown on the row above.
   //
   // Plain render functions, not components: declared in here, a component
@@ -593,9 +607,9 @@ export default function ViolationsManagement() {
     )
   }
 
-  // One person with several offences: a summary row, and the offences
+  // One person with several offenses: a summary row, and the offenses
   // themselves beneath it when opened. Actions stay on the individual
-  // offences — clearing or lifting is always decided one violation at a time.
+  // offenses — clearing or lifting is always decided one violation at a time.
   function renderGroup(g) {
     const latest = g.items[0]
     const oldest = g.items[g.items.length - 1]
@@ -607,7 +621,7 @@ export default function ViolationsManagement() {
       const key = violationTypeKey(v.violation_type)
       typeCounts[key] = (typeCounts[key] || 0) + 1
     }
-    // The highest offence still standing is where the person sits on the ladder.
+    // The highest offense still standing is where the person sits on the ladder.
     const topOffense = Math.max(0, ...open.map(v => v.offense_number || 0))
     // Penalty state is per person, so every row carries the same one; the
     // newest row's is the freshest.
@@ -664,7 +678,7 @@ export default function ViolationsManagement() {
               onClick={e => { e.stopPropagation(); toggleGroup(g.key) }}
             >
               {isOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-              {g.items.length} offences
+              {g.items.length} offenses
             </button>
           </td>
         </tr>
@@ -681,10 +695,10 @@ export default function ViolationsManagement() {
           <div>
             <h1 className="vm-title">Violations</h1>
             <p className="vm-subtitle">
-              3-offence escalation: the account is confiscated for 1 week, then
+              3-offense escalation: the account is confiscated for 1 week, then
               2 weeks, then the rest of the registration period. A confiscated
               owner cannot enter or park, and being detected counts as a further
-              offence.
+              offense.
             </p>
           </div>
         </div>
@@ -758,7 +772,7 @@ export default function ViolationsManagement() {
           </div>
         </div>
 
-        <div className="vm-card">
+        <div className={`vm-card ${overflowing ? 'is-overflowing' : ''}`} ref={cardRef}>
           {loading ? (
             <TableLoader label="Loading violations…" />
           ) : filtered.length === 0 ? (

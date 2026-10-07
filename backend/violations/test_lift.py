@@ -119,7 +119,7 @@ class LiftViolationTests(APITestCase):
         self.assertEqual(self.owner.confiscation_level, 2)
         self.assertTrue(self.owner.is_confiscated)
 
-    def test_lifting_every_offence_lifts_the_confiscation(self):
+    def test_lifting_every_offense_lifts_the_confiscation(self):
         from violations.penalty import apply_penalty
         issued = [self._issue(n) for n in (1, 2)]
         for v in issued:

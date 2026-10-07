@@ -1830,7 +1830,7 @@ class ParkingCameraThread(threading.Thread):
             try:
                 from violations.models import Violation
                 from scanning.views import _auto_log_violation
-                # Reuses the gate path: one per vehicle per day, offence
+                # Reuses the gate path: one per vehicle per day, offense
                 # numbering, the confiscation penalty and the owner email.
                 _auto_log_violation(
                     vehicle,

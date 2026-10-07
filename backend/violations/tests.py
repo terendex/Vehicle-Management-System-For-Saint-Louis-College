@@ -27,7 +27,7 @@ class OffenseNumberTests(TestCase):
     """compute_offense_number() counts active violations PER ACCOUNT.
 
     The ladder used to be per (vehicle, type). It is now per owner across every
-    tracked type, so three different kinds of offence still reach strike 3 and
+    tracked type, so three different kinds of offense still reach strike 3 and
     swapping cars no longer resets the count.
     """
 
@@ -62,7 +62,7 @@ class OffenseNumberTests(TestCase):
         self.assertEqual(Violation.compute_offense_number(self.owner), 1)
 
     def test_different_types_share_one_ladder(self):
-        """The rule the change exists for: mixed offence types still escalate."""
+        """The rule the change exists for: mixed offense types still escalate."""
         self._issue('unauthorized_entry', n=1)
         self._issue('double_parking',     n=2)
         self.assertEqual(Violation.compute_offense_number(self.owner), 3)

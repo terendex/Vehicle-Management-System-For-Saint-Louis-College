@@ -279,19 +279,21 @@
      the long Notes text steals width from Owner/Issued row by row. */
   table-layout: fixed;
   /* Stays a table on every screen: below this width the card scrolls
-     sideways rather than the columns crushing their contents. */
-  min-width: 960px;
+     sideways rather than the columns crushing their contents. It is the
+     fixed columns below plus room for Owner and Notes. */
+  min-width: 1040px;
 }
 
-/* Column widths (sum = 100%) */
-.vm-col-plate    { width: 8%; }
-.vm-col-owner    { width: 15%; }
-.vm-col-type     { width: 13%; }
-.vm-col-notes    { width: 17%; }
-.vm-col-issued   { width: 13%; }
-.vm-col-conf     { width: 14%; }
-.vm-col-status   { width: 10%; }
-.vm-col-actions  { width: 10%; }
+/* Column widths. The columns that hold buttons, pills and the countdown get
+   fixed widths sized to their contents: as percentages they shrank with the
+   screen until "2 offenses" or the clock no longer fit and were cut off.
+   Owner and Notes have no width, so they share whatever is left. */
+.vm-col-plate    { width: 112px; }
+.vm-col-type     { width: 172px; }
+.vm-col-issued   { width: 150px; }
+.vm-col-conf     { width: 180px; }
+.vm-col-status   { width: 128px; }
+.vm-col-actions  { width: 156px; }
 
 /* Nothing may be wider than its cell: a long type pill ("Activity While
    Confiscated") wraps instead of spilling into Notes. */
@@ -329,14 +331,32 @@
   overflow-wrap: anywhere;
 }
 
-.vm-table tbody tr { transition: background 0.15s ease; }
+.vm-table tbody tr { background: #fff; transition: background 0.15s ease; }
 .vm-table tbody tr:hover { background: #F7FAFC; }
 .vm-table tr:last-child td { border-bottom: none; }
 
 /* Rows stay white whatever their status — the Status and Confiscation
    columns already say it. Only a settled row is set back, so open ones
-   stand out. */
-.vm-row-resolved   { opacity: 0.55; }
+   stand out. Faded per cell, not on the row: a see-through Actions cell
+   would let the scrolled columns show through it (see below). */
+.vm-row-resolved > td:not(.vm-cell-actions),
+.vm-row-resolved > td.vm-cell-actions > * { opacity: 0.55; }
+
+/* Actions stays pinned to the right edge when the card scrolls sideways,
+   so Lift / Resolve never leave the screen. It takes its row's background
+   so hover and the group tints carry across it. */
+.vm-table th:last-child,
+.vm-table td.vm-cell-actions {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+}
+.vm-table td.vm-cell-actions { background: inherit; }
+/* The edge shadow only when there is table hidden beneath the column. */
+.vm-card.is-overflowing .vm-table th:last-child,
+.vm-card.is-overflowing .vm-table td.vm-cell-actions {
+  box-shadow: -8px 0 10px -8px rgba(3, 57, 108, 0.22);
+}
 
 .vm-plate {
   font-weight: 700;
@@ -881,6 +901,7 @@
   font-weight: 700;
   line-height: 1.3;
 }
+.vm-conf-label { white-space: nowrap; }   /* the icon stays beside its word, never on a line of its own */
 .vm-conf svg { display: inline; vertical-align: -2px; margin-right: 4px; }
 .vm-conf small {
   font-size: 11px;
@@ -920,11 +941,19 @@
    actually has, sidebar or not. Once the card is narrower than the
    table's min-width, the card scrolls sideways instead of squeezing. */
 
-/* A little tighter on narrower cards, so 8 columns still breathe. */
+/* A little tighter on narrower cards, so 8 columns still breathe. The
+   fixed columns shrink with the padding; each still fits its widest
+   content ("Confiscation ended", "Lift" + "Resolve", "2 offenses"). */
 @container vm-card (max-width: 1180px) {
   .vm-table th,
   .vm-table td { padding: 11px 10px; }
   .vm-table    { font-size: 0.8rem; }
+  .vm-col-plate   { width: 100px; }
+  .vm-col-type    { width: 144px; }
+  .vm-col-issued  { width: 120px; }
+  .vm-col-conf    { width: 160px; }
+  .vm-col-status  { width: 120px; }
+  .vm-col-actions { width: 136px; }
 }
 
 /* ── Responsive page ─────────────────────────────────────────────
@@ -1057,7 +1086,7 @@
 
 /* ── Grouped rows ────────────────────────────────────────────────── */
 /* One row per owner (or per plate with no account behind it); the
-   individual offences open beneath it. */
+   individual offenses open beneath it. */
 .vm-table tbody tr.vm-group-row { cursor: pointer; }
 .vm-table tbody tr.vm-group-row.is-open { background: #F4F8FB; }
 .vm-table tbody tr.vm-group-row.is-open td { border-bottom-color: #D3E1EC; }
@@ -1087,7 +1116,7 @@
 }
 .vm-btn-expand:hover { background: #EAF2F8; }
 
-/* Offences under an open group: tinted and inset on the plate column so
+/* Offenses under an open group: tinted and inset on the plate column so
    they read as belonging to the row above. */
 .vm-table tbody tr.vm-subrow { background: #FAFCFE; }
 .vm-table tbody tr.vm-subrow td { border-bottom-color: #EEF4F9; }

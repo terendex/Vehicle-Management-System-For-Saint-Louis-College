@@ -37,8 +37,8 @@ export const issueCDSOReport  = (id)              => api.post(`/violations/${id}
 export const clearViolation   = (id, officialReceipt) =>
   api.post(`/violations/${id}/clear/`, { official_receipt: officialReceipt })
 
-// Void a violation as a false alarm. Unlike clearing (offence happened, fee
-// settled), this removes it from the offence ladder and renumbers the rest.
+// Void a violation as a false alarm. Unlike clearing (offense happened, fee
+// settled), this removes it from the offense ladder and renumbers the rest.
 export const liftViolation = (id, reason) =>
   api.post(`/violations/${id}/lift/`, { reason })
 
@@ -50,7 +50,7 @@ export const getConfiscatedAccounts = () =>
 export const liftConfiscation = (userId) =>
   api.post(`/violations/confiscated/${userId}/lift/`).then(r => r.data)
 
-// CDSO discretion: a 3rd offence blocks re-registration, but the office can
+// CDSO discretion: a 3rd offense blocks re-registration, but the office can
 // decide to let the person register again.
 export const setRegistrationPermission = (userId, allow) =>
   api.post(`/violations/confiscated/${userId}/registration/`, { allow }).then(r => r.data)

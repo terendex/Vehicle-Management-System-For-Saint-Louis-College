@@ -312,7 +312,7 @@ def _decide_entry(vehicle) -> dict:
     # wrong day", and a guard reading "wrong day" would have no idea the account
     # is serving a violation penalty.
     #
-    # The caller turns this status into a fresh offence (see
+    # The caller turns this status into a fresh offense (see
     # scanning/views.py): being detected during a confiscation is itself a
     # violation, which is what stops the penalty from being ignorable.
     if user is not None and user.is_confiscated:
@@ -322,7 +322,7 @@ def _decide_entry(vehicle) -> dict:
         return _result(
             'confiscated', False,
             f'Entry denied — account confiscated ({when}). '
-            f'Offence {user.confiscation_level} of 3. '   # which step of the three-strike ladder they are on
+            f'Offense {user.confiscation_level} of 3. '   # which step of the three-strike ladder they are on
             'Report to the CDSO office.',
             None,
         )
@@ -346,7 +346,7 @@ def _decide_entry(vehicle) -> dict:
                 return _result(
                     'confiscated', False,
                     f'Entry denied — visitor entry confiscated ({when}). '
-                    f"Offence {penalty['level']} of 3. "
+                    f"Offense {penalty['level']} of 3. "
                     'Report to the CDSO office.',
                     None,
                 )

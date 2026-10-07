@@ -341,7 +341,7 @@ class AccountExpiryArchiveTests(TestCase):
 
 
     def test_unbanned_owner_violations_are_archived_with_the_account(self):
-        """A warning on an owner who expires below the 3rd offence closes with
+        """A warning on an owner who expires below the 3rd offense closes with
         the account; cleared and lifted ones keep their own record."""
         from vehicles.models import Vehicle
         from violations.models import Violation
@@ -578,7 +578,7 @@ class ReportDoubleParkingTests(TestCase):
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data['violation']['type'], 'double_parking')
         self.assertEqual(resp.data['violation']['offense_number'], 1)
-        self.assertTrue(resp.data['violation']['confiscated'])      # 1st offence: a week
+        self.assertTrue(resp.data['violation']['confiscated'])      # 1st offense: a week
         v = Violation.objects.get(vehicle=self.vehicle)
         self.assertEqual(v.issued_by, self.guard)
         self.assertEqual(v.owner, self.owner)

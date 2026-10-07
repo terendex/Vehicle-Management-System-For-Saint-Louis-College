@@ -4,7 +4,7 @@
    issue them (scanning/views.py _auto_log_violation, parking_camera.py), and
    nothing creates the others. Those four are what a filter offers. The older
    types stay readable on rows issued before them, and a legacy "unauthorized"
-   row is the same offence as Unauthorized Entry, so it reads as one. */
+   row is the same offense as Unauthorized Entry, so it reads as one. */
 
 export const VIOLATION_TYPES = [
   { value: 'unauthorized_entry',   label: 'Unauthorized Entry' },

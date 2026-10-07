@@ -17,9 +17,9 @@ import './ConfiscatedAccounts.css'
 // list would be a second definition of "confiscated" waiting to drift.
 
 const LEVEL_LABEL = {
-  1: '1st offence · 1 week',
-  2: '2nd offence · 2 weeks',
-  3: '3rd offence · rest of the period',
+  1: '1st offense · 1 week',
+  2: '2nd offense · 2 weeks',
+  3: '3rd offense · rest of the period',
 }
 
 function formatDate(d) {
@@ -100,7 +100,7 @@ export default function ConfiscatedAccounts({ compact = false }) {
           <>
             <p className="ca-note">
               These owners may <strong>not enter and may not park</strong>. If one is
-              detected at a gate or in a parking area, that counts as a further offence.
+              detected at a gate or in a parking area, that counts as a further offense.
             </p>
             <ul className="ca-list">
               {rows.map(row => (
@@ -117,7 +117,7 @@ export default function ConfiscatedAccounts({ compact = false }) {
 
                   <div className="ca-row-meta">
                     <span className={`ca-level ca-level-tag-${row.confiscation_level}`}>
-                      {LEVEL_LABEL[row.confiscation_level] || `Offence ${row.confiscation_level}`}
+                      {LEVEL_LABEL[row.confiscation_level] || `Offense ${row.confiscation_level}`}
                     </span>
                     <span className="ca-until">
                       {row.is_indefinite
@@ -152,7 +152,7 @@ export default function ConfiscatedAccounts({ compact = false }) {
                         <button
                           className="ca-btn"
                           disabled={busyId === row.id}
-                          title="A 3rd offence blocks re-registration. Allowing it is the CDSO's decision."
+                          title="A 3rd offense blocks re-registration. Allowing it is the CDSO's decision."
                           onClick={() => handleAllowRegister(row)}
                         >
                           <CheckCircle size={12} />

@@ -143,7 +143,7 @@ export const getOverstaying = (gate_id) =>
   api.get('/scan/overstaying/', { params: gate_id ? { gate_id } : {} })
 
 // The guard acknowledges one, which issues the time-exceed violation now and
-// runs the offence ladder — rather than waiting for the exit sweep to do it.
+// runs the offense ladder — rather than waiting for the exit sweep to do it.
 export const acknowledgeOverstay = (plate_number) =>
   api.post('/scan/overstaying/acknowledge/', { plate_number })
 

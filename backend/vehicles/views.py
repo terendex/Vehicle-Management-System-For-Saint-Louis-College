@@ -1370,7 +1370,7 @@ def _vehicle_to_cite(plate):
 def _issue_double_parking(request, vehicle, message):
     """Issue it through the one shared path, so a guard's report obeys the same
     rules as the camera's: one strike per account (or visitor) per day, the
-    offence ladder and its confiscation, the owner's email."""
+    offense ladder and its confiscation, the owner's email."""
     from scanning.views import _auto_log_violation
     from violations.models import Violation
     issued = _auto_log_violation(
@@ -2009,7 +2009,7 @@ def _or_number_taken_error(owner, or_number, *, public=False):
 #   2. Does any identifier now clash?            (plate, email, licence, IDs)
 #   3. Has the applicant been banned since?      (re-checked, not trusted from submission)
 #   4. Payment: exempt or receipted — an unsettled fee refuses the approval
-#   5. Is the plate flagged from a 3rd offence?  (CDSO must acknowledge)
+#   5. Is the plate flagged from a 3rd offense?  (CDSO must acknowledge)
 #   6. Campus-day overrides, and whether they exceed the normal allowance
 #   7. ── transaction ── account + vehicle + system ID + the registration row
 #   8. After it commits: email the owner, in the background
@@ -2777,7 +2777,7 @@ class RegistrationAvailabilityView(APIView):
             # (see the Data Privacy Office block in PublicOpenRegistrationView).
             'student_id':        _id_conflict('student', student_id, '', qs),
             'employee_id':       _id_conflict('employee', '', employee_id, qs),
-            # The 3rd-offence block, checked against every identifier at once:
+            # The 3rd-offense block, checked against every identifier at once:
             # a banned person changing one field does not get past it.
             'banned':            _registration_ban(plate_number, email, student_id, employee_id,
                                                    conduction_number=conduction),
@@ -2794,7 +2794,7 @@ class RegistrationAvailabilityView(APIView):
 #    1. Is registration open?                     (a closed window ends it here)
 #    2. Is the registrant type one we accept?
 #    3. Plate, or conduction number, or neither   (an e-bike is issued a number)
-#    4. Is this person banned from registering?   (the 3rd-offence ladder)
+#    4. Is this person banned from registering?   (the 3rd-offense ladder)
 #    5. Does any identifier already hold a live registration?
 #    6. Strip what must not be stored             (form-only fields, and the
 #                                                  columns the DPO withdrew)

@@ -359,15 +359,15 @@ Events reserve part of campus parking and note organizer plates.
 
 ![Violations](02-cdso-admin/15-violations.png)
 
-Operations › Violations. The 3-offence penalty ladder and every recorded offence.
+Operations › Violations. The 3-offense penalty ladder and every recorded offense.
 
 1. **Active warnings**: How many violations are still counting against their owners.
 2. **Violations report**: Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.
-3. **Status filter**: All, Warnings, Confiscated (3rd offence) or Cleared / Resolved.
+3. **Status filter**: All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.
 4. **Type and period**: Filter by violation type, and by Today, Week, Month or Year.
 5. **Search**: Find by plate, conduction number, owner or notes. The arrow button resets all filters.
-6. **Violations table**: Plate, owner, type with offence number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.
-7. **Lift**: Voids a violation as a false alarm. It stops counting, and later offences are renumbered.
+6. **Violations table**: Plate, owner, type with offense number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.
+7. **Lift**: Voids a violation as a false alarm. It stops counting, and later offenses are renumbered.
 
 ### Vehicle Log
 
@@ -569,7 +569,7 @@ Describe the vehicle when there is no plate the system can read.
 
 ![Parking monitor](03-security-guard/04-parking.png)
 
-Watch parking zones, see free spaces and act on parking offences.
+Watch parking zones, see free spaces and act on parking offenses.
 
 1. **Zones**: Pick the parking zone to watch.
 2. **Cameras**: Switch between the cameras watching parking.
@@ -586,7 +586,7 @@ Watch parking zones, see free spaces and act on parking offences.
 The violation form opened from the parking monitor.
 
 1. **Plate or Conduction No.**: The plate or conduction number of the double-parked vehicle. Required.
-2. **Double Parking**: This form issues Double Parking only — the gate records the other offences itself. It counts toward the offence ladder, one offence per owner per day.
+2. **Double Parking**: This form issues Double Parking only — the gate records the other offenses itself. It counts toward the offense ladder, one offense per owner per day.
 3. **Notes**: Optional details that help the CDSO review it.
 4. **Issue Violation**: Records the violation against the vehicle’s owner and applies the penalty. If they already have one today, it says so and records nothing new. Cancel closes without saving.
 

@@ -1,14 +1,14 @@
 """The violation penalty ladder.
 
-Offences cost an owner their campus access, not money:
+Offenses cost an owner their campus access, not money:
 
-    1st offence — account confiscated for 1 week
-    2nd offence — account confiscated for 2 weeks
-    3rd offence — confiscated for the rest of the registration period, and the
+    1st offense — account confiscated for 1 week
+    2nd offense — account confiscated for 2 weeks
+    3rd offense — confiscated for the rest of the registration period, and the
                   person may not register again unless the CDSO allows it
 
 The count is per account across every tracked violation type, so three
-different kinds of offence still reach a third strike.
+different kinds of offense still reach a third strike.
 
 Everything that issues a violation routes through `apply_penalty` — the gate
 scanner, the parking camera and the CDSO screen alike — so the penalty can
@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)               # messages appear under "violati
 def _period_end():
     """Last day of the active registration period, or None if there isn't one.
 
-    None means the 3rd-offence penalty is stored with no end date, which
+    None means the 3rd-offense penalty is stored with no end date, which
     `User.is_confiscated` reads as indefinite. That is the honest outcome: with
     no period to run against, "for the entire duration" has no date to compute,
     and the CDSO lifting it by hand is the only way out.
@@ -81,7 +81,7 @@ def describe(level: int, until) -> str:
         span = 'the rest of the registration period'
     if until is None and level >= 3:
         # No period to run against, so say plainly that only the CDSO can end it.
-        return ('Account confiscated indefinitely after a 3rd offence — '
+        return ('Account confiscated indefinitely after a 3rd offense — '
                 'the CDSO must lift it.')
     if until is None:
         return f'Account confiscated for {span}.'
@@ -97,7 +97,7 @@ def apply_penalty(violation: Violation) -> dict | None:
     Returns a summary dict, or None when the violation does not count toward
     the ladder (legacy types, or one with no owner to penalise).
 
-    Stacking rule: a new offence always REPLACES the running penalty rather
+    Stacking rule: a new offense always REPLACES the running penalty rather
     than adding to it. A 2nd strike is "two weeks from today", not "two weeks
     once the first week finishes" — otherwise a burst of detections on one day
     would compound into months.
@@ -131,7 +131,7 @@ def apply_penalty(violation: Violation) -> dict | None:
 
     owner.save(update_fields=fields)             # one UPDATE, touching nothing else on the account
 
-    log.info('Confiscated %s (offence %s) until %s', owner.email, level, until)   # leaves a trace in the server log
+    log.info('Confiscated %s (offense %s) until %s', owner.email, level, until)   # leaves a trace in the server log
 
     return {'level': level, 'until': until, 'reason': reason}   # the caller puts this in its response
 
@@ -156,8 +156,8 @@ def recompute_for_owner(owner) -> None:
     """Re-derive the account's penalty from the violations that remain.
 
     Called after a violation is lifted or cleared. Dropping to zero active
-    offences lifts the confiscation; dropping from 3 to 2 pulls the penalty
-    back down to the 2nd-offence term rather than leaving the account serving a
+    offenses lifts the confiscation; dropping from 3 to 2 pulls the penalty
+    back down to the 2nd-offense term rather than leaving the account serving a
     sentence its record no longer supports.
 
     The registration ban is deliberately NOT cleared here. It is the CDSO's
@@ -179,7 +179,7 @@ def recompute_for_owner(owner) -> None:
     if owner.confiscation_level == level:
         return                                   # already at that level: nothing to change
 
-    # Re-derive the end date from the offence that now stands. The original
+    # Re-derive the end date from the offense that now stands. The original
     # start is kept so shortening a penalty cannot extend it.
     #
     # Note, factually: confiscated_at (the start) is indeed left alone, but the
@@ -201,7 +201,7 @@ def recompute_for_owner(owner) -> None:
 # onto — an overstaying visitor used to be recorded and then waved straight
 # back in on a fresh pass. Their penalty is instead DERIVED, every time it is
 # asked, from the violations that name them: the same ladder, the same lengths,
-# counted from the newest offence. Nothing is stored, so lifting or clearing a
+# counted from the newest offense. Nothing is stored, so lifting or clearing a
 # violation lifts the penalty with it and there is no recompute to forget.
 #
 # A visitor is who the gate wrote down: the plate, the conduction number and
@@ -279,7 +279,7 @@ def visitor_confiscation(plate='', conduction='', name='') -> dict | None:
     """The penalty a visitor is serving right now, or None.
 
     Returns {level, until, reason, days_left, matched_on, plate} — `matched_on`
-    says which of the three identifiers tied them to the offence, so a guard
+    says which of the three identifiers tied them to the offense, so a guard
     refusing someone on a name alone knows that is what happened.
     """
     rows = list(visitor_violations(plate, conduction, name)
@@ -314,7 +314,7 @@ def visitor_confiscation(plate='', conduction='', name='') -> dict | None:
 
 
 def visitor_offense_number(plate='', conduction='', name='') -> int:
-    """The strike the next offence for this visitor will carry (1–3)."""
+    """The strike the next offense for this visitor will carry (1–3)."""
     return min(visitor_violations(plate, conduction, name).count() + 1, 3)
 
 
@@ -342,7 +342,7 @@ def confiscated_visitors() -> list:
 
     Walks the standing unowned violations newest first and asks
     visitor_violations() who each one belongs to — the same matching the gate
-    runs — so a visitor with three offences is one entry, not three.
+    runs — so a visitor with three offenses is one entry, not three.
     """
     today = timezone.localdate()
     standing = (Violation.objects
@@ -354,7 +354,7 @@ def confiscated_visitors() -> list:
     seen, out = set(), []
     for v in standing:
         if v.pk in seen:
-            continue                             # already counted under a newer offence by the same visitor
+            continue                             # already counted under a newer offense by the same visitor
         rows = list(visitor_violations(v.plate_number, v.conduction_number, v.owner_name)
                     .order_by('-issued_at')
                     .values('pk', 'issued_at', 'plate_number', 'conduction_number'))
@@ -412,8 +412,8 @@ def penalty_state(violation, cache=None) -> dict | None:
     to penalise, and not a visitor either). Otherwise one of:
       active  — still serving; `ends_at` is when it runs out (None = indefinite)
       ended   — served in full
-      lifted  — the CDSO ended it early while this offence still stands
-    Every row for the same person reports the same penalty: a newer offence
+      lifted  — the CDSO ended it early while this offense still stands
+    Every row for the same person reports the same penalty: a newer offense
     replaces the running one rather than adding a second.
 
     `cache` is a dict the caller keeps across rows, so a page of one owner's

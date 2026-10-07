@@ -62,7 +62,7 @@ def _send_violation_email(subject, text, html, recipient, violation=None):
 
 
 def send_confiscation_email(violation, penalty):
-    """Tell the owner an offence was recorded and what it cost their account.
+    """Tell the owner an offense was recorded and what it cost their account.
 
     One email covers all three rungs of the ladder. The pair it replaced
     (a warning mail plus a separate "fee imposed" mail) both quoted the P150
@@ -94,7 +94,7 @@ def send_confiscation_email(violation, penalty):
 
     if is_final:
         consequence = (
-            'This is your <strong>third and final offence</strong>. Your account is '
+            'This is your <strong>third and final offense</strong>. Your account is '
             f'confiscated until <strong>{esc(until_str)}</strong>, and you may not '
             'register a vehicle again unless the CDSO approves it.'
         )
@@ -102,7 +102,7 @@ def send_confiscation_email(violation, penalty):
         remaining = 3 - level
         consequence = (
             f'Your account is confiscated until <strong>{esc(until_str)}</strong>. '
-            f'You have <strong>{remaining} offence(s)</strong> remaining before your '
+            f'You have <strong>{remaining} offense(s)</strong> remaining before your '
             'account is confiscated for the rest of the registration period.'
         )
 
@@ -111,7 +111,7 @@ def send_confiscation_email(violation, penalty):
       <body style="{_BASE_STYLE}">
         <div style="max-width:580px;margin:0 auto;background:#fff;border-radius:12px;border-top:4px solid {accent};box-shadow:0 4px 20px rgba(0,0,0,.08);overflow:hidden;">
           <div style="padding:28px 32px 24px;">
-            <h2 style="color:{accent};margin:0 0 6px;">&#9888; Offence {offense_label} of 3 - account confiscated</h2>
+            <h2 style="color:{accent};margin:0 0 6px;">&#9888; Offense {offense_label} of 3 - account confiscated</h2>
             <p style="color:#5A5F72;font-size:13px;margin:0 0 20px;">A violation has been recorded against your vehicle.</p>
             <p style="margin:0 0 4px;">Dear <strong>{esc(owner.full_name)}</strong>,</p>
             <p style="color:#5A5F72;font-size:14px;margin:0 0 24px;">
@@ -123,7 +123,7 @@ def send_confiscation_email(violation, penalty):
                     <td style="padding:8px 0;font-weight:700;font-family:monospace;">{esc(plate)}</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Violation</td>
                     <td style="padding:8px 0;font-weight:600;">{esc(vtype_label)}</td></tr>
-                <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Offence</td>
+                <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Offense</td>
                     <td style="padding:8px 0;font-weight:600;">{offense_label} of 3</td></tr>
                 <tr><td style="padding:8px 0;color:#5A5F72;font-size:13px;">Date</td>
                     <td style="padding:8px 0;font-weight:600;">{issued_str}</td></tr>
@@ -138,7 +138,7 @@ def send_confiscation_email(violation, penalty):
             <p style="color:#5A5F72;font-size:14px;margin:0;">
               While your account is confiscated you may not enter or park on campus.
               Being detected at a gate or in a parking area during this period counts
-              as a further offence. This violation is visible on your vehicle owner
+              as a further offense. This violation is visible on your vehicle owner
               portal. If you believe this is a mistake, contact the CDSO office.
             </p>
           </div>
@@ -149,14 +149,14 @@ def send_confiscation_email(violation, penalty):
     """
 
     _send_violation_email(
-        subject=f"SLC Vehicle - Offence {offense_label} of 3: {vtype_label} (account confiscated)",
+        subject=f"SLC Vehicle - Offense {offense_label} of 3: {vtype_label} (account confiscated)",
         text=(
             f"Dear {owner.full_name},\n\n"
-            f"A {offense_label} offence ({vtype_label}) has been recorded for your vehicle "
+            f"A {offense_label} offense ({vtype_label}) has been recorded for your vehicle "
             f"{plate}.\n\n"
             f"{reason}\n\n"
             "While your account is confiscated you may not enter or park on campus. "
-            "Being detected during this period counts as a further offence.\n\n"
+            "Being detected during this period counts as a further offense.\n\n"
             + ("You may not register a vehicle again unless the CDSO approves it.\n\n"
                if is_final else "")
             + "Contact the CDSO office for any concerns."

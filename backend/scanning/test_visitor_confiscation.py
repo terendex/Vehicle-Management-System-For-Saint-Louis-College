@@ -142,7 +142,7 @@ class OverstayConfiscatesTheVisitorTests(_VisitorCase):
 
 class PenaltyTermTests(_VisitorCase):
 
-    def test_a_first_offence_ends_after_a_week(self):
+    def test_a_first_offense_ends_after_a_week(self):
         self._visit_and_overstay()
         self._set_clock(self.now + timedelta(days=7))
         self.assertIsNotNone(visitor_confiscation('ABC1234'))   # the last day still counts
@@ -150,7 +150,7 @@ class PenaltyTermTests(_VisitorCase):
         self.assertIsNone(visitor_confiscation('ABC1234'))
         self.assertEqual(self._issue().status_code, 201)
 
-    def test_a_second_offence_is_two_weeks(self):
+    def test_a_second_offense_is_two_weeks(self):
         self._visit_and_overstay()
         self._set_clock(self.now + timedelta(days=8))
         self._visit_and_overstay()
@@ -165,7 +165,7 @@ class PenaltyTermTests(_VisitorCase):
         self.assertEqual(self._issue().status_code, 201)
 
     def test_a_registered_owners_violation_does_not_follow_the_plate(self):
-        """An owner's offences are counted on their account. A row carrying
+        """An owner's offenses are counted on their account. A row carrying
         their email snapshot must not also confiscate the plate as a visitor."""
         Violation.objects.create(violation_type='time_exceed', plate_number='OWN1234',
                                  owner_name='AN OWNER', owner_email='owner@slc.edu.ph')
@@ -181,7 +181,7 @@ class ConfiscatedListShowsVisitorsTests(_VisitorCase):
     def test_a_confiscated_visitor_is_listed_once(self):
         self._visit_and_overstay()
         self._set_clock(self.now + timedelta(days=8))
-        self._visit_and_overstay()                   # 2nd offence: still one person
+        self._visit_and_overstay()                   # 2nd offense: still one person
         row, = self.client.get(self.URL).data
         self.assertEqual(row['kind'], 'visitor')
         self.assertEqual(row['full_name'], 'JUAN DELA CRUZ')

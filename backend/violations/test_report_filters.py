@@ -50,7 +50,7 @@ class ReportFilterTests(TestCase):
     def test_confiscated_is_the_third_rung_not_the_legacy_fee_status(self):
         plates, desc = self.filtered(status='confiscated')
         self.assertEqual(plates, ['BBB222'])
-        self.assertIn('Status: Confiscated (3rd offence)', desc)
+        self.assertIn('Status: Confiscated (3rd offense)', desc)
 
     def test_resolved_spans_all_three_ways_a_violation_ends(self):
         plates, _ = self.filtered(status='resolved')
@@ -116,7 +116,7 @@ class ReportLayoutTests(TestCase):
         qs, desc = _filter_violations_report(request)
         sections = _violation_report_sections(request, _violation_report_rows(qs))
         self.assertEqual([s['title'] for s in sections],
-                         ['Warnings (2)', 'Confiscated (3rd offence) (1)', 'Cleared / Resolved (1)'])
+                         ['Warnings (2)', 'Confiscated (3rd offense) (1)', 'Cleared / Resolved (1)'])
         self.assertEqual(_violation_report_period(request), '')
         self.assertEqual(desc, [])
         overstay = next(r for r in sections[0]['rows'] if r[2] == 'OVR222')
@@ -169,8 +169,8 @@ class ReportLayoutTests(TestCase):
             self.assertEqual(section['headers'][-1], 'Status')
             self.assertEqual(sum(section['col_widths_mm']), 267)
         status = {row[2]: row[5] for section in sections for row in section['rows']}
-        self.assertEqual(status, {'WRN111': 'Warning (1st offence)', 'OVR222': 'Warning (2nd offence)',
-                                  'CNF333': 'Confiscated (3rd offence)', 'OLD444': 'Cleared'})
+        self.assertEqual(status, {'WRN111': 'Warning (1st offense)', 'OVR222': 'Warning (2nd offense)',
+                                  'CNF333': 'Confiscated (3rd offense)', 'OLD444': 'Cleared'})
 
     def test_one_status_needs_no_status_column(self):
         from violations.views import (_filter_violations_report, _violation_report_rows,

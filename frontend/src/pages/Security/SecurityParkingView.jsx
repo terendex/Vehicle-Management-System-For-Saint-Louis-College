@@ -31,7 +31,7 @@ const CAT_OPTS = [
 // issues by hand. The gate raises the others on its own (unauthorized entry,
 // time exceed, activity while confiscated), and a camera alert is attributed
 // from its own card above. Issued through the same server path as an alert, so
-// the same rules hold: one offence per owner per day, then the ladder.
+// the same rules hold: one offense per owner per day, then the ladder.
 function IssueViolationModal({ zoneId, onClose }) {
   const [plate, setPlate]   = useState('')
   const [notes, setNotes]   = useState('')

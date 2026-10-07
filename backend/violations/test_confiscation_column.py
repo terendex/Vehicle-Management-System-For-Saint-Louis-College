@@ -108,10 +108,10 @@ class VisitorPenaltyStateTests(APITestCase):
         v.refresh_from_db()
         return v
 
-    def test_a_recent_offence_is_running(self):
+    def test_a_recent_offense_is_running(self):
         state = penalty_state(self._issue(days_ago=2))
         self.assertEqual(state['state'], 'active')
         self.assertEqual(state['until'], (timezone.localdate() + timedelta(days=5)).isoformat())
 
-    def test_an_offence_past_its_week_is_ended(self):
+    def test_an_offense_past_its_week_is_ended(self):
         self.assertEqual(penalty_state(self._issue(days_ago=10))['state'], 'ended')

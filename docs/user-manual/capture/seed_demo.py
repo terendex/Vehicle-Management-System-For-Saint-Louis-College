@@ -336,7 +336,7 @@ vio('NDA7788', 'double_parking', 8, status='cleared', notes='Settled with CDSO.'
 vio('789UIO', 'time_exceed', 2, status='lifted', notes='Camera misread - false alarm.')
 mark = owners['123QWE'][0]
 mark.confiscation_level = 2; mark.confiscated_at = now - timedelta(days=1)
-mark.confiscated_until = today + timedelta(days=13); mark.confiscation_reason = '2nd offence: Time Exceed'
+mark.confiscated_until = today + timedelta(days=13); mark.confiscation_reason = '2nd offense: Time Exceed'
 mark.save()
 
 # ── Audit trail & notifications ───────────────────────────────────────────
@@ -361,7 +361,7 @@ for k, (actor, action, target, details) in enumerate(entries):
 Notification.objects.all().delete()
 for cat, sev, title, msg, plate, link, read in [
     ('registration', 'info', 'New registration submitted', 'KEVIN DOMINGO submitted a student vehicle pass application.', 'BEE3307', '/admin/vehicles', False),
-    ('violation', 'warning', '2nd offence recorded', 'MARK VILLANUEVA is confiscated for 2 weeks.', '123QWE', '/admin/violations', False),
+    ('violation', 'warning', '2nd offense recorded', 'MARK VILLANUEVA is confiscated for 2 weeks.', '123QWE', '/admin/violations', False),
     ('violation', 'info', 'Double parking detected', 'Gym Motorcycle Area, bays M07-M08.', '123QWE', '/admin/violations', True),
     ('registration', 'info', 'Receipt uploaded', 'GABRIEL TORRES uploaded an Official Receipt.', 'NGH2215', '/admin/vehicles', True),
 ]:

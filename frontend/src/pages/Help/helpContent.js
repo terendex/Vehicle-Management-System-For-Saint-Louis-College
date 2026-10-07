@@ -282,8 +282,8 @@ export const HELP_TOPICS = [
       { type: 'note', text: 'Each zone shows its own status: Monitoring, Camera off, or Not set up. “Not set up” means an admin has not finished that zone\'s setup, so its bay colours may be out of date — check before sending anyone to a bay it shows as free.' },
       { type: 'p', text: 'The camera can tell that a bay is taken, but not by whom. Click an occupied bay and press Record who parked here: type the plate or conduction number, and the driver\'s name (it fills in by itself for a registered vehicle). The plate then shows on the bay for every guard and the admin. The record clears itself when the bay goes free, and Edit or Clear corrects it.' },
       { type: 'steps', items: [
-        'To record a vehicle parked across two bays, press Issue Violation. It issues Double Parking only; the gate records the other offences itself.',
-        'Type the plate or conduction number, add any notes (which bays), and press Issue Violation. The result says which offence it is and how long the owner loses campus access. Only one offence is counted per owner per day, so a second report that day records nothing new.',
+        'To record a vehicle parked across two bays, press Issue Violation. It issues Double Parking only; the gate records the other offenses itself.',
+        'Type the plate or conduction number, add any notes (which bays), and press Issue Violation. The result says which offense it is and how long the owner loses campus access. Only one offense is counted per owner per day, so a second report that day records nothing new.',
       ] },
       { type: 'figure', id: 'guard-issue-violation' },
     ],
@@ -470,15 +470,15 @@ export const HELP_TOPICS = [
     category: 'CDSO',
     roles: ['admin'],
     body: [
-      { type: 'p', text: 'Operations › Violations lists every recorded offence. Offences are counted per owner account, and each one withdraws campus access for longer:' },
+      { type: 'p', text: 'Operations › Violations lists every recorded offense. Offenses are counted per owner account, and each one withdraws campus access for longer:' },
       { type: 'list', items: [
-        '1st offence — the account is confiscated for 1 week.',
-        '2nd offence — confiscated for 2 weeks.',
-        '3rd offence — confiscated for the rest of the registration period, and the person may not register again unless the CDSO allows it.',
+        '1st offense — the account is confiscated for 1 week.',
+        '2nd offense — confiscated for 2 weeks.',
+        '3rd offense — confiscated for the rest of the registration period, and the person may not register again unless the CDSO allows it.',
       ] },
       { type: 'figure', id: 'cdso-violations' },
       { type: 'note', text: 'The report bar\'s Date From / Date To narrow the table on screen as well as the exported file, so what you are looking at is what the report will contain. Where they are set, they override the Today / Week / Month / Year buttons.' },
-      { type: 'note', text: 'Lift a violation that should never have been issued (a false alarm). It stops counting, and the owner’s remaining offences are renumbered.' },
+      { type: 'note', text: 'Lift a violation that should never have been issued (a false alarm). It stops counting, and the owner’s remaining offenses are renumbered.' },
     ],
   },
   {

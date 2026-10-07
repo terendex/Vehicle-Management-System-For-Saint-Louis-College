@@ -640,7 +640,7 @@ def _close_active_pass(plate_number: str, gate_id: str = '') -> int:
 
 # Issues a violation from the gate, with no human deciding to. Everything here
 # is about NOT issuing too many: one car in front of a camera generates scans
-# continuously, and each one would otherwise be another offence.
+# continuously, and each one would otherwise be another offense.
 def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '',
                         entry_status: str = '', issued_by=None, overstay_minutes=None):
     """
@@ -649,11 +649,11 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     day. A new day allows the type to be issued again.
 
     The per-day cap matters more than it used to: a confiscated account being
-    detected is itself an offence, so without it a car sitting in front of a
+    detected is itself an offense, so without it a car sitting in front of a
     camera would climb the whole ladder in a minute.
 
     Past violations stay stored, and the cumulative (non-cleared) count per
-    ACCOUNT drives the penalty — 1st offence costs a week of campus access, 2nd
+    ACCOUNT drives the penalty — 1st offense costs a week of campus access, 2nd
     two weeks, 3rd the rest of the registration period.
 
     Returns what happened, for the guard's result card (see _issued_summary):
@@ -670,7 +670,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     """
     from .models import active_guard_for_gate
 
-    # Turning up at a gate while confiscated is its own offence, not another
+    # Turning up at a gate while confiscated is its own offense, not another
     # "unauthorized entry" — the CDSO needs to see that the penalty was ignored
     # rather than that an unregistered car showed up.
     if not vtype and entry_status == 'confiscated':
@@ -680,7 +680,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
     _day_start, _day_end = day_range(timezone.localdate())   # the cap below is per CALENDAR DAY, campus-local
     owner = vehicle.user                         # None for a gate-created vehicle with no account behind it
 
-    # ── One auto-logged offence per ACCOUNT per calendar day ─────────────────
+    # ── One auto-logged offense per ACCOUNT per calendar day ─────────────────
     # The cap used to be per vehicle AND per type, which was right while each
     # type had its own ladder. Now that the ladder is one per account, a
     # per-type cap lets a single incident spend the whole ladder in seconds:
@@ -708,7 +708,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
         # would spend two strikes on one incident.
         dedup_types = set(NEW_STYLE_TYPES) | {vtype}
         # Rows written before the type was renamed still count as the same
-        # offence, so a plate is not struck twice for one thing across the
+        # offense, so a plate is not struck twice for one thing across the
         # rename boundary.
         if vtype == Violation.Type.UNAUTHORIZED_ENTRY:
             dedup_types.add(Violation.Type.UNAUTHORIZED)  # legacy auto-logged rows
@@ -1225,8 +1225,8 @@ class VisitorPassView(APIView):
                     else 'until the CDSO lifts it')
             return Response({
                 'error': 'visitor_confiscated',
-                'detail': (f"Visitor entry confiscated ({when}). Offence {penalty['level']} of 3, "
-                           f"matched on {' and '.join(penalty['matched_on']) or 'a previous offence'} "
+                'detail': (f"Visitor entry confiscated ({when}). Offense {penalty['level']} of 3, "
+                           f"matched on {' and '.join(penalty['matched_on']) or 'a previous offense'} "
                            f"({penalty['plate']}). No pass can be issued. Refer them to the CDSO office."),
                 'confiscation': {**penalty, 'until': penalty['until'].isoformat() if penalty['until'] else None},
             }, status=403)
@@ -2917,8 +2917,8 @@ class RecordVisitorDetailsView(APIView):
         penalty = visitor_confiscation(pass_.plate_number, conduction_number, visitor_name)
         if penalty:
             data['confiscation'] = {**penalty, 'until': penalty['until'].isoformat() if penalty['until'] else None}
-            data['detail'] = (f"This visitor's entry is confiscated (offence {penalty['level']} of 3, matched on "
-                              f"{' and '.join(penalty['matched_on']) or 'a previous offence'}). "
+            data['detail'] = (f"This visitor's entry is confiscated (offense {penalty['level']} of 3, matched on "
+                              f"{' and '.join(penalty['matched_on']) or 'a previous offense'}). "
                               + ("Refer them to the CDSO office before they leave." if is_active
                                  else "They have already left — inform the CDSO office."))
         return Response(data)
@@ -3726,7 +3726,7 @@ class AcknowledgeOverstayView(APIView):
 
     Issuing here rather than waiting for the exit is the point of the card: the
     ladder runs while the vehicle is still on campus, so the owner is told
-    during the offence instead of after it. The exit path is unchanged and
+    during the offense instead of after it. The exit path is unchanged and
     still calls _check_stay_limit — the per-day cap inside _auto_log_violation
     is what stops the two from counting the same overstay twice.
     """
@@ -3749,14 +3749,14 @@ class AcknowledgeOverstayView(APIView):
             )
 
         # Already struck today: _auto_log_violation would cap it and write
-        # nothing, so saying "acknowledged" would claim an offence that was
+        # nothing, so saying "acknowledged" would claim an offense that was
         # not recorded. The card shows this state too, but it can go stale
         # between the poll and the tap, so it is re-checked here.
         if match['already_issued']:
             return Response({'status': 'already_recorded', 'plate_number': plate,
                              'over_minutes': match['over_minutes'],
                              'detail': f'{plate} already has a violation recorded today. '
-                                       'One offence per vehicle per day.'})
+                                       'One offense per vehicle per day.'})
 
         vehicle = Vehicle.objects.filter(pk=match['vehicle_id']).first() if match['vehicle_id'] else None
         if vehicle is None:
@@ -3805,7 +3805,7 @@ class AcknowledgeOverstayView(APIView):
 # learned the account was barred after pressing the entry button.
 # Open (unresolved) violations against this vehicle OR against the account
 # behind it. Keyed on both because the two are not the same question: the
-# offence ladder counts per ACCOUNT, so an owner on their second strike who
+# offense ladder counts per ACCOUNT, so an owner on their second strike who
 # drives their other registered car used to show a clean flag at the gate.
 # The entry decision was never wrong — check_entry reads the owner — but the
 # flag beside it said the opposite, which is worse than not showing one.
@@ -3829,7 +3829,7 @@ def _penalty_flags(owner) -> dict:
         # Worded exactly as entry_logic.check_entry words it, so the lookup
         # row and the refusal the guard gets on picking it read the same.
         "denied_reason": (f'Entry denied — account confiscated ({when}). '
-                          f'Offence {owner.confiscation_level} of 3. '
+                          f'Offense {owner.confiscation_level} of 3. '
                           'Report to the CDSO office.'),
     }
 

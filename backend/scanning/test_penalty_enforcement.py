@@ -2,9 +2,9 @@
 
 Sanctions for Violations (the terms every pass holder signs):
 
-    1st offence — confiscation of the vehicle pass for one (1) week
-    2nd offence — confiscation for two (2) weeks
-    3rd offence — confiscation, and prohibition from securing a vehicle pass
+    1st offense — confiscation of the vehicle pass for one (1) week
+    2nd offense — confiscation for two (2) weeks
+    3rd offense — confiscation, and prohibition from securing a vehicle pass
                   for the next school year
 
 Two things about a confiscated account have to hold at the barrier, and they
@@ -65,21 +65,21 @@ class PenaltyEnforcementTests(APITestCase):
 
     # ── the ladder itself ────────────────────────────────────────────────────
 
-    def test_first_offence_confiscates_for_one_week(self):
+    def test_first_offense_confiscates_for_one_week(self):
         self._strike(1)
         self.assertEqual(self.owner.confiscation_level, 1)
         self.assertEqual(self.owner.confiscated_until,
                          self.now.date() + timedelta(days=7))
         self.assertFalse(self.owner.registration_banned)
 
-    def test_second_offence_confiscates_for_two_weeks(self):
+    def test_second_offense_confiscates_for_two_weeks(self):
         self._strike(2)
         self.assertEqual(self.owner.confiscation_level, 2)
         self.assertEqual(self.owner.confiscated_until,
                          self.now.date() + timedelta(days=14))
         self.assertFalse(self.owner.registration_banned)
 
-    def test_third_offence_also_bars_securing_another_pass(self):
+    def test_third_offense_also_bars_securing_another_pass(self):
         self._strike(3)
         self.assertEqual(self.owner.confiscation_level, 3)
         self.assertTrue(self.owner.registration_banned)
@@ -100,7 +100,7 @@ class PenaltyEnforcementTests(APITestCase):
         result = check_entry(Vehicle.objects.get(pk=self.vehicle.pk))
         self.assertFalse(result['allowed'])
         self.assertEqual(result['status'], 'confiscated')
-        self.assertIn('Offence 1 of 3', result['message'])
+        self.assertIn('Offense 1 of 3', result['message'])
 
     def test_the_refusal_outranks_every_other_rule(self):
         """Checked before the timetable ones: a guard reading "wrong day" would
