@@ -697,7 +697,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
             violation_type__in=NEW_STYLE_TYPES,
             issued_at__gte=_day_start,
             issued_at__lt=_day_end,
-        ).exists():
+        ).exclude(status=Violation.Status.LIFTED).exists():   # a lifted one never counted, so it spent no strike
             return {'already_recorded': True}    # already struck today; this scan adds nothing
     else:
         # No account behind the plate (gate-issued vehicle). A visitor now
@@ -717,7 +717,7 @@ def _auto_log_violation(vehicle, message: str, gate_id: str = '', vtype: str = '
             violation_type__in=dedup_types,
             issued_at__gte=_day_start,
             issued_at__lt=_day_end,
-        ).exists():
+        ).exclude(status=Violation.Status.LIFTED).exists():   # e.g. an overstay lifted when the pass was extended
             return {'already_recorded': True}
 
     if owner is not None:
@@ -2788,6 +2788,56 @@ class CrossGateListView(APIView):
         })
 
 
+# More time given while the visitor is still inside: whatever overstay was
+# recorded for this visit (the guard acknowledging the Overstaying card) was
+# measured against an allowance that no longer stands. Lifted rather than
+# deleted, so the record shows it was issued and why it stopped counting.
+def _lift_visit_overstays(request, pass_) -> int:
+    """Lift this visit's standing Overstaying violations once the pass's new
+    allowance covers the time spent inside. Returns how many were lifted.
+
+    Only when the visitor is back inside the allowance: an extension too short
+    to cover the overstay leaves the violation standing. A pass with no limit
+    cannot be overstayed, so its overstay is lifted too.
+
+    Only rows with no account behind them. A registered owner's plate can be
+    given a pass too, but their overstay is measured against their entry rule
+    (_overstaying_now), which the pass's allowance does not move.
+    """
+    now = timezone.now()
+    if (pass_.status != VisitorPass.Status.ACTIVE or not pass_.vehicle_id
+            or not pass_.entered_at or (pass_.expires_at and now > pass_.expires_at)):
+        return 0
+    rows = list(Violation.objects
+                .filter(vehicle_id=pass_.vehicle_id,
+                        vehicle__user__isnull=True, owner__isnull=True, owner_email='',
+                        violation_type=Violation.Type.TIME_EXCEED,
+                        issued_at__gte=pass_.entered_at)   # this visit's, not an earlier one's
+                .exclude(status__in=Violation.INACTIVE_STATUSES))
+    if not rows:
+        return 0
+
+    reason = (f'Stay time extended to {pass_.allowed_duration} min by '
+              f'{request.user.full_name}; the visitor is within the allowed time.')
+    # A visitor's penalty is derived from their standing violations
+    # (violations.penalty.visitor_confiscation), so it lifts with them.
+    Violation.objects.filter(pk__in=[v.pk for v in rows]).update(
+        status=Violation.Status.LIFTED, is_resolved=True, registration_blocked=False,
+        lifted_reason=reason, lifted_at=now, lifted_by=request.user)
+
+    for v in rows:
+        _audit(request, AuditLog.Action.RECORD_UPDATED,
+               f"Violation lifted (stay extended) | Plate: {v.identifier} | "
+               f"Type: {v.get_violation_type_display()} | Was offense {v.offense_number} | "
+               f"Reason: {reason}")
+    try:
+        from realtime.broadcast import broadcast_change
+        broadcast_change('violation', 'updated')
+    except Exception:
+        logger.exception('overstay lift broadcast failed')   # the lift still stands
+    return len(rows)
+
+
 # The visitor needs longer. Extends the allowance rather than issuing a second
 # pass, so the visit stays one record.
 class ExtendVisitorPassView(APIView):
@@ -2818,7 +2868,8 @@ class ExtendVisitorPassView(APIView):
         if pass_.expires_at:
             pass_.expires_at += timedelta(minutes=extra_minutes)
         # Added to the EXISTING expiry, not recomputed from now — so extending
-        # a pass that already ran over does not quietly forgive the overstay.
+        # a pass that already ran over only forgives the overstay once the new
+        # total covers it (_lift_visit_overstays), never by a shorter top-up.
         pass_.save(update_fields=['allowed_duration', 'expires_at'])
 
         guard_name = request.user.full_name
@@ -2828,8 +2879,9 @@ class ExtendVisitorPassView(APIView):
             f"Visitor pass extended | Plate: {pass_.plate_number} | "
             f"+{extra_minutes} min | New total: {pass_.allowed_duration} min | Guard: {guard_name}",
         )
+        lifted = _lift_visit_overstays(request, pass_)
 
-        return Response(VisitorPassSerializer(pass_).data)
+        return Response({**VisitorPassSerializer(pass_).data, 'overstays_lifted': lifted})
 
 
 # A walk-in visitor is let in on a blank slip ("Allow Entry as Visitor") so the
@@ -2904,10 +2956,13 @@ class RecordVisitorDetailsView(APIView):
             + f"Office: {office.name if office else 'N/A'} | Purpose: {purpose} | "
             f"Duration: {pass_.allowed_duration} min | Guard: {request.user.full_name}",
         )
+        # Before the penalty check below, so a lifted overstay is not reported.
+        lifted = _lift_visit_overstays(request, pass_) if 'expires_at' in fields else 0
 
         from .slips import visitor_slip
         data = VisitorPassSerializer(pass_).data
         data['slip'] = visitor_slip(pass_)
+        data['overstays_lifted'] = lifted
 
         # The gate had only the plate when it let this visitor in, so a penalty
         # matched on the name or conduction number could not be caught there.
@@ -3498,7 +3553,7 @@ def _struck_today(vehicle) -> bool:
     return Violation.objects.filter(
         q, violation_type__in=NEW_STYLE_TYPES,
         issued_at__gte=day_start, issued_at__lt=day_end,
-    ).exists()
+    ).exclude(status=Violation.Status.LIFTED).exists()
 
 
 def _overstaying_now(gate_id: str = '') -> list:

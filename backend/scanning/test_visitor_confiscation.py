@@ -239,3 +239,79 @@ class VisitorOverstayCardTests(_VisitorCase):
         pk = self._inside(minutes_ago=40, allowed=15)
         self.client.post(f'{PASS_URL}{pk}/exit/', {'gate_id': 'main'}, format='json')
         self.assertEqual(_overstaying_now(), [])
+
+
+class ExtendingTheStayLiftsTheOverstayTests(_VisitorCase):
+    """More time given while the visitor is still inside takes back the
+    overstay the guard recorded against the old allowance."""
+
+    _inside = VisitorOverstayCardTests._inside
+
+    def _acknowledge(self):
+        res = self.client.post('/api/scan/overstaying/acknowledge/',
+                               {'plate_number': 'ABC1234'}, format='json')
+        self.assertEqual(res.data['status'], 'acknowledged', res.data)
+        return Violation.objects.get(violation_type='time_exceed')
+
+    def test_extending_past_the_overstay_lifts_it(self):
+        pk = self._inside(minutes_ago=40, allowed=15)
+        v = self._acknowledge()
+        res = self.client.patch(f'{PASS_URL}{pk}/extend/', {'extra_minutes': 30}, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['overstays_lifted'], 1)
+        v.refresh_from_db()
+        self.assertEqual(v.status, Violation.Status.LIFTED)
+        self.assertEqual(v.lifted_by, self.guard)
+        self.assertIsNone(visitor_confiscation('ABC1234'))
+        self.assertEqual(_overstaying_now(), [])
+
+    def test_an_extension_too_short_leaves_it_standing(self):
+        pk = self._inside(minutes_ago=60, allowed=15)
+        v = self._acknowledge()
+        res = self.client.patch(f'{PASS_URL}{pk}/extend/', {'extra_minutes': 30}, format='json')
+        self.assertEqual(res.data['overstays_lifted'], 0)
+        v.refresh_from_db()
+        self.assertEqual(v.status, Violation.Status.WARNING)
+
+    def test_changing_the_allowed_time_on_the_slip_lifts_it(self):
+        pk = self._inside(minutes_ago=40, allowed=15)
+        v = self._acknowledge()
+        res = self.client.patch(f'{PASS_URL}{pk}/details/', {
+            'visitor_name': 'JUAN DELA CRUZ', 'purpose': 'Visit', 'allowed_duration': 60,
+        }, format='json')
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data['overstays_lifted'], 1)
+        self.assertNotIn('confiscation', res.data)
+        v.refresh_from_db()
+        self.assertEqual(v.status, Violation.Status.LIFTED)
+
+    def test_overstaying_the_new_time_is_recorded_again(self):
+        """The lifted overstay spent no strike, so it does not use up the day."""
+        pk = self._inside(minutes_ago=40, allowed=15)
+        self._acknowledge()
+        self.client.patch(f'{PASS_URL}{pk}/extend/', {'extra_minutes': 30}, format='json')
+        self._set_clock(self.now + timedelta(minutes=20))   # 60 in, 45 allowed
+        row, = _overstaying_now()
+        self.assertFalse(row['already_issued'])
+        res = self.client.post('/api/scan/overstaying/acknowledge/',
+                               {'plate_number': 'ABC1234'}, format='json')
+        self.assertEqual(res.data['status'], 'acknowledged', res.data)
+        self.assertEqual(Violation.objects.exclude(status=Violation.Status.LIFTED).count(), 1)
+
+    def test_a_registered_owners_overstay_is_not_lifted(self):
+        """An owner's plate can be on a pass, but their overstay is measured
+        against their entry rule, which the pass's allowance does not move."""
+        from vehicles.models import Vehicle
+        owner = User.objects.create_user(
+            email='vc-owner@slc.edu.ph', last_name='OWNER', first_name='AN', password='x',
+            role='vehicle_owner', owner_type='student')
+        Vehicle.objects.create(plate_number='ABC1234', vehicle_type='car',
+                               is_authorized=True, user=owner)
+        pk = self._inside(minutes_ago=40, allowed=15)
+        v = Violation.objects.create(vehicle_id=VisitorPass.objects.get(pk=pk).vehicle_id,
+                                     violation_type='time_exceed', offense_number=1)
+        res = self.client.patch(f'{PASS_URL}{pk}/extend/', {'extra_minutes': 30}, format='json')
+        self.assertEqual(res.data['overstays_lifted'], 0)
+        v.refresh_from_db()
+        self.assertEqual(v.status, Violation.Status.WARNING)
+        self.assertEqual(v.owner, owner)

@@ -421,7 +421,9 @@ function RecordVisitorSlipModal({ pass, offices, onClose, onSaved }) {
         if (data.confiscation) {
           await notify.error(data.detail, { title: 'Visitor entry confiscated' })
         } else {
-          await notify.success(`${data.visitor_name}'s details are recorded for ${plate}.`, { title: 'Visitor slip recorded' })
+          await notify.success(`${data.visitor_name}'s details are recorded for ${plate}.`
+            + (data.overstays_lifted ? ' The new allowed time covers their stay, so the overstay violation was lifted.' : ''),
+            { title: 'Visitor slip recorded' })
         }
         onSaved?.(data)
         onClose()
@@ -1963,10 +1965,13 @@ export default function SecurityEntryManagement() {
 
   const handleExtendPass = (p) => {
     extendVisitorPass(p.id, 30)
-      .then(() => {
-        toast.success(`Pass extended +30 min for ${p.plate_number}.`)
+      .then(({ data }) => {
+        // Back inside the allowed time: the server lifts this visit's overstay.
+        toast.success(`Pass extended +30 min for ${p.plate_number}.`
+          + (data?.overstays_lifted ? ' The overstay violation was lifted.' : ''))
         overstayToasted.current.delete(p.id) // re-alert if it overstays again
         refreshPasses()
+        refreshOverstaying()
       })
       .catch(err => toast.error(err?.response?.data?.error || 'Failed to extend pass.'))
   }
