@@ -6,6 +6,8 @@ import { usersApi } from '../../api/users'
 /* A folder picker for the "Save to folder" setting. The folder lives on the
    SERVER, which the browser's own picker cannot show (and it would never hand
    back a full path anyway), so this asks the server one level at a time.
+   At the server PC itself Browse opens the Windows folder window instead
+   (accounts/folder_dialog.py); this list is for every other computer.
    Picking only fills the field: the Save that follows still runs the server's
    write test, so nothing here can leave a bad folder configured. */
 

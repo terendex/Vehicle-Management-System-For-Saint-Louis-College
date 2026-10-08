@@ -1115,7 +1115,8 @@
   white-space: nowrap;
   transition: background 0.15s, border-color 0.15s;
 }
-.ss-browse-btn:hover { background: #EEF4F9; border-color: #BDD4E5; }
+.ss-browse-btn:hover:not(:disabled) { background: #EEF4F9; border-color: #BDD4E5; }
+.ss-browse-btn:disabled { cursor: wait; opacity: 0.75; }
 
 .ss-folder-modal {
   max-width: 560px;

@@ -6,7 +6,9 @@ rather than a 500.
 """
 import os
 import shutil
+import subprocess
 import tempfile
+from unittest import mock, skipUnless
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -80,3 +82,86 @@ class FolderBrowseTests(TestCase):
         client.force_authenticate(guard)
         self.assertEqual(self.browse(self.root, client=client).status_code, 403)
         self.assertIn(self.browse(self.root, client=APIClient()).status_code, (401, 403))
+
+
+PICK_URL = '/api/accounts/system/folders/pick/'
+
+
+class FolderPickTests(TestCase):
+    """The Windows "Select Folder" window behind Browse. It must only open for
+    someone at the server PC; everyone else is told to use the in-app list.
+    The window itself is mocked: a test cannot click it."""
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email='pick-admin@slc.edu.ph', last_name='ADMIN', first_name='PICK',
+            password='SecurePassword123!', role='admin')
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+        desktop = mock.patch('accounts.folder_dialog._has_desktop', return_value=True)
+        desktop.start()
+        self.addCleanup(desktop.stop)
+
+    def pick(self, path='', client=None, **extra):
+        return (client or self.client).post(PICK_URL, {'path': path}, format='json', **extra)
+
+    def test_another_computer_gets_the_in_app_list(self):
+        with mock.patch('accounts.folder_dialog.pick_folder') as pick:
+            res = self.pick(REMOTE_ADDR='10.250.1.77')
+        self.assertEqual(res.json(), {'available': False})
+        pick.assert_not_called()
+
+    def test_a_tunnel_or_proxy_counts_as_another_computer(self):
+        # ngrok connects from 127.0.0.1, so only the forwarded header gives it away.
+        with mock.patch('accounts.folder_dialog.pick_folder') as pick:
+            res = self.pick(HTTP_X_FORWARDED_FOR='203.0.113.9')
+        self.assertEqual(res.json(), {'available': False})
+        pick.assert_not_called()
+
+    def test_no_desktop_gets_the_in_app_list(self):
+        with mock.patch('accounts.folder_dialog._has_desktop', return_value=False), \
+             mock.patch('accounts.folder_dialog.pick_folder') as pick:
+            res = self.pick()
+        self.assertEqual(res.json(), {'available': False})
+        pick.assert_not_called()
+
+    @skipUnless(os.name == 'nt', 'the folder window is Windows only')
+    def test_at_the_server_pc_the_pick_comes_back(self):
+        with mock.patch('accounts.folder_dialog.pick_folder', return_value='E:\SLC Backups') as pick:
+            res = self.pick('D:\Old')
+        self.assertEqual(res.json(), {'available': True, 'path': 'E:\SLC Backups'})
+        pick.assert_called_once_with('D:\Old')
+
+    @skipUnless(os.name == 'nt', 'the folder window is Windows only')
+    def test_cancel_or_no_answer_changes_nothing(self):
+        cancelled = {'return_value': None}
+        unanswered = {'side_effect': subprocess.TimeoutExpired('powershell.exe', 300)}
+        for outcome in (cancelled, unanswered):
+            with mock.patch('accounts.folder_dialog.pick_folder', **outcome):
+                res = self.pick()
+            self.assertEqual(res.json(), {'available': True, 'path': None})
+
+    @skipUnless(os.name == 'nt', 'the folder window is Windows only')
+    def test_a_second_window_is_refused(self):
+        from accounts.folder_dialog import FolderDialogBusy
+        with mock.patch('accounts.folder_dialog.pick_folder', side_effect=FolderDialogBusy()):
+            res = self.pick()
+        self.assertEqual(res.status_code, 409)
+        self.assertIn('already open', res.json()['error'])
+
+    @skipUnless(os.name == 'nt', 'the folder window is Windows only')
+    def test_a_window_that_will_not_open_falls_back(self):
+        with mock.patch('accounts.folder_dialog.pick_folder', side_effect=RuntimeError('Add-Type failed')):
+            res = self.pick()
+        self.assertEqual(res.json(), {'available': False})
+
+    def test_admin_only(self):
+        guard = User.objects.create_user(
+            email='pick-guard@slc.edu.ph', last_name='GUARD', first_name='PICK',
+            password='SecurePassword123!', role='security')
+        client = APIClient()
+        client.force_authenticate(guard)
+        with mock.patch('accounts.folder_dialog.pick_folder') as pick:
+            self.assertEqual(self.pick(client=client).status_code, 403)
+            self.assertIn(self.pick(client=APIClient()).status_code, (401, 403))
+        pick.assert_not_called()

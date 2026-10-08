@@ -109,6 +109,14 @@ export const usersApi = {
     return data
   },
 
+  /** Open the Windows "Select Folder" window on the server PC and wait for
+   *  the pick (admin only). { available: false } when the admin is not at that
+   *  PC; otherwise { available: true, path } with path null if cancelled. */
+  pickServerFolder: async (path = '') => {
+    const { data } = await api.post('/accounts/system/folders/pick/', { path })
+    return data
+  },
+
   /** Download one backup already saved on the server (admin only). */
   downloadSavedBackup: async (name) => {
     const { data } = await api.get(`/accounts/system/backups/${encodeURIComponent(name)}/`, {

@@ -1090,6 +1090,37 @@ class SystemFolderBrowseView(APIView):
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+class SystemFolderPickView(APIView):
+    """Open the Windows "Select Folder" window on the server PC and wait for
+    the pick — admin (CDSO) only, and only for someone sitting at that PC.
+
+    POST {path} is where the window starts. Answers {available: false} when
+    the window would not be in front of the person asking (another computer,
+    the cloud site, no desktop) or could not be shown; the page then opens the
+    in-app folder list instead. Otherwise {available: true, path}, with path
+    null when the window was cancelled or left unanswered.
+    """
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        import subprocess
+        from . import folder_dialog
+        if not folder_dialog.available(request):
+            return Response({'available': False})
+        try:
+            path = folder_dialog.pick_folder(str(request.data.get('path') or ''))
+        except folder_dialog.FolderDialogBusy:
+            return Response(
+                {'error': 'A folder window is already open on this computer. Choose a folder there or close it first.'},
+                status=status.HTTP_409_CONFLICT)
+        except subprocess.TimeoutExpired:
+            path = None               # nobody answered; the window has been closed
+        except (OSError, RuntimeError) as exc:
+            logger.warning('Folder window could not be shown: %s', exc)
+            return Response({'available': False})
+        return Response({'available': True, 'path': path})
+
+
 class SystemBackupFileView(APIView):
     """Download or delete one saved backup file — admin (CDSO) only.
 

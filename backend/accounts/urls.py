@@ -25,6 +25,8 @@ urlpatterns = [
     path('system/backups/',             views.SystemBackupListView.as_view(),  name='system-backup-list'),
     # Folder names on the server, for the scheduled-backup "Browse" picker.
     path('system/folders/',             views.SystemFolderBrowseView.as_view(), name='system-folder-browse'),
+    # The Windows "Select Folder" window, for an admin sitting at the server PC.
+    path('system/folders/pick/',        views.SystemFolderPickView.as_view(),   name='system-folder-pick'),
     # <name> is a filename, so no slashes: the view still re-checks that it
     # resolves inside the backups directory before it opens anything.
     path('system/backups/<str:name>/',  views.SystemBackupFileView.as_view(),  name='system-backup-file'),

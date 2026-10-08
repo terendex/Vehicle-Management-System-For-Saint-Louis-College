@@ -251,7 +251,8 @@ export default function SystemSettings() {
   // Pending confirmation — { label, file } for an upload, { label, name } for a
   // backup already on the server. One modal covers both.
   const [restoreTarget, setRestoreTarget] = useState(null)
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false)   // the server-side "Browse" for the backup folder
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false)   // the in-app folder list, for Browse from another computer
+  const [folderWindowOpen, setFolderWindowOpen] = useState(false)   // waiting on the Windows folder window at the server PC
   const [elapsed, setElapsed]         = useState(0)     // seconds spent on the running op
   const [backups, setBackups]                 = useState([])
   const [backupsLoading, setBackupsLoading]   = useState(true)
@@ -590,6 +591,24 @@ export default function SystemSettings() {
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
   const dwellInvalid  = !dwellOrderValid(form)
   const scheduleInvalid = scheduledInvalid(form)
+
+  // Browse: at the server PC itself, the Windows "Select Folder" window opens
+  // there and this waits for the pick. From any other computer the server says
+  // so, and the in-app folder list opens instead.
+  const handleBrowseFolder = async () => {
+    setFolderWindowOpen(true)
+    try {
+      const res = await usersApi.pickServerFolder(form.scheduled_backup_folder)
+      if (!res.available) setFolderPickerOpen(true)
+      else if (res.path) setForm((prev) => ({ ...prev, scheduled_backup_folder: res.path }))
+    } catch (err) {
+      await notify.error(err.response?.data?.error
+        || (!err.response ? 'Could not reach the server. Check the connection and try again.'
+          : 'The folder window could not be opened.'), { title: 'Folder not chosen' })
+    } finally {
+      setFolderWindowOpen(false)
+    }
+  }
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
@@ -1482,7 +1501,8 @@ export default function SystemSettings() {
                           <span className="ss-row-hint">
                             A full folder path <strong>on the server computer</strong>, e.g. <code>D:\SLC Backups</code> or
                             a USB drive like <code>E:\Backups</code>. It is created if missing, and checked when you save.
-                            Leave blank to use the app&rsquo;s own backups folder.
+                            Leave blank to use the app&rsquo;s own backups folder. At the server computer, Browse opens the
+                            Windows folder window; from any other computer it lists the server&rsquo;s folders here.
                           </span>
                         </div>
                         <div className="ss-row-control">
@@ -1500,9 +1520,13 @@ export default function SystemSettings() {
                           <button
                             type="button"
                             className="ss-browse-btn"
-                            onClick={() => setFolderPickerOpen(true)}
+                            onClick={handleBrowseFolder}
+                            disabled={folderWindowOpen}
+                            title={folderWindowOpen ? 'Choose a folder in the window that opened, or close it' : undefined}
                           >
-                            <FolderOpen size={15} /> Browse&hellip;
+                            {folderWindowOpen
+                              ? <><Loader2 size={15} className="ss-spinner" /> Choosing&hellip;</>
+                              : <><FolderOpen size={15} /> Browse&hellip;</>}
                           </button>
                         </div>
                       </div>
