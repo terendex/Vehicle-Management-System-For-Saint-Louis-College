@@ -280,6 +280,8 @@ def to_escpos(image, feed_lines=4):
 # JOB_STATUS_* flags that mean the slip is not coming out on its own.
 _JOB_FAILED = {0x2: 'printer error', 0x20: 'printer is offline', 0x40: 'printer is out of paper',
                0x200: 'printer queue is blocked', 0x400: 'printer needs attention'}
+# RPC_S_SERVER_UNAVAILABLE from OpenPrinterW: no spooler to talk to.
+_SPOOLER_STOPPED = 1722
 
 
 def send_raw(printer_name, payload, doc_name='Visitor Slip', wait_seconds=6.0):
@@ -311,7 +313,14 @@ def send_raw(printer_name, payload, doc_name='Visitor Slip', wait_seconds=6.0):
 
     handle = wintypes.HANDLE()
     if not winspool.OpenPrinterW(printer_name, ctypes.byref(handle), None):
-        raise SlipPrinterError(f'cannot open printer "{printer_name}" (error {ctypes.get_last_error()})')
+        err = ctypes.get_last_error()
+        # 1722 = RPC server unavailable: the Print Spooler service is stopped.
+        # find_printer() reads the registry, so the printer still looks
+        # installed. Game boosters (Razer Cortex) stop the spooler on purpose.
+        if err == _SPOOLER_STOPPED:
+            raise SlipPrinterError('the Windows Print Spooler service is stopped. '
+                                   'Start "Print Spooler" in Windows Services, then print again')
+        raise SlipPrinterError(f'cannot open printer "{printer_name}" (error {err})')
     try:
         doc = DOC_INFO_1(doc_name, None, 'RAW')
         job_id = winspool.StartDocPrinterW(handle, 1, ctypes.byref(doc))

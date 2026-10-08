@@ -23,6 +23,19 @@ param()
 # Same pattern slip_printer.py uses to pick the printer.
 $pattern = 'pos-?\s?58|jp-?\s?58|58\s?mm|thermal|receipt'
 
+# Every slip goes through the Print Spooler. Game boosters (Razer Cortex) stop
+# it and do not always start it again, which reads as "no printer detected".
+# Starting it needs administrator rights; when that fails, say so plainly.
+$spooler = Get-Service Spooler -ErrorAction SilentlyContinue
+if ($spooler -and $spooler.Status -ne 'Running') {
+    try {
+        Start-Service Spooler -ErrorAction Stop
+        $note = @{ Kind = 'warn'; Text = 'Slip printer: Windows Print Spooler was stopped - started it again.' }
+    } catch {
+        return @{ Kind = 'warn'; Text = 'Slip printer: Windows Print Spooler is stopped (a game booster such as Razer Cortex can do this) - start "Print Spooler" in Services as administrator, then restart the server.' }
+    }
+}
+
 try {
     $printers = @(Get-Printer -ErrorAction Stop |
                   Where-Object { $_.Name -match $pattern -or $_.DriverName -match $pattern })
@@ -57,7 +70,7 @@ foreach ($key in @(Get-ChildItem $usbPrintClass -ErrorAction SilentlyContinue)) 
     }
 }
 
-$messages = @()
+$messages = @(if ($note) { $note })
 foreach ($printer in $printers) {
     if ($thermalPorts -contains $printer.PortName) {
         $messages += @{ Kind = 'ok'; Text = "Slip printer: $($printer.Name) on $($printer.PortName)." }
