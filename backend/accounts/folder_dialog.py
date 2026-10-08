@@ -19,7 +19,9 @@ check_scheduled_dir's write test, as with the in-app list.
 from __future__ import annotations
 
 import base64
+import html
 import os
+import re
 import socket
 import subprocess
 import threading
@@ -37,16 +39,22 @@ class FolderDialogBusy(Exception):
 
 # IFileOpenDialog with FOS_PICKFOLDERS: the modern Explorer style picker
 # (Vista and later), not the old tree only FolderBrowserDialog that Windows
-# PowerShell 5.1's .NET Framework would give. The dialog is owned by the
-# window in front (the browser the admin just clicked in), so it opens on top
-# of it instead of behind; the AttachThreadInput step is what lets a window
-# from a background process take the foreground at all.
+# PowerShell 5.1's .NET Framework would give.
+#
+# The dialog is owned by a hidden, always-on-top window of this process, and
+# Arrange() centres it over the window in front (the browser the admin just
+# clicked in) and brings it forward. It must NOT be owned by the browser
+# itself: a dialog disables its owner while open, and if this process is killed (the timeout below, or the launcher stopping
+# the server) nothing re-enables it, leaving the browser dead to clicks.
 _SCRIPT = r'''
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 
 public static class SlcFolderDialog {
     [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FileOpenDialogCoClass {}
@@ -88,10 +96,71 @@ public static class SlcFolderDialog {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateWindowEx(uint exStyle, string cls, string name, uint style,
+        int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr param);
+    [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr mon, ref MONITORINFO mi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, StringBuilder s, int n);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+    delegate bool EnumProc(IntPtr hWnd, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint tid, EnumProc f, IntPtr l);
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
 
+    const uint WS_POPUP = 0x80000000, WS_EX_TOPMOST = 0x8, WS_EX_TOOLWINDOW = 0x80;
+    const uint SWP_NOSIZE = 0x1, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, MONITOR_DEFAULTTONEAREST = 2;
     const uint FOS_PICKFOLDERS = 0x20, FOS_FORCEFILESYSTEM = 0x40, FOS_PATHMUSTEXIST = 0x800;
     const uint SIGDN_FILESYSPATH = 0x80058000;
     const int ERROR_CANCELLED = unchecked((int)0x800704C7);
+
+    // Waits for the dialog on `dialogThread` to appear, centres it over
+    // `front` (kept inside that screen's work area) and brings it forward.
+    // Windows places it by its own memory otherwise, often half off screen.
+    static void Arrange(uint dialogThread, IntPtr front) {
+        // The dialog draws itself DPI aware while PowerShell is not, so on a
+        // scaled screen (125% and up) this thread would read and set
+        // virtualized coordinates and miss. Real pixels for this thread only.
+        try { SetThreadDpiAwarenessContext(new IntPtr(-4)); } catch (EntryPointNotFoundException) { }   // PER_MONITOR_AWARE_V2; older Windows: best effort
+        for (int tries = 0; tries < 200; tries++) {          // up to 10 s, the first run compiles slowly
+            IntPtr found = IntPtr.Zero;
+            EnumThreadWindows(dialogThread, (h, l) => {
+                StringBuilder cls = new StringBuilder(32);
+                GetClassName(h, cls, 32);
+                if (cls.ToString() == "#32770" && IsWindowVisible(h)) { found = h; return false; }
+                return true;
+            }, IntPtr.Zero);
+            if (found != IntPtr.Zero) {
+                MONITORINFO mi = new MONITORINFO();
+                mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                GetMonitorInfo(MonitorFromWindow(front != IntPtr.Zero ? front : found, MONITOR_DEFAULTTONEAREST), ref mi);
+                RECT area = mi.rcWork, target = mi.rcWork, d;
+                if (front != IntPtr.Zero) GetWindowRect(front, out target);
+                GetWindowRect(found, out d);
+                int w = d.Right - d.Left, h = d.Bottom - d.Top;
+                int x = (target.Left + target.Right - w) / 2, y = (target.Top + target.Bottom - h) / 2;
+                x = Math.Max(area.Left, Math.Min(x, area.Right - w));
+                y = Math.Max(area.Top, Math.Min(y, area.Bottom - h));
+                SetWindowPos(found, IntPtr.Zero, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                // Sharing the clicked-in window's input state for a moment is
+                // what lets a background process take the foreground at all.
+                uint frontThread = front != IntPtr.Zero ? GetWindowThreadProcessId(front, IntPtr.Zero) : 0;
+                uint me = GetCurrentThreadId();
+                bool attached = frontThread != 0 && AttachThreadInput(me, frontThread, true);
+                SetForegroundWindow(found);
+                BringWindowToTop(found);
+                if (attached) AttachThreadInput(me, frontThread, false);
+                return;
+            }
+            Thread.Sleep(50);
+        }
+    }
 
     public static string Pick(string initial, string title) {
         IFileOpenDialog dlg = (IFileOpenDialog)new FileOpenDialogCoClass();
@@ -107,13 +176,18 @@ public static class SlcFolderDialog {
                 dlg.SetFolder(start);
             } catch (Exception) { }     // gone (USB pulled out): Windows opens its usual place instead
         }
-        IntPtr owner = GetForegroundWindow();
-        uint ownerThread = GetWindowThreadProcessId(owner, IntPtr.Zero);
+        IntPtr front = GetForegroundWindow();
+        // Hidden and always on top, so the dialog it owns stays in front of a
+        // full screen kiosk browser too.
+        IntPtr owner = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "STATIC", "", WS_POPUP,
+                                      0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         uint me = GetCurrentThreadId();
-        bool attached = owner != IntPtr.Zero && ownerThread != me && AttachThreadInput(me, ownerThread, true);
+        Thread arrange = new Thread(() => Arrange(me, front));
+        arrange.IsBackground = true;
+        arrange.Start();
         int hr;
         try { hr = dlg.Show(owner); }
-        finally { if (attached) AttachThreadInput(me, ownerThread, false); }
+        finally { if (owner != IntPtr.Zero) DestroyWindow(owner); }
         if (hr == ERROR_CANCELLED) return null;
         Marshal.ThrowExceptionForHR(hr);
         IShellItem item;
@@ -177,6 +251,17 @@ def available(request) -> bool:
     return _has_desktop()
 
 
+def _error_text(stderr: bytes) -> str:
+    """PowerShell's error, readable. With its streams redirected it writes
+    errors as CLIXML (<S S="Error">…</S> with _x000D__x000A_ for newlines)."""
+    text = stderr.decode('utf-8', errors='replace')
+    parts = re.findall(r'<S S="Error">(.*?)</S>', text, flags=re.S)
+    if parts:
+        text = ''.join(parts).replace('_x000D_', '').replace('_x000A_', ' ')
+        text = html.unescape(text)
+    return ' '.join(text.split())[:300]
+
+
 def pick_folder(initial: str = '', title: str = 'Choose where to save automatic backups') -> str | None:
     """Open the window and wait. The picked full path, or None if cancelled.
 
@@ -200,7 +285,6 @@ def pick_folder(initial: str = '', title: str = 'Choose where to save automatic 
             return out[len('PICKED:'):]
         if out == 'CANCELLED':
             return None
-        err = result.stderr.decode('utf-8', errors='replace').strip()
-        raise RuntimeError(err.splitlines()[0] if err else f'exit code {result.returncode}')
+        raise RuntimeError(_error_text(result.stderr) or f'exit code {result.returncode}')
     finally:
         _lock.release()

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from unittest import mock, skipUnless
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import User
@@ -165,3 +165,18 @@ class FolderPickTests(TestCase):
             self.assertEqual(self.pick(client=client).status_code, 403)
             self.assertIn(self.pick(client=APIClient()).status_code, (401, 403))
         pick.assert_not_called()
+
+
+class FolderDialogErrorTextTests(SimpleTestCase):
+    """With its streams redirected, PowerShell reports errors as CLIXML. The
+    server log should say what failed, not "#< CLIXML"."""
+
+    def test_clixml_error_becomes_one_readable_line(self):
+        from accounts.folder_dialog import _error_text
+        raw = ('#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">Add-Type : Cannot add type. '
+               '&amp; it failed_x000D__x000A_</S><S S="Error">At line:3 char:1_x000D__x000A_</S></Objs>').encode()
+        self.assertEqual(_error_text(raw), 'Add-Type : Cannot add type. & it failed At line:3 char:1')
+
+    def test_plain_text_passes_through(self):
+        from accounts.folder_dialog import _error_text
+        self.assertEqual(_error_text(b'powershell.exe: access denied\r\n'), 'powershell.exe: access denied')
