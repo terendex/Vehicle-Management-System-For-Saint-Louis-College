@@ -40,9 +40,7 @@ log = logging.getLogger(__name__)
 # granularity of "how soon after midnight (or after a boot) does it run", not a
 # schedule in itself. Hourly keeps the idle cost at 24 cheap queries a day.
 #
-# It is also the ceiling on how often anything here can run, which matters for
-# exactly one setting: automatic backups on "hourly" happen once per pass, so
-# this interval is what "hourly" means in practice.
+# Automatic backups do not wait for it: the loop wakes at their exact time.
 CHECK_INTERVAL_SECONDS = 3600
 
 # Jobs the server runs by itself, in order: back up, archive, then purge. Each
@@ -65,11 +63,10 @@ CHECK_INTERVAL_SECONDS = 3600
 # the parking reserve read the date directly, so the up-to-an-hour wait for
 # this pass after midnight never lets a finished event act.
 #
-# scheduled_backup is the calendar-pinned one ("Fridays at 5 PM"). It sits
-# beside auto_backup for the same reason, and the loop below wakes at its
-# exact time rather than up to an hour after it.
+# scheduled_backup is the automatic backup, pinned to the calendar ("Fridays
+# at 5 PM"), and the loop below wakes at its exact time rather than up to an
+# hour after it.
 DAILY_JOBS = (
-    'auto_backup',
     'scheduled_backup',
     'auto_manage_events',
     'expire_unpaid_registrations',
@@ -110,23 +107,15 @@ def _claim_key(job: str) -> str:
     Almost everything here runs once a day, so the key is just the job name and
     the (job, run_date) unique constraint allows exactly one run per day.
 
-    Automatic backups are the exception: they can be set to hourly, and a
-    day-granular claim would silently cap that at one backup a day no matter
-    what the admin chose. When hourly is on, the key carries the hour, so each
-    hour is its own claim — still exactly one process per slot, just twenty-four
-    slots in a day instead of one. Every other frequency keeps the plain daily
-    key, which is why the ledger only grows when hourly is actually in use.
+    Automatic backups are the exception, twice over. They are keyed by
+    machine: the ledger lives in the shared database but the backup file lands
+    on the local disk, so when two servers point at one database (the campus
+    PC and a cloud deployment) a shared key let whichever woke first take the
+    backup — onto its own disk — and the campus PC, whose System Settings lists
+    only its own folder, never took another one. Each machine claims its own.
 
-    Backups are also keyed by machine. The ledger lives in the shared database
-    but the backup file lands on the local disk, so when two servers point at
-    one database (the campus PC and a cloud deployment) a shared key let
-    whichever woke first each hour take the backup — onto its own disk — and
-    the campus PC, whose System Settings lists only its own folder, never took
-    another one. Each machine now claims its own slots.
-
-    Scheduled backups are per machine for the same reason, and their key also
-    carries a fingerprint of the SLOT being served (the latest moment the
-    schedule called for, plus the folder). Keyed by day instead, a catch-up
+    Their key also carries a fingerprint of the SLOT being served (the latest
+    moment the schedule called for, plus the folder). Keyed by day instead, a catch-up
     backup taken in the morning for yesterday's 5 PM would hold the day's claim
     and silently skip today's 5 PM. Moving the time or the folder is likewise
     a new slot, looked at again on the next pass. The file in the folder, not
@@ -150,16 +139,7 @@ def _claim_key(job: str) -> str:
         ))
         # 64 wide: 17 for "scheduled_backup@", 30 of hostname, 9 for "#xxxxxxxx".
         return f'{job}@{socket.gethostname()[:30]}#{zlib.crc32(schedule.encode()):08x}'
-    if job != 'auto_backup':
-        return job
-    from .models import SystemSettings
-    try:
-        hourly = SystemSettings.get().auto_backup_frequency == 'hourly'
-    except Exception:                                   # noqa: BLE001 — pre-migrate
-        return job
-    # The job column is 64 wide: 12 for "auto_backup@" and 4 for ":hNN".
-    key = f'{job}@{socket.gethostname()[:40]}'
-    return f'{key}:h{timezone.localtime():%H}' if hourly else key
+    return job
 
 
 # One pass at a time in this process. The claims already stop two processes
@@ -209,7 +189,7 @@ def _run_due_jobs(force: bool) -> dict:
         # first pass after a restart lands a little before the 24 hours are up.
         # The file age decides; the claim only stops two processes writing at
         # once.
-        skipped = (job in ('auto_backup', 'scheduled_backup') and isinstance(result, dict)
+        skipped = (job == 'scheduled_backup' and isinstance(result, dict)
                    and result.get('skipped') == 'not due')
 
         outcomes[job] = summary
@@ -250,7 +230,7 @@ def _loop():
 
 
 def _seconds_until_next_pass() -> float:
-    """The hourly interval, or less when a scheduled backup falls due sooner.
+    """The hourly interval, or less when an automatic backup falls due sooner.
 
     The hourly pass is fine for "sometime after midnight", but "Fridays at
     5 PM" should mean 5 PM, not whenever the hour's wake-up happens to land.

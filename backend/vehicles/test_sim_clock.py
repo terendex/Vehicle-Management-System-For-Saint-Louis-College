@@ -148,17 +148,15 @@ class RedirectEmailTests(SimpleTestCase):
 class DemoSafeguardTests(TestCase):
     """A deployment can leave jobs out, and the demo opens no cameras."""
 
-    @override_settings(SCHEDULER_SKIP_JOBS=('auto_backup', 'scheduled_backup'))
+    @override_settings(SCHEDULER_SKIP_JOBS=('scheduled_backup',))
     def test_skipped_jobs_never_run(self):
         from vehicles import scheduler
-        with mock.patch('vehicles.tasks.auto_backup') as backup, \
-             mock.patch('vehicles.tasks.scheduled_backup') as scheduled, \
+        with mock.patch('vehicles.tasks.scheduled_backup') as scheduled, \
              mock.patch('vehicles.tasks.purge_old_records', return_value={}) as purge:
             outcomes = scheduler.run_due_jobs(force=True)
-        backup.assert_not_called()
         scheduled.assert_not_called()
         purge.assert_called_once()
-        self.assertNotIn('auto_backup', outcomes)
+        self.assertNotIn('scheduled_backup', outcomes)
 
     @override_settings(SIM_CLOCK_ENABLED=True, SIM_CAMERAS=False)
     def test_no_cameras_keeps_the_demo_off_real_cameras(self):
@@ -207,10 +205,11 @@ class DemoBackupTests(TestCase):
 
     def _schedule(self, folder):
         from datetime import time
+        from django.utils import timezone
         from vehicles.models import SystemSettings
         cfg = SystemSettings.get()
-        cfg.auto_backup_frequency = 'daily'
-        cfg.scheduled_backup_frequency = 'daily'
+        cfg.scheduled_backup_frequency = 'weekly'
+        cfg.scheduled_backup_weekday = timezone.localdate().weekday()   # today, at a time already passed
         cfg.scheduled_backup_time = time(0, 0)
         cfg.scheduled_backup_folder = folder
         cfg.scheduled_backup_keep = 1
@@ -231,9 +230,7 @@ class DemoBackupTests(TestCase):
         from vehicles import tasks
         self._schedule(self.chosen)
         with self.demo, mock.patch('accounts.backup_utils.dump_backup', return_value='[]'):
-            auto = tasks.auto_backup()
             scheduled = tasks.scheduled_backup()
-        self.assertTrue(os.path.isfile(os.path.join(self.own, auto['created'])))
         self.assertEqual(scheduled['folder'], self.chosen)
         self.assertTrue(scheduled['created'].startswith('demo-scheduled-backup-'))
         self.assertTrue(os.path.isfile(os.path.join(self.chosen, scheduled['created'])))

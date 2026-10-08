@@ -253,80 +253,14 @@ def auto_manage_events():
     return {"activated": activated, "archived": archived, "pending": pending}
 
 
-@shared_task(name="vehicles.auto_backup")
-def auto_backup():
-    """Take a scheduled backup of system data, then rotate the old ones.
-
-    The scheduler calls this on every pass (hourly); the *frequency* setting is
-    applied here rather than there, by asking how old the newest automatic
-    backup is. A weekly schedule is therefore "at least seven days since the
-    last one", not "every Monday" — a server that was switched off on Monday
-    still gets its weekly backup when it next boots, which is the same catch-up
-    behaviour the rest of the daily jobs have.
-
-    Because the age of the file on disk is the clock, no state can drift out of
-    step with reality: deleting the newest backup makes the next pass take one,
-    and a restored database cannot make the schedule think it already ran.
-
-    Hourly is the fastest setting, and it is bounded by how often the scheduler
-    wakes — once an hour. The slack below is what absorbs the few seconds or
-    minutes of drift in when that wake-up actually lands, so an hourly schedule
-    does not skip an hour just for arriving 59 minutes and 50 seconds later.
-
-    Nothing here can lose data: it only ever writes a new backup and rotates
-    older routine ones beyond the keep count. The pre-restore snapshots — the
-    files someone reaches for after a bad restore — are never rotated.
-    """
-    from dateutil.relativedelta import relativedelta
-
-    from accounts.backup_utils import (
-        AUTO_PREFIX, latest_auto_backup, prune_backups, write_backup,
-    )
-    from django.utils.dateparse import parse_datetime
-    from .models import SystemSettings
-
-    cfg = SystemSettings.get()
-    freq = cfg.auto_backup_frequency
-    if freq == 'off':
-        return {"skipped": "automatic backups are off"}
-
-    now = timezone.now()
-    # (interval, slack). The slack has to stay well under the interval — an hour
-    # of it would make "hourly" mean "every pass", which is the one thing the
-    # age check is here to prevent.
-    interval, slack = {
-        'hourly':  (relativedelta(hours=1),   relativedelta(minutes=5)),
-        'daily':   (relativedelta(days=1),    relativedelta(hours=1)),
-        'weekly':  (relativedelta(weeks=1),   relativedelta(hours=1)),
-        'monthly': (relativedelta(months=1),  relativedelta(hours=1)),
-    }.get(freq, (None, None))
-    if interval is None:
-        log.warning("[auto_backup] unknown frequency %r — skipping", freq)
-        return {"skipped": f"unknown frequency {freq}"}
-
-    latest = latest_auto_backup()
-    if latest:
-        due_at = parse_datetime(latest['created_at']) + interval - slack
-        if now < due_at:
-            log.info("[auto_backup] not due yet — next after %s", due_at)
-            return {"skipped": "not due", "next_due": due_at.isoformat()}
-
-    name, size = write_backup(AUTO_PREFIX)
-    removed = prune_backups(cfg.auto_backup_keep)
-
-    log.info("[auto_backup] wrote %s (%d bytes); pruned %d old backup(s)",
-             name, size, len(removed))
-    return {"created": name, "bytes": size, "pruned": len(removed)}
-
-
 @shared_task(name="vehicles.scheduled_backup")
 def scheduled_backup():
-    """Take the calendar-scheduled backup into the chosen folder, if one is due.
+    """Take the automatic backup into the chosen folder, if one is due.
 
-    Separate from auto_backup and deliberately different in kind: that one is
-    "at least N since the last", this one is pinned to the calendar — daily at
-    a time, weekly on a weekday, monthly on a day — and can write somewhere
-    other than the app's own folder.
+    The one automatic backup schedule, pinned to the calendar: weekly on a
+    weekday, or monthly, quarterly or yearly on a day of the month, at a set
+    time, and written to the app's own folder or one the admin chose. (It
+    replaced an older "at least N since the last" job, auto_backup.)
 
     Due means: the most recent slot the schedule called for has no scheduled
     backup in the folder taken at or after it. That gives the same catch-up as

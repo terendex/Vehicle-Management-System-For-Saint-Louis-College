@@ -28,7 +28,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from vehicles.tasks import (auto_backup, auto_manage_events,
+        from vehicles.tasks import (auto_manage_events,
                                     auto_archive_expired_accounts, auto_archive_past_visits,
                                     purge_old_records, scheduled_backup)
 
@@ -40,17 +40,11 @@ class Command(BaseCommand):
             f"reset {result['pending']} to pending"
         ))
 
-        # Before anything that deletes: the day's snapshot should still hold
-        # the rows the purge below is about to remove. Respects the configured
-        # frequency, so this is a no-op when automatic backups are off or the
-        # last one is still recent.
-        result = auto_backup()
-        self.stdout.write(self.style.SUCCESS(
-            f"auto_backup: {result.get('created') or result.get('skipped')}"
-        ))
-
-        # The calendar-pinned backup to the chosen folder. A missing drive is
-        # reported and the run carries on: the jobs below do not depend on it.
+        # The automatic backup, before anything that deletes: the snapshot
+        # should still hold the rows the purge below is about to remove. A
+        # no-op when backups are off or the latest slot already has its file.
+        # A missing drive is reported and the run carries on: the jobs below
+        # do not depend on it.
         try:
             result = scheduled_backup()
             self.stdout.write(self.style.SUCCESS(

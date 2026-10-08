@@ -43,7 +43,7 @@ def dt(days_ago=0, hh=8, mm=0):
 s = SystemSettings.get()
 s.registration_start = today - timedelta(days=40)
 s.registration_end = today + timedelta(days=60)
-s.auto_backup_frequency = 'daily'
+s.scheduled_backup_frequency = 'weekly'
 s.save()
 RegistrationPeriod.objects.get_or_create(
     label='1st Semester AY 2026-2027',

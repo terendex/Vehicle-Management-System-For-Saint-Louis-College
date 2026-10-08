@@ -18,7 +18,6 @@ import sim_clock
 # first, as on the real system, so the data is captured before anything is
 # archived or purged.
 DEMO_JOBS = (
-    'auto_backup',
     'scheduled_backup',
     'auto_manage_events',
     'expire_unpaid_registrations',
@@ -168,8 +167,7 @@ def _run_each(tasks):
 
 
 JOB_LABELS = {
-    'auto_backup':                   'Automatic backup',
-    'scheduled_backup':              'Scheduled backup',
+    'scheduled_backup':              'Automatic backup',
     'auto_manage_events':            'Events',
     'expire_unpaid_registrations':   'Unpaid registrations',
     'auto_archive_expired_accounts': 'Expired accounts',

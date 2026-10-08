@@ -1051,13 +1051,11 @@ class SystemSettings(models.Model):
                   "than the parked threshold — a car cannot be badly parked "
                   "before it counts as parked at all.",
     )
-    # Automatic backups. The frequency doubles as the on/off switch — "off" is a
-    # real choice rather than a separate boolean, so there is no way to end up
-    # with a schedule that is enabled but has no interval.
-    #
-    # Files land in BASE_DIR/backups alongside the pre-restore snapshots, and
-    # `auto_backup_keep` rotates the automatic ones so a daily schedule cannot
-    # fill the disk over a semester.
+    # RETIRED (migration 0101). These drove the old "every N since the last"
+    # automatic backup, which was folded into the calendar schedule below. No
+    # code reads them any more; the columns stay only because a server still
+    # running older code SELECTs them, and are dropped once every server
+    # (Railway and the campus clone) has been updated.
     auto_backup_frequency = models.CharField(
         max_length=10, default='off',
         choices=[
@@ -1076,25 +1074,30 @@ class SystemSettings(models.Model):
                   "Pre-restore snapshots are never rotated away.",
     )
 
-    # Scheduled backups — a second, independent schedule beside the automatic
-    # one. Automatic backups are "every N since the last", kept with the app.
-    # These are pinned to the calendar ("Fridays at 5 PM", "the 1st of the
-    # month") and can be written to a folder of the admin's choosing, such as
-    # a second drive or a USB stick, so one copy lives away from the install.
+    # Automatic backups (shown as one "Automatic backups" setting; the columns
+    # keep their scheduled_ names from when this was a second schedule beside
+    # the retired one above). Pinned to the calendar ("Fridays at 5 PM", "the
+    # 1st of every quarter") and written to a folder of the admin's choosing,
+    # such as a second drive or a USB stick, so one copy lives away from the
+    # install. The frequency doubles as the on/off switch.
     #
     # The time is campus-local (TIME_ZONE). The weekday is Python's numbering,
-    # 0 = Monday, and is read only when weekly; the day of month is read only
-    # when monthly, and 29–31 fall on the last day of a shorter month rather
-    # than skipping it. A blank folder means the app's own backups folder.
+    # 0 = Monday, and is read only when weekly. The day of month is read for
+    # monthly, quarterly and yearly, and 29–31 fall on the last day of a
+    # shorter month rather than skipping it. The month is read for yearly (the
+    # month of the year) and quarterly (any one month of the cycle: 1, 4, 7 and
+    # 10 all mean January, April, July and October). A blank folder means the
+    # app's own backups folder.
     scheduled_backup_frequency = models.CharField(
         max_length=10, default='off',
         choices=[
-            ('off',     'Off'),
-            ('daily',   'Daily'),
-            ('weekly',  'Weekly'),
-            ('monthly', 'Monthly'),
+            ('off',       'Off'),
+            ('weekly',    'Weekly'),
+            ('monthly',   'Monthly'),
+            ('quarterly', 'Quarterly'),
+            ('yearly',    'Yearly'),
         ],
-        help_text="Calendar schedule for backups saved to the chosen folder.",
+        help_text="Calendar schedule for automatic backups.",
     )
     scheduled_backup_time = models.TimeField(
         default=datetime.time(17, 0),
@@ -1108,8 +1111,14 @@ class SystemSettings(models.Model):
     scheduled_backup_day = models.SmallIntegerField(
         default=1,
         validators=[MinValueValidator(1), MaxValueValidator(31)],
-        help_text="Monthly schedule only: day of the month. 29–31 fall on the "
-                  "last day of a shorter month.",
+        help_text="Monthly, quarterly and yearly schedules: day of the month. "
+                  "29–31 fall on the last day of a shorter month.",
+    )
+    scheduled_backup_month = models.SmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        help_text="Yearly: the month of the year. Quarterly: any month of the "
+                  "cycle (1, 4, 7 and 10 are the same schedule).",
     )
     scheduled_backup_folder = models.CharField(
         max_length=500, blank=True, default='',
@@ -1198,7 +1207,7 @@ class DailyJobRun(models.Model):
     runs the job when it next boots instead of skipping the day.
     """
     id         = models.BigAutoField(primary_key=True, db_column='daily_job_run_id')
-    job        = models.CharField(max_length=64)     # the job's name, e.g. 'auto_backup'
+    job        = models.CharField(max_length=64)     # the job's name, e.g. 'purge_old_records'
     run_date   = models.DateField()                  # the day being claimed
     started_at = models.DateTimeField(auto_now_add=True)
     # Null while in flight; a row that stays null is a job that crashed midway.

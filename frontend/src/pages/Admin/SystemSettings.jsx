@@ -18,9 +18,8 @@ import './SystemSettings.css'
 const FORM_DEFAULTS = { retention_years: 5, scan_dedup_seconds: 60, vehicle_pass_fee: 300, vehicle_pass_fee_employee: 150,
   account_expiry_months: 12, account_expiry_days: 0,
   parked_after_seconds: 8, double_park_after_seconds: 12,
-  auto_backup_frequency: 'off', auto_backup_keep: 10,
   scheduled_backup_frequency: 'off', scheduled_backup_time: '17:00', scheduled_backup_weekday: 4,
-  scheduled_backup_day: 1, scheduled_backup_folder: '', scheduled_backup_keep: 12,
+  scheduled_backup_day: 1, scheduled_backup_month: 1, scheduled_backup_folder: '', scheduled_backup_keep: 12,
   report_preparer_name: '', report_preparer_position: '',
   report_approver_name: '', report_approver_position: '',
   report_prepared_by_label: 'Prepared by', report_approved_by_label: 'Approved by' }
@@ -49,12 +48,11 @@ function normalizeSettings(data) {
     account_expiry_days:   data.account_expiry_days   ?? 0,
     parked_after_seconds:      data.parked_after_seconds      ?? 8,
     double_park_after_seconds: data.double_park_after_seconds ?? 12,
-    auto_backup_frequency: data.auto_backup_frequency ?? 'off',
-    auto_backup_keep:      data.auto_backup_keep      ?? 10,
     scheduled_backup_frequency: data.scheduled_backup_frequency ?? 'off',
     scheduled_backup_time:      data.scheduled_backup_time      ?? '17:00',
     scheduled_backup_weekday:   data.scheduled_backup_weekday   ?? 4,
     scheduled_backup_day:       data.scheduled_backup_day       ?? 1,
+    scheduled_backup_month:     data.scheduled_backup_month     ?? 1,
     scheduled_backup_folder:    data.scheduled_backup_folder    ?? '',
     scheduled_backup_keep:      data.scheduled_backup_keep      ?? 12,
     // ?? '' rather than ?? a caption: blank is a real, chosen state on all
@@ -70,29 +68,21 @@ function normalizeSettings(data) {
   }
 }
 
-// "Off" is one of the frequencies rather than a separate switch, so there is no
-// way to leave the schedule on with nothing set.
+// Automatic backups, pinned to the calendar. "Off" is one of the frequencies
+// rather than a separate switch, so there is no way to leave the schedule on
+// with nothing set.
 const BACKUP_FREQUENCIES = [
-  ['off',     'Off'],
-  ['hourly',  'Hourly'],
-  ['daily',   'Daily'],
-  ['weekly',  'Weekly'],
-  ['monthly', 'Monthly'],
+  ['off',       'Off'],
+  ['weekly',    'Weekly'],
+  ['monthly',   'Monthly'],
+  ['quarterly', 'Quarterly'],
+  ['yearly',    'Yearly'],
 ]
 
-const FREQ_HINT = {
-  off:     'The server takes no backups on its own — only the ones you download here.',
-  hourly:  'The server saves a backup every hour, around the clock.',
-  daily:   'The server saves a backup once a day, before old records are purged.',
-  weekly:  'The server saves a backup once every seven days.',
-  monthly: 'The server saves a backup once a month.',
-}
-
 // How far back the saved backups actually reach. Worth spelling out because the
-// keep count means something very different at each frequency: ten of them is
-// most of a day on hourly and the better part of a year on monthly, and an
-// admin switching to hourly should see that their history just got shorter.
-const FREQ_UNIT = { hourly: 'hour', daily: 'day', weekly: 'week', monthly: 'month' }
+// keep count means something very different at each frequency: twelve of them
+// is a quarter of a year on weekly and twelve years on yearly.
+const FREQ_UNIT = { weekly: 'week', monthly: 'month', quarterly: 'quarter', yearly: 'year' }
 
 function backupSpanText(freq, keep) {
   const unit = FREQ_UNIT[freq]
@@ -100,14 +90,21 @@ function backupSpanText(freq, keep) {
   return `That is about ${keep} ${unit}${keep !== 1 ? 's' : ''} of history.`
 }
 
-// The calendar-pinned schedule. No hourly here — that is what Automatic
-// backups are for; this one is "at a time you pick".
-const SCHEDULED_FREQUENCIES = [
-  ['off',     'Off'],
-  ['daily',   'Daily'],
-  ['weekly',  'Weekly'],
-  ['monthly', 'Monthly'],
-]
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December']
+
+// A quarterly schedule runs every third month counting from the stored month,
+// so 1, 4, 7 and 10 are the same schedule. The picker offers the three cycles
+// and stores the first month of each (1, 2 or 3).
+const QUARTER_CYCLES = [1, 2, 3].map((first) => [first, [0, 3, 6, 9].map((k) => MONTHS[first - 1 + k])])
+const quarterCycle = (month) => ((Number(month) || 1) - 1) % 3 + 1
+
+/** "January, April, July and October" */
+const joinMonths = (names) => `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+
+// Shortest length of each month (February in a common year), for saying when a
+// day like the 31st falls on the last day instead.
+const MONTH_MIN_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
 // Python's numbering, which is what the server stores: 0 = Monday.
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -124,16 +121,24 @@ const formatClock = (hhmm) => {
   return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
 
-/** e.g. "every Friday at 5:00 PM" */
+/** e.g. "every Friday at 5:00 PM", "on the 1st of January, April, July and October at 5:00 PM" */
 function scheduleText(f) {
+  const freq = f.scheduled_backup_frequency
+  const day = f.scheduled_backup_day
   const at = `at ${formatClock(f.scheduled_backup_time)}`
-  if (f.scheduled_backup_frequency === 'daily')  return `every day ${at}`
-  if (f.scheduled_backup_frequency === 'weekly') return `every ${WEEKDAYS[f.scheduled_backup_weekday]} ${at}`
-  if (f.scheduled_backup_frequency === 'monthly') {
-    const tail = f.scheduled_backup_day > 28 ? ' (or the last day of a shorter month)' : ''
-    return `on the ${ordinal(f.scheduled_backup_day)} of every month ${at}${tail}`
-  }
-  return ''
+  if (freq === 'weekly') return `every ${WEEKDAYS[f.scheduled_backup_weekday]} ${at}`
+  // The months the schedule lands in, by index, to say whether the chosen day
+  // is past the end of any of them.
+  const months = freq === 'monthly' ? [...Array(12).keys()]
+    : freq === 'quarterly' ? [0, 3, 6, 9].map((k) => quarterCycle(f.scheduled_backup_month) - 1 + k)
+      : freq === 'yearly' ? [(Number(f.scheduled_backup_month) || 1) - 1] : []
+  if (!months.length) return ''
+  const tail = months.some((m) => day > MONTH_MIN_DAYS[m])
+    ? (freq === 'yearly' ? ' (or the last day of the month when it is shorter)' : ' (or the last day of a shorter month)')
+    : ''
+  if (freq === 'monthly') return `on the ${ordinal(day)} of every month ${at}${tail}`
+  if (freq === 'quarterly') return `on the ${ordinal(day)} of ${joinMonths(months.map((m) => MONTHS[m]))} ${at}${tail}`
+  return `every ${MONTHS[months[0]]} ${day} ${at}${tail}`
 }
 
 const scheduledInvalid = (f) => f.scheduled_backup_frequency !== 'off' && (
@@ -145,11 +150,13 @@ const scheduledInvalid = (f) => f.scheduled_backup_frequency !== 'off' && (
 // The parts of the schedule that, once saved, make the server look again
 // straight away — so the page should too.
 const SCHEDULE_FIELDS = ['scheduled_backup_frequency', 'scheduled_backup_time', 'scheduled_backup_weekday',
-  'scheduled_backup_day', 'scheduled_backup_folder']
+  'scheduled_backup_day', 'scheduled_backup_month', 'scheduled_backup_folder']
 
 // What wrote the file. Pre-restore snapshots are the automatic copy taken right
 // before someone restored, which is usually the file you want after a mistake.
-const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', scheduled: 'Scheduled', other: 'File' }
+// Automatic backups are written as "scheduled-backup-" files; "auto" is the
+// retired interval schedule, whose old files are still listed until rotated.
+const KIND_LABEL = { auto: 'Automatic', manual: 'Manual', safety: 'Pre-restore', scheduled: 'Automatic', other: 'File' }
 
 // How often the saved-backup list re-checks the server while the tab is open.
 // Deliberately slow: the fastest schedule writes one file an hour, so a tighter
@@ -194,9 +201,10 @@ const FIELD_TAB = {
   vehicle_pass_fee: 'accounts', vehicle_pass_fee_employee: 'accounts',
   scan_dedup_seconds: 'gates',
   parked_after_seconds: 'parking', double_park_after_seconds: 'parking',
-  retention_years: 'data', auto_backup_frequency: 'data', auto_backup_keep: 'data',
+  retention_years: 'data',
   scheduled_backup_frequency: 'data', scheduled_backup_time: 'data', scheduled_backup_weekday: 'data',
-  scheduled_backup_day: 'data', scheduled_backup_folder: 'data', scheduled_backup_keep: 'data',
+  scheduled_backup_day: 'data', scheduled_backup_month: 'data', scheduled_backup_folder: 'data',
+  scheduled_backup_keep: 'data',
   report_preparer_name: 'reports', report_preparer_position: 'reports',
   report_approver_name: 'reports', report_approver_position: 'reports',
   report_prepared_by_label: 'reports', report_approved_by_label: 'reports',
@@ -577,10 +585,6 @@ export default function SystemSettings() {
   )
   const isDedupDirty = form.scan_dedup_seconds !== saved.scan_dedup_seconds
   const dwellInvalid  = !dwellOrderValid(form)
-  // Only meaningful while a schedule is on — with backups off the box is hidden
-  // and whatever number it holds is never used.
-  const keepInvalid   = form.auto_backup_frequency !== 'off'
-    && (form.auto_backup_keep < 1 || form.auto_backup_keep > 90)
   const scheduleInvalid = scheduledInvalid(form)
 
   const handleChange = (e) => {
@@ -588,8 +592,8 @@ export default function SystemSettings() {
     // No field on this form accepts a negative. Clearing a box gives '' → 0,
     // which the per-field checks below catch rather than send.
     const num = (v) => Math.max(0, Number(v) || 0)
-    // The weekday is a <select>, so it arrives as text; the server stores a number.
-    const numeric = type === 'number' || name === 'scheduled_backup_weekday'
+    // The weekday and month are <select>s, so they arrive as text; the server stores numbers.
+    const numeric = type === 'number' || name === 'scheduled_backup_weekday' || name === 'scheduled_backup_month'
     setForm((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : numeric ? num(value) : value }))
   }
 
@@ -605,7 +609,7 @@ export default function SystemSettings() {
       const { data } = await updateSystemSettings(form)
       const normalized = normalizeSettings(data)
       // A saved schedule change makes the server run a pass at once, which
-      // may write the first scheduled backup within seconds. Look now for the
+      // may write the first automatic backup within seconds. Look now for the
       // new status, and again shortly for the file itself.
       if (SCHEDULE_FIELDS.some((k) => normalized[k] !== saved[k])) {
         fetchBackups({ quiet: true })
@@ -1362,65 +1366,16 @@ export default function SystemSettings() {
                     </div>
                   </div>
 
+                  {/* ── Automatic backups ── pinned to the calendar, to a folder of the admin's choosing */}
                   <div className="ss-row">
                     <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="auto_backup_frequency">Automatic backups</label>
-                      <span className="ss-row-hint">
-                        {FREQ_HINT[form.auto_backup_frequency]} Automatic backups are kept on the server
-                        and listed below, where you can download or restore any of them.
-                      </span>
-                    </div>
-                    <div className="ss-row-control">
-                      <select
-                        id="auto_backup_frequency"
-                        name="auto_backup_frequency"
-                        className="ss-select"
-                        value={form.auto_backup_frequency}
-                        onChange={handleChange}
-                      >
-                        {BACKUP_FREQUENCIES.map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {form.auto_backup_frequency !== 'off' && (
-                    <div className="ss-row">
-                      <div className="ss-row-text">
-                        <label className="ss-row-label" htmlFor="auto_backup_keep">Automatic backups to keep</label>
-                        <span className="ss-row-hint">
-                          Once there are more than this, the oldest is deleted so backups cannot fill
-                          the disk. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)} Applies
-                          to the automatic ones and to the server&rsquo;s copy of each download
-                          &mdash; pre-restore snapshots are never rotated away. Allowed range: 1 &ndash; 90.
-                        </span>
-                      </div>
-                      <div className="ss-row-control">
-                        <input
-                          id="auto_backup_keep"
-                          name="auto_backup_keep"
-                          type="number"
-                          min={1}
-                          max={90}
-                          value={form.auto_backup_keep}
-                          onChange={handleChange}
-                          className="ss-input"
-                        />
-                        <span className="ss-unit">backups</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── Scheduled backup ── calendar-pinned, to a folder of the admin's choosing */}
-                  <div className="ss-row">
-                    <div className="ss-row-text">
-                      <label className="ss-row-label" htmlFor="scheduled_backup_frequency">Scheduled backup</label>
+                      <label className="ss-row-label" htmlFor="scheduled_backup_frequency">Automatic backups</label>
                       <span className="ss-row-hint">
                         {form.scheduled_backup_frequency === 'off'
-                          ? 'A second schedule, separate from automatic backups: a backup at a set time — daily, weekly or monthly — saved to a folder you choose, such as another drive or a USB stick.'
+                          ? 'The server takes no backups on its own, only the ones you download here. Switch this on for a backup every week, month, quarter or year at a time you pick, saved to a folder you choose, such as another drive or a USB stick.'
                           : <>The server saves a backup <strong>{scheduleText(form)}</strong> (campus time). If the computer
-                             is off at that moment, it takes the missed one as soon as it is back on.</>}
+                             is off at that moment, it takes the missed one as soon as it is back on. Automatic backups are
+                             listed below, where you can download or restore any of them.</>}
                       </span>
                     </div>
                     <div className="ss-row-control">
@@ -1431,7 +1386,7 @@ export default function SystemSettings() {
                         value={form.scheduled_backup_frequency}
                         onChange={handleChange}
                       >
-                        {SCHEDULED_FREQUENCIES.map(([value, label]) => (
+                        {BACKUP_FREQUENCIES.map(([value, label]) => (
                           <option key={value} value={value}>{label}</option>
                         ))}
                       </select>
@@ -1444,11 +1399,13 @@ export default function SystemSettings() {
                         <div className="ss-row-text">
                           <span className="ss-row-label">When</span>
                           <span className="ss-row-hint">
-                            {form.scheduled_backup_frequency === 'monthly'
-                              ? 'Day of the month and time. Days 29–31 fall on the last day of a shorter month instead of skipping it.'
-                              : form.scheduled_backup_frequency === 'weekly'
-                                ? 'Day of the week and time.'
-                                : 'Time of day.'}
+                            {form.scheduled_backup_frequency === 'weekly'
+                              ? 'Day of the week and time.'
+                              : form.scheduled_backup_frequency === 'monthly'
+                                ? 'Day of the month and time. Days 29 to 31 fall on the last day of a shorter month instead of skipping it.'
+                                : form.scheduled_backup_frequency === 'quarterly'
+                                  ? 'Months, day and time.'
+                                  : 'Month, day and time.'}
                           </span>
                         </div>
                         <div className="ss-row-control">
@@ -1463,7 +1420,31 @@ export default function SystemSettings() {
                               {WEEKDAYS.map((label, i) => <option key={label} value={i}>{label}</option>)}
                             </select>
                           )}
-                          {form.scheduled_backup_frequency === 'monthly' && (
+                          {form.scheduled_backup_frequency === 'quarterly' && (
+                            <select
+                              name="scheduled_backup_month"
+                              aria-label="Months"
+                              className="ss-select"
+                              value={quarterCycle(form.scheduled_backup_month)}
+                              onChange={handleChange}
+                            >
+                              {QUARTER_CYCLES.map(([first, names]) => (
+                                <option key={first} value={first}>{names.map((n) => n.slice(0, 3)).join(', ')}</option>
+                              ))}
+                            </select>
+                          )}
+                          {form.scheduled_backup_frequency === 'yearly' && (
+                            <select
+                              name="scheduled_backup_month"
+                              aria-label="Month"
+                              className="ss-select"
+                              value={form.scheduled_backup_month}
+                              onChange={handleChange}
+                            >
+                              {MONTHS.map((label, i) => <option key={label} value={i + 1}>{label}</option>)}
+                            </select>
+                          )}
+                          {form.scheduled_backup_frequency !== 'weekly' && (
                             <>
                               <span className="ss-unit">Day</span>
                               <input
@@ -1524,10 +1505,12 @@ export default function SystemSettings() {
 
                       <div className="ss-row">
                         <div className="ss-row-text">
-                          <label className="ss-row-label" htmlFor="scheduled_backup_keep">Scheduled backups to keep</label>
+                          <label className="ss-row-label" htmlFor="scheduled_backup_keep">Backups to keep</label>
                           <span className="ss-row-hint">
-                            The oldest scheduled backup in that folder is deleted once there are more than this.
-                            Nothing else in the folder is ever touched. Allowed range: 1 &ndash; 90.
+                            Once there are more than this, the oldest automatic backup in that folder is deleted so
+                            backups cannot fill the disk. {backupSpanText(form.scheduled_backup_frequency, form.scheduled_backup_keep)} The
+                            same count applies to the server&rsquo;s copy of each download. Pre-restore snapshots, and
+                            anything else in the folder, are never touched. Allowed range: 1 to 90.
                           </span>
                         </div>
                         <div className="ss-row-control">
@@ -1555,7 +1538,7 @@ export default function SystemSettings() {
                             {scheduledStatus.folder_ok ? (
                               <>
                                 {scheduledStatus.overdue
-                                  ? <>Next backup: <strong>due now</strong> — it is taken on the server&rsquo;s next check.</>
+                                  ? <>Next backup: <strong>due now</strong>. It is taken on the server&rsquo;s next check.</>
                                   : <>Next backup: <strong>{formatStamp(scheduledStatus.next_due)}</strong>.</>}
                                 {' '}Last: {scheduledStatus.last
                                   ? <>{formatStamp(scheduledStatus.last.created_at)} ({formatBytes(scheduledStatus.last.size)})</>
@@ -1563,7 +1546,7 @@ export default function SystemSettings() {
                                 {' '}Folder: <code>{scheduledStatus.folder}</code>
                               </>
                             ) : (
-                              <>Scheduled backups cannot run: {scheduledStatus.folder_error}</>
+                              <>Automatic backups cannot run: {scheduledStatus.folder_error}</>
                             )}
                           </span>
                         </div>
@@ -1673,8 +1656,7 @@ export default function SystemSettings() {
                 // hoping the strip beside it is read.
                 const problems = []
                 if (dwellInvalid)  problems.push('The double-parking delay cannot be shorter than the parked delay.')
-                if (keepInvalid)   problems.push('Automatic backups to keep must be between 1 and 90.')
-                if (scheduleInvalid) problems.push('Scheduled backup needs a time, a day of the month from 1 to 31, and a keep count from 1 to 90.')
+                if (scheduleInvalid) problems.push('Automatic backups need a time, a day of the month from 1 to 31, and a keep count from 1 to 90.')
                 if (problems.length) {
                   // Open the tab holding the first bad field, so dismissing the
                   // message leaves the admin looking at the control to fix.
@@ -1740,40 +1722,22 @@ export default function SystemSettings() {
                   )}
                 </li>
               )}
-              {form.auto_backup_frequency !== saved.auto_backup_frequency && (
-                <li>
-                  {form.auto_backup_frequency === 'off'
-                    ? <>The server <strong>stops</strong> taking backups on its own. Existing backups are kept.</>
-                    : <>The server saves a backup by itself <strong>{form.auto_backup_frequency}</strong>, keeping
-                       the newest {form.auto_backup_keep}. {backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}</>}
-                </li>
-              )}
-              {form.auto_backup_frequency !== 'off'
-                && form.auto_backup_frequency === saved.auto_backup_frequency
-                && form.auto_backup_keep !== saved.auto_backup_keep && (
-                <li>
-                  <strong>{form.auto_backup_keep}</strong> automatic backup{form.auto_backup_keep !== 1 ? 's are' : ' is'} kept.
-                  {' '}{backupSpanText(form.auto_backup_frequency, form.auto_backup_keep)}
-                  {form.auto_backup_keep < saved.auto_backup_keep && (
-                    <> Older automatic backups beyond that are deleted as soon as you save.</>
-                  )}
-                </li>
-              )}
               {SCHEDULE_FIELDS.some((k) => form[k] !== saved[k]) && (
                 <li>
                   {form.scheduled_backup_frequency === 'off'
-                    ? <>Scheduled backups <strong>stop</strong>. Backups already in the folder are kept.</>
+                    ? <>The server <strong>stops</strong> taking backups on its own. Existing backups are kept.</>
                     : <>A backup is saved <strong>{scheduleText(form)}</strong> to{' '}
                        <strong>{form.scheduled_backup_folder.trim() || 'the app’s backups folder'}</strong>, keeping
-                       the newest {form.scheduled_backup_keep}. If that time has already passed, the first one is taken
-                       right away.</>}
+                       the newest {form.scheduled_backup_keep}. {backupSpanText(form.scheduled_backup_frequency, form.scheduled_backup_keep)} If
+                       that time has already passed, the first one is taken right away.</>}
                 </li>
               )}
               {form.scheduled_backup_frequency !== 'off'
                 && SCHEDULE_FIELDS.every((k) => form[k] === saved[k])
                 && form.scheduled_backup_keep !== saved.scheduled_backup_keep && (
                 <li>
-                  <strong>{form.scheduled_backup_keep}</strong> scheduled backup{form.scheduled_backup_keep !== 1 ? 's are' : ' is'} kept.
+                  <strong>{form.scheduled_backup_keep}</strong> automatic backup{form.scheduled_backup_keep !== 1 ? 's are' : ' is'} kept.
+                  {' '}{backupSpanText(form.scheduled_backup_frequency, form.scheduled_backup_keep)}
                   {form.scheduled_backup_keep < saved.scheduled_backup_keep && (
                     <> Older ones beyond that are deleted as soon as you save.</>
                   )}

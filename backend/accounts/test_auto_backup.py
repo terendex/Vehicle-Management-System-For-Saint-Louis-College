@@ -1,4 +1,4 @@
-"""Automatic backups: the schedule, the rotation, and the saved-file endpoints.
+"""Automatic backups: the calendar schedule, the rotation, and the saved-file endpoints.
 
 Every test redirects BASE_DIR at a temp directory, so none of this touches the
 real `backend/backups` folder — the one holding the pre-restore snapshots that
@@ -103,170 +103,53 @@ class BackupUtilsTests(BackupTempDirMixin, TestCase):
         self.assertIsNotNone(backup_utils.safe_path('auto-backup-20260101-000000.json'))
 
 
-class AutoBackupTaskTests(BackupTempDirMixin, TestCase):
-    def setUp(self):
-        super().setUp()
-        self.cfg = SystemSettings.get()
+class RetiredIntervalBackupTests(BackupTempDirMixin, TestCase):
+    """The old "every N since the last" schedule was folded into the calendar
+    one. Its job must not come back, and its old files are still usable."""
 
-    def run_task(self):
-        from vehicles.tasks import auto_backup
-        return auto_backup()
-
-    def test_off_writes_nothing(self):
-        self.cfg.auto_backup_frequency = 'off'
-        self.cfg.save()
-        result = self.run_task()
-        self.assertIn('skipped', result)
-        self.assertEqual(backup_utils.list_backups(), [])
-
-    def test_daily_writes_a_loadable_fixture(self):
-        self.cfg.auto_backup_frequency = 'daily'
-        self.cfg.save()
-        result = self.run_task()
-
-        self.assertIn('created', result)
-        items = backup_utils.list_backups()
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]['kind'], 'auto')
-        with open(os.path.join(backup_utils.backup_dir(), items[0]['name']), encoding='utf-8') as fh:
-            self.assertIsInstance(json.load(fh), list)
-
-    def test_a_second_run_the_same_day_is_skipped(self):
-        """The scheduler calls this daily; the frequency is applied here."""
-        self.cfg.auto_backup_frequency = 'daily'
-        self.cfg.save()
-        self.run_task()
-        result = self.run_task()
-        self.assertEqual(result.get('skipped'), 'not due')
-        self.assertEqual(len(backup_utils.list_backups()), 1)
-
-    def test_weekly_waits_a_week(self):
-        self.cfg.auto_backup_frequency = 'weekly'
-        self.cfg.save()
-        yesterday = tz.localtime() - tz.timedelta(days=1)
-        self.touch(f'auto-backup-{yesterday.strftime("%Y%m%d-%H%M%S")}.json')
-
-        self.assertEqual(self.run_task().get('skipped'), 'not due')
-
-        # Eight days back is past the window, so the next call writes one.
-        os.remove(os.path.join(backup_utils.backup_dir(),
-                               backup_utils.list_backups()[0]['name']))
-        old = tz.localtime() - tz.timedelta(days=8)
-        self.touch(f'auto-backup-{old.strftime("%Y%m%d-%H%M%S")}.json')
-        self.assertIn('created', self.run_task())
-
-    def test_old_backups_are_rotated_away(self):
-        self.cfg.auto_backup_frequency = 'daily'
-        self.cfg.auto_backup_keep = 2
-        self.cfg.save()
-        for day in range(1, 5):
-            self.touch(f'auto-backup-2026010{day}-000000.json')
-
-        self.run_task()
-
-        autos = [i for i in backup_utils.list_backups() if i['kind'] == 'auto']
-        self.assertEqual(len(autos), 2)
-
-    def test_hourly_writes_again_an_hour_later(self):
-        self.cfg.auto_backup_frequency = 'hourly'
-        self.cfg.save()
-        recent = tz.localtime() - tz.timedelta(minutes=20)
-        self.touch(f'auto-backup-{recent.strftime("%Y%m%d-%H%M%S")}.json')
-
-        self.assertEqual(self.run_task().get('skipped'), 'not due')
-
-        # `latest` is the newest file, so the recent one has to go before an
-        # older one can stand in for "the last backup was an hour ago".
-        os.remove(os.path.join(backup_utils.backup_dir(),
-                               backup_utils.list_backups()[0]['name']))
-        an_hour_ago = tz.localtime() - tz.timedelta(hours=1)
-        self.touch(f'auto-backup-{an_hour_ago.strftime("%Y%m%d-%H%M%S")}.json')
-        self.assertIn('created', self.run_task())
-
-    def test_hourly_tolerates_a_scheduler_wake_that_lands_early(self):
-        """The scheduler wakes about every hour, not exactly. A pass at 59
-        minutes must still count as the next hour, or an hourly schedule quietly
-        becomes a two-hourly one."""
-        self.cfg.auto_backup_frequency = 'hourly'
-        self.cfg.save()
-        almost = tz.localtime() - tz.timedelta(minutes=59)
-        self.touch(f'auto-backup-{almost.strftime("%Y%m%d-%H%M%S")}.json')
-
-        self.assertIn('created', self.run_task())
-
-    def test_hourly_claims_the_hour_not_the_day(self):
-        """The daily ledger would otherwise cap hourly at one backup a day."""
-        from vehicles.scheduler import _claim_key
-
-        self.cfg.auto_backup_frequency = 'hourly'
-        self.cfg.save()
-        host_key = f'auto_backup@{socket.gethostname()[:40]}'
-        key = _claim_key('auto_backup')
-        self.assertTrue(key.startswith(host_key + ':h'))
-        self.assertLessEqual(len(key), 64)
-
-        # Every other frequency keeps the plain daily key, so the ledger only
-        # grows when hourly is actually in use.
-        for freq in ('off', 'daily', 'weekly', 'monthly'):
-            with self.subTest(freq=freq):
-                self.cfg.auto_backup_frequency = freq
-                self.cfg.save()
-                self.assertEqual(_claim_key('auto_backup'), host_key)
-
-    def test_another_server_on_the_same_database_cannot_take_our_slot(self):
-        """The ledger is shared but the backup file is local: a cloud deployment
-        claiming the hour must not stop the campus PC writing its own backup."""
-        from vehicles.models import DailyJobRun
-        from vehicles.scheduler import run_due_jobs
-
-        self.cfg.auto_backup_frequency = 'hourly'
-        self.cfg.save()
-        hour = tz.localtime().strftime('%H')
-        DailyJobRun.objects.create(job=f'auto_backup@some-other-host:h{hour}',
-                                   run_date=tz.localdate())
-        DailyJobRun.objects.create(job=f'auto_backup:h{hour}',   # pre-fix key
-                                   run_date=tz.localdate())
-
-        with patch('vehicles.tasks.auto_archive_expired_accounts', return_value={}), \
-             patch('vehicles.tasks.purge_old_records', return_value={}):
-            run_due_jobs()
-
-        self.assertEqual(len(backup_utils.list_backups()), 1)
-
-    def test_a_backup_that_was_not_due_gives_its_slot_back(self):
-        """Otherwise a daily backup whose first pass after a restart lands an
-        hour early loses the whole day."""
-        from vehicles.models import DailyJobRun
-        from vehicles.scheduler import _claim_key, run_due_jobs
-
-        self.cfg.auto_backup_frequency = 'daily'
-        self.cfg.save()
-        recent = tz.localtime() - tz.timedelta(hours=20)
-        self.touch(f'auto-backup-{recent.strftime("%Y%m%d-%H%M%S")}.json')
-
-        with patch('vehicles.tasks.auto_archive_expired_accounts', return_value={}), \
-             patch('vehicles.tasks.purge_old_records', return_value={}):
-            outcomes = run_due_jobs()
-
-        self.assertIn('not due', outcomes['auto_backup'])
-        self.assertFalse(DailyJobRun.objects.filter(job=_claim_key('auto_backup')).exists())
-
-    def test_other_jobs_are_never_hour_keyed(self):
-        from vehicles.scheduler import _claim_key
-
-        self.cfg.auto_backup_frequency = 'hourly'
-        self.cfg.save()
-        self.assertEqual(_claim_key('purge_old_records'), 'purge_old_records')
-        self.assertEqual(_claim_key('auto_archive_expired_accounts'),
-                         'auto_archive_expired_accounts')
-
-    def test_the_scheduler_runs_it_before_anything_that_deletes(self):
-        """A snapshot taken after the purge would already be missing the rows
-        someone might need to get back."""
+    def test_the_interval_job_is_gone_from_the_scheduler(self):
+        from vehicles import tasks
         from vehicles.scheduler import DAILY_JOBS
 
-        self.assertIn('auto_backup', DAILY_JOBS)
-        self.assertLess(DAILY_JOBS.index('auto_backup'), DAILY_JOBS.index('purge_old_records'))
+        self.assertNotIn('auto_backup', DAILY_JOBS)
+        self.assertFalse(hasattr(tasks, 'auto_backup'))
+
+    def test_its_old_files_are_still_listed_and_rotated_with_manual_copies(self):
+        for day in range(1, 5):
+            self.touch(f'auto-backup-2026010{day}-000000.json')
+        self.assertEqual({i['kind'] for i in backup_utils.list_backups()}, {'auto'})
+        backup_utils.prune_backups(2)
+        self.assertEqual(len(backup_utils.list_backups()), 2)
+
+    def test_the_migration_moves_both_old_schedules_onto_the_new_one(self):
+        import importlib
+        from django.apps import apps
+        from django.db import connection
+        combine = importlib.import_module('vehicles.migrations.0101_combine_automatic_backups').combine_schedules
+
+        # 'daily' is no longer a valid choice, so its CHECK constraint has to
+        # go for the test to plant one (rolled back with the test).
+        SystemSettings.get()
+        table = SystemSettings._meta.db_table
+        with connection.cursor() as cur:
+            cur.execute('SET CONSTRAINTS ALL IMMEDIATE')
+            cur.execute(f'ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_scheduled_backup_frequency_valid')
+
+        for auto, scheduled, expected in (
+            ('hourly',  'daily',   'weekly'),     # what the live server had
+            ('hourly',  'off',     'weekly'),
+            ('daily',   'off',     'weekly'),
+            ('monthly', 'off',     'monthly'),
+            ('off',     'off',     'off'),
+            ('weekly',  'monthly', 'monthly'),    # the calendar schedule wins when both were on
+        ):
+            with self.subTest(auto=auto, scheduled=scheduled):
+                SystemSettings.objects.update(auto_backup_frequency=auto,
+                                              scheduled_backup_frequency=scheduled)
+                combine(apps, None)
+                cfg = SystemSettings.objects.get()
+                self.assertEqual(cfg.scheduled_backup_frequency, expected)
+                self.assertEqual(cfg.auto_backup_frequency, 'off')
 
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
@@ -288,7 +171,7 @@ class SavedBackupEndpointTests(BackupTempDirMixin, TestCase):
         kinds = {item['name']: item['kind'] for item in resp.json()['backups']}
         self.assertEqual(kinds['auto-backup-20260101-000000.json'], 'auto')
         self.assertEqual(kinds['pre-restore-20260102-000000.json'], 'safety')
-        self.assertEqual(resp.json()['auto_backup_frequency'], SystemSettings.get().auto_backup_frequency)
+        self.assertNotIn('auto_backup_frequency', resp.json())
 
     def test_listing_is_admin_only(self):
         guard = User.objects.create_user(
@@ -588,28 +471,25 @@ def _local(*args):
 
 
 class ScheduledSlotTests(TestCase):
-    """The calendar arithmetic behind "daily at / weekly on / monthly on"."""
+    """The calendar arithmetic behind weekly / monthly / quarterly / yearly."""
 
-    def cfg(self, freq, hour=17, minute=0, weekday=4, day=1):
+    def cfg(self, freq, hour=17, minute=0, weekday=4, day=1, month=1):
         cfg = SystemSettings.get()
         cfg.scheduled_backup_frequency = freq
         cfg.scheduled_backup_time = datetime.time(hour, minute)
         cfg.scheduled_backup_weekday = weekday
         cfg.scheduled_backup_day = day
+        cfg.scheduled_backup_month = month
         return cfg
 
     def test_off_has_no_slots(self):
         self.assertEqual(backup_utils.scheduled_slots(self.cfg('off')), (None, None))
 
-    def test_daily_before_the_time_points_at_yesterday(self):
-        prev, nxt = backup_utils.scheduled_slots(self.cfg('daily'), _local(2026, 10, 1, 9, 0))
-        self.assertEqual(prev, _local(2026, 9, 30, 17, 0))
-        self.assertEqual(nxt, _local(2026, 10, 1, 17, 0))
-
-    def test_daily_after_the_time_points_at_today(self):
-        prev, nxt = backup_utils.scheduled_slots(self.cfg('daily'), _local(2026, 10, 1, 17, 0, 30))
-        self.assertEqual(prev, _local(2026, 10, 1, 17, 0))
-        self.assertEqual(nxt, _local(2026, 10, 2, 17, 0))
+    def test_retired_daily_and_hourly_have_no_slots(self):
+        """A row the migration has not reached yet must not crash the pass."""
+        for freq in ('daily', 'hourly'):
+            with self.subTest(freq=freq):
+                self.assertEqual(backup_utils.scheduled_slots(self.cfg(freq)), (None, None))
 
     def test_weekly_lands_on_the_chosen_weekday(self):
         # 2026-10-01 is a Thursday; weekday 4 is Friday.
@@ -630,6 +510,43 @@ class ScheduledSlotTests(TestCase):
         self.assertEqual(prev, _local(2026, 12, 5, 17, 0))
         self.assertEqual(nxt, _local(2027, 1, 5, 17, 0))
 
+    def test_quarterly_runs_every_third_month_from_the_chosen_one(self):
+        # Month 1: January, April, July, October.
+        prev, nxt = backup_utils.scheduled_slots(self.cfg('quarterly', month=1), _local(2026, 10, 8, 12, 0))
+        self.assertEqual(prev, _local(2026, 10, 1, 17, 0))
+        self.assertEqual(nxt, _local(2027, 1, 1, 17, 0))
+        # Month 4 is the same cycle as month 1.
+        self.assertEqual(
+            backup_utils.scheduled_slots(self.cfg('quarterly', month=4), _local(2026, 10, 8, 12, 0)),
+            (prev, nxt))
+
+    def test_quarterly_before_the_day_points_at_the_previous_quarter(self):
+        # Month 2: February, May, August, November. On August 1 the 15th has
+        # not come yet, so the latest slot is May 15.
+        prev, nxt = backup_utils.scheduled_slots(self.cfg('quarterly', month=2, day=15), _local(2026, 8, 1, 9, 0))
+        self.assertEqual(prev, _local(2026, 5, 15, 17, 0))
+        self.assertEqual(nxt, _local(2026, 8, 15, 17, 0))
+
+    def test_quarterly_day_31_falls_on_the_last_day_of_a_short_month(self):
+        # Month 3: March, June, September, December.
+        prev, nxt = backup_utils.scheduled_slots(self.cfg('quarterly', month=3, day=31), _local(2026, 7, 4, 9, 0))
+        self.assertEqual(prev, _local(2026, 6, 30, 17, 0))
+        self.assertEqual(nxt, _local(2026, 9, 30, 17, 0))
+
+    def test_yearly_lands_on_the_chosen_month_and_day(self):
+        # July 31 is the last day of the school year.
+        prev, nxt = backup_utils.scheduled_slots(self.cfg('yearly', month=7, day=31), _local(2026, 10, 8, 12, 0))
+        self.assertEqual(prev, _local(2026, 7, 31, 17, 0))
+        self.assertEqual(nxt, _local(2027, 7, 31, 17, 0))
+        # On the day itself, after the time: this year's slot.
+        prev, _ = backup_utils.scheduled_slots(self.cfg('yearly', month=7, day=31), _local(2027, 7, 31, 17, 0, 1))
+        self.assertEqual(prev, _local(2027, 7, 31, 17, 0))
+
+    def test_yearly_february_29_falls_on_the_28th_in_a_common_year(self):
+        prev, nxt = backup_utils.scheduled_slots(self.cfg('yearly', month=2, day=29), _local(2027, 6, 1, 12, 0))
+        self.assertEqual(prev, _local(2027, 2, 28, 17, 0))
+        self.assertEqual(nxt, _local(2028, 2, 29, 17, 0))
+
 
 class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
     def setUp(self):
@@ -637,8 +554,9 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         self.folder = tempfile.mkdtemp(prefix='slc-scheduled-test-')
         self.addCleanup(shutil.rmtree, self.folder, True)
         self.cfg = SystemSettings.get()
-        self.cfg.scheduled_backup_frequency = 'daily'
-        self.cfg.scheduled_backup_time = datetime.time(0, 0)    # always already passed today
+        self.cfg.scheduled_backup_frequency = 'weekly'
+        self.cfg.scheduled_backup_weekday = tz.localdate().weekday()   # today's slot...
+        self.cfg.scheduled_backup_time = datetime.time(0, 0)            # ...always already passed
         self.cfg.scheduled_backup_folder = self.folder
         self.cfg.scheduled_backup_keep = 3
         self.cfg.save()
@@ -674,9 +592,9 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         self.assertEqual(len(os.listdir(self.folder)), 1)
 
     def test_a_missed_slot_is_caught_up(self):
-        """Last backup from two days ago means yesterday's and today's slots
-        were missed (PC switched off): one backup is taken now, not two."""
-        self.put_file(tz.localtime() - tz.timedelta(days=2))
+        """Last backup from fifteen days ago means two weekly slots were missed
+        (PC switched off): one backup is taken now, not two."""
+        self.put_file(tz.localtime() - tz.timedelta(days=15))
         self.assertIn('created', self.run_task())
         self.assertEqual(self.run_task().get('skipped'), 'not due')
 
@@ -753,16 +671,17 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         self.assertFalse(DailyJobRun.objects.filter(job=_claim_key('scheduled_backup')).exists())
 
     def test_a_morning_catch_up_does_not_cost_the_same_days_slot(self):
-        """Found running the real server: switching on "daily at noon" at 9 AM
-        takes yesterday's missed backup straight away — and a day-keyed claim
-        then skipped today's noon. Each slot must claim on its own."""
+        """Found running the real server: switching a schedule on at 9 AM takes
+        the last missed backup straight away — and a day-keyed claim then
+        skipped that same day's noon slot. Each slot must claim on its own."""
         from vehicles.scheduler import run_due_jobs
 
         self.cfg.scheduled_backup_time = datetime.time(12, 0)
+        self.cfg.scheduled_backup_weekday = 2               # 2026-06-10 is a Wednesday
         self.cfg.save()
         with patch('vehicles.scheduler.DAILY_JOBS', ('scheduled_backup',)):
             with patch('django.utils.timezone.now', return_value=_local(2026, 6, 10, 9, 0)):
-                self.assertIn('created', run_due_jobs()['scheduled_backup'])     # yesterday's noon
+                self.assertIn('created', run_due_jobs()['scheduled_backup'])     # last Wednesday's noon
             with patch('django.utils.timezone.now', return_value=_local(2026, 6, 10, 12, 0, 5)):
                 self.assertIn('created', run_due_jobs()['scheduled_backup'])     # today's noon
             with patch('django.utils.timezone.now', return_value=_local(2026, 6, 10, 13, 0)):
@@ -773,14 +692,12 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         from vehicles import scheduler
 
         soon = tz.localtime() + tz.timedelta(minutes=10)
+        self.cfg.scheduled_backup_weekday = soon.weekday()
         self.cfg.scheduled_backup_time = soon.time().replace(second=0, microsecond=0)
         self.cfg.save()
         wait = scheduler._seconds_until_next_pass()
-        # Anywhere in the next ~10 minutes (minute rounding), never the full hour —
-        # unless the slot wrapped past midnight, which pushes it a day out.
-        if soon.date() == tz.localdate():
-            self.assertLess(wait, 11 * 60)
-        self.assertLessEqual(wait, scheduler.CHECK_INTERVAL_SECONDS)
+        # Anywhere in the next ~10 minutes (minute rounding), never the full hour.
+        self.assertLess(wait, 11 * 60)
 
 
 class ScheduledBackupSettingsTests(BackupTempDirMixin, TestCase):
@@ -796,6 +713,16 @@ class ScheduledBackupSettingsTests(BackupTempDirMixin, TestCase):
 
     def put(self, **data):
         return self.client.put('/api/vehicles/system-settings/', data, format='json')
+
+    def test_quarterly_and_yearly_round_trip_with_their_month(self):
+        for freq, month in (('quarterly', 2), ('yearly', 7)):
+            with self.subTest(freq=freq):
+                resp = self.put(scheduled_backup_frequency=freq, scheduled_backup_month=month,
+                                scheduled_backup_day=31, scheduled_backup_time='17:00')
+                self.assertEqual(resp.status_code, 200, resp.content)
+                self.assertEqual(resp.json()['scheduled_backup_frequency'], freq)
+                self.assertEqual(resp.json()['scheduled_backup_month'], month)
+                self.assertNotIn('auto_backup_frequency', resp.json())
 
     def test_a_writable_folder_is_saved_and_round_trips(self):
         resp = self.put(scheduled_backup_frequency='weekly', scheduled_backup_time='07:45',
@@ -813,31 +740,33 @@ class ScheduledBackupSettingsTests(BackupTempDirMixin, TestCase):
         blocker = os.path.join(self.folder, 'a-file')
         with open(blocker, 'w') as fh:
             fh.write('x')
-        resp = self.put(scheduled_backup_frequency='daily',
+        resp = self.put(scheduled_backup_frequency='weekly',
                         scheduled_backup_folder=os.path.join(blocker, 'sub'))
         self.assertEqual(resp.status_code, 400)
         self.assertIn('scheduled_backup_folder', resp.json())
         self.assertEqual(SystemSettings.get().scheduled_backup_frequency, 'off')
 
     def test_a_relative_folder_is_refused(self):
-        resp = self.put(scheduled_backup_frequency='daily', scheduled_backup_folder='backups-here')
+        resp = self.put(scheduled_backup_frequency='weekly', scheduled_backup_folder='backups-here')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('full folder path', resp.json()['scheduled_backup_folder'])
 
     def test_bad_parts_are_refused(self):
         for field, value in (('scheduled_backup_frequency', 'hourly'),
+                             ('scheduled_backup_frequency', 'daily'),      # retired with the interval schedule
                              ('scheduled_backup_time', '25:00'),
+                             ('scheduled_backup_month', 13),
                              ('scheduled_backup_weekday', 7),
                              ('scheduled_backup_day', 0),
                              ('scheduled_backup_keep', 91)):
-            with self.subTest(field=field):
+            with self.subTest(field=field, value=value):
                 resp = self.put(**{field: value})
                 self.assertEqual(resp.status_code, 400)
                 self.assertIn(field, resp.json())
 
     def test_listing_reports_the_schedule_status(self):
-        self.put(scheduled_backup_frequency='daily', scheduled_backup_time='00:00',
-                 scheduled_backup_folder=self.folder)
+        self.put(scheduled_backup_frequency='weekly', scheduled_backup_weekday=tz.localdate().weekday(),
+                 scheduled_backup_time='00:00', scheduled_backup_folder=self.folder)
         status = self.client.get('/api/accounts/system/backups/').json()['scheduled']
         self.assertTrue(status['folder_ok'])
         self.assertTrue(status['overdue'])           # today's 00:00 has no file yet
@@ -850,7 +779,7 @@ class ScheduledBackupSettingsTests(BackupTempDirMixin, TestCase):
         self.assertTrue(status['last']['name'].startswith(backup_utils.SCHEDULED_PREFIX))
 
     def test_listing_flags_a_folder_that_has_gone_missing(self):
-        self.put(scheduled_backup_frequency='daily', scheduled_backup_folder=self.folder)
+        self.put(scheduled_backup_frequency='weekly', scheduled_backup_folder=self.folder)
         shutil.rmtree(self.folder)
         status = self.client.get('/api/accounts/system/backups/').json()['scheduled']
         self.assertFalse(status['folder_ok'])

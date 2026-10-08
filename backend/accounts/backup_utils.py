@@ -1,8 +1,8 @@
 """Shared plumbing for system backups.
 
 Everything that produces or manages a backup file goes through here: the manual
-download in `accounts.views`, the pre-restore safety snapshot, and the scheduled
-`vehicles.tasks.auto_backup` job. Keeping the app list, the exclusions and the
+download in `accounts.views`, the pre-restore safety snapshot, and the automatic
+`vehicles.tasks.scheduled_backup` job. Keeping the app list, the exclusions and the
 on-disk layout in one module means an automatic backup and a hand-clicked one
 are byte-for-byte the same kind of file, and either can be fed back into the
 restore endpoint.
@@ -54,6 +54,11 @@ BACKUP_EXCLUDE = [
 # listing labels a file with and what the pruner matches on, so an automatic
 # backup can be rotated away while a pre-restore snapshot — the only copy of
 # what the system looked like before someone overwrote it — is never touched.
+#
+# Automatic backups are written under SCHEDULED_PREFIX (they began as the
+# second, "scheduled" kind). AUTO_PREFIX is the retired interval schedule's:
+# nothing writes it any more, but its files are still listed, restorable and
+# rotated with the manual copies until they age out.
 AUTO_PREFIX      = 'auto-backup-'
 MANUAL_PREFIX    = 'manual-backup-'
 SAFETY_PREFIX    = 'pre-restore-'
@@ -352,6 +357,15 @@ def _month_slot(year: int, month: int, day: int, clock):
     return _at(datetime(year, month, min(day, last)).date(), clock)
 
 
+def _add_months(year: int, month: int, n: int) -> tuple[int, int]:
+    index = year * 12 + (month - 1) + n
+    return index // 12, index % 12 + 1
+
+
+# Months between slots for the schedules that land on a day of the month.
+_MONTH_STEP = {'monthly': 1, 'quarterly': 3, 'yearly': 12}
+
+
 def scheduled_slots(cfg, now=None):
     """(previous, next) moments the schedule calls for, around `now`.
 
@@ -359,21 +373,19 @@ def scheduled_slots(cfg, now=None):
     it. None for both when the schedule is off. Plain calendar arithmetic on
     campus-local dates, so "Friday 5 PM" means 5 PM in Manila whatever the
     server's own clock zone is.
+
+    Monthly, quarterly and yearly all land on a day of the month, every 1, 3
+    or 12 months. Quarterly and yearly count from the chosen month, so a
+    quarterly schedule on month 4 runs in January, April, July and October.
     """
     from datetime import timedelta
 
     freq = cfg.scheduled_backup_frequency
-    if freq not in ('daily', 'weekly', 'monthly'):
+    if freq != 'weekly' and freq not in _MONTH_STEP:
         return None, None
     now = tz.localtime(now or tz.now())
     clock = cfg.scheduled_backup_time
     today = now.date()
-
-    if freq == 'daily':
-        prev = _at(today, clock)
-        if prev > now:
-            prev = _at(today - timedelta(days=1), clock)
-        return prev, _at(prev.date() + timedelta(days=1), clock)
 
     if freq == 'weekly':
         back = (today.weekday() - cfg.scheduled_backup_weekday) % 7
@@ -382,12 +394,19 @@ def scheduled_slots(cfg, now=None):
             prev = _at(prev.date() - timedelta(days=7), clock)
         return prev, _at(prev.date() + timedelta(days=7), clock)
 
+    step = _MONTH_STEP[freq]
+    anchor = cfg.scheduled_backup_month if step > 1 else 1
     day = cfg.scheduled_backup_day
-    prev = _month_slot(today.year, today.month, day, clock)
-    if prev > now:
-        y, m = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
-        prev = _month_slot(y, m, day, clock)
-    y, m = (prev.year, prev.month + 1) if prev.month < 12 else (prev.year + 1, 1)
+    # Walk back month by month to the latest month on the cycle whose slot has
+    # passed. At most a year plus one cycle of steps, however the dates fall.
+    y, m = today.year, today.month
+    while True:
+        if (m - anchor) % step == 0:
+            prev = _month_slot(y, m, day, clock)
+            if prev <= now:
+                break
+        y, m = _add_months(y, m, -1)
+    y, m = _add_months(prev.year, prev.month, step)
     return prev, _month_slot(y, m, day, clock)
 
 
@@ -466,8 +485,9 @@ def list_backups() -> list[dict]:
 # snapshots are deliberately not in this list: they are the only record of what
 # the system looked like before somebody overwrote it, and rotating them away on
 # a schedule would delete the one file a person goes looking for after a bad
-# restore. Automatic and manual copies are both routine and reproducible, so
-# they rotate — otherwise a daily schedule fills the disk over a semester.
+# restore. Manual copies (and the retired interval schedule's files) are
+# routine and reproducible, so they rotate. Automatic backups rotate too, in
+# their own folder, through prune_scheduled.
 ROTATING_KINDS = ('auto', 'manual')
 
 
@@ -488,12 +508,6 @@ def prune_backups(keep: int) -> list[str]:
                 pass
     return removed
 
-
-def latest_auto_backup() -> dict | None:
-    for item in list_backups():
-        if item['kind'] == 'auto':
-            return item
-    return None
 
 
 # ── Restoring ────────────────────────────────────────────────────────────────

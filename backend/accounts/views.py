@@ -944,7 +944,7 @@ class AuditLogPdfExportView(APIView):
 
 # ── System Backup & Restore ─────────────────────────────
 # The app list, the exclusions and the on-disk layout live in backup_utils so
-# the scheduled job (vehicles.tasks.auto_backup) and the buttons on this page
+# the scheduled job (vehicles.tasks.scheduled_backup) and the buttons on this page
 # produce exactly the same kind of file. Re-exported here because tests and
 # other modules have imported these names from this module since before that
 # helper existed.
@@ -998,7 +998,7 @@ class SystemBackupView(APIView):
         # dumps taken a moment apart.
         try:
             write_backup(MANUAL_PREFIX, payload)
-            prune_backups(SystemSettings.get().auto_backup_keep)
+            prune_backups(SystemSettings.get().scheduled_backup_keep)
         except OSError:
             # Caught narrowly (OSError = the disk), and deliberately swallowed:
             # the copy is a convenience, and failing the request would cost the
@@ -1019,8 +1019,8 @@ class SystemBackupView(APIView):
 class SystemBackupListView(APIView):
     """The backup files sitting on the server — admin (CDSO) only.
 
-    Covers the automatic backups, the copy kept on each manual download, and the
-    pre-restore safety snapshots. This reads filenames and sizes, not the data
+    Covers the automatic backups (in the app's folder or the chosen one), the
+    copy kept on each manual download, and the pre-restore safety snapshots. This reads filenames and sizes, not the data
     inside them, so it needs admin but no step-up; downloading one of them does.
     """
     permission_classes = [IsAdminRole]
@@ -1031,14 +1031,12 @@ class SystemBackupListView(APIView):
         cfg = SystemSettings.get()
         return Response({
             'backups': list_backups(),
-            'auto_backup_frequency': cfg.auto_backup_frequency,
-            'auto_backup_keep': cfg.auto_backup_keep,
             'scheduled': self._scheduled_status(cfg),
         })
 
     @staticmethod
     def _scheduled_status(cfg):
-        """Where the scheduled backup stands, checked live on this server.
+        """Where the automatic backup stands, checked live on this server.
 
         The folder is tested here rather than trusted from Save: a USB stick
         pulled out on Wednesday should show as a problem on the page before

@@ -4243,12 +4243,13 @@ class SystemSettingsView(APIView):
             "pass_valid_until": _pass_expiry_today().isoformat(),
             "parked_after_seconds":      obj.parked_after_seconds,
             "double_park_after_seconds": obj.double_park_after_seconds,
-            "auto_backup_frequency": obj.auto_backup_frequency,
-            "auto_backup_keep":      obj.auto_backup_keep,
+            # Automatic backups. The retired auto_backup_* columns are left out
+            # on purpose: nothing reads them any more (see the model).
             "scheduled_backup_frequency": obj.scheduled_backup_frequency,
             "scheduled_backup_time":      obj.scheduled_backup_time.strftime("%H:%M"),   # what an <input type="time"> holds
             "scheduled_backup_weekday":   obj.scheduled_backup_weekday,
             "scheduled_backup_day":       obj.scheduled_backup_day,
+            "scheduled_backup_month":     obj.scheduled_backup_month,
             "scheduled_backup_folder":    obj.scheduled_backup_folder,
             "scheduled_backup_keep":      obj.scheduled_backup_keep,
             # Report signatories. The preparer pair is normally blank, and
@@ -4295,12 +4296,11 @@ class SystemSettingsView(APIView):
         account_expiry_days       = request.data.get("account_expiry_days",    obj.account_expiry_days)
         parked_after_seconds      = request.data.get("parked_after_seconds",      obj.parked_after_seconds)
         double_park_after_seconds = request.data.get("double_park_after_seconds", obj.double_park_after_seconds)
-        auto_backup_frequency     = request.data.get("auto_backup_frequency", obj.auto_backup_frequency)
-        auto_backup_keep          = request.data.get("auto_backup_keep",      obj.auto_backup_keep)
         scheduled_backup_frequency = request.data.get("scheduled_backup_frequency", obj.scheduled_backup_frequency)
         scheduled_backup_time      = request.data.get("scheduled_backup_time",      obj.scheduled_backup_time)
         scheduled_backup_weekday   = request.data.get("scheduled_backup_weekday",   obj.scheduled_backup_weekday)
         scheduled_backup_day       = request.data.get("scheduled_backup_day",       obj.scheduled_backup_day)
+        scheduled_backup_month     = request.data.get("scheduled_backup_month",     obj.scheduled_backup_month)
         scheduled_backup_folder    = request.data.get("scheduled_backup_folder",    obj.scheduled_backup_folder)
         scheduled_backup_keep      = request.data.get("scheduled_backup_keep",      obj.scheduled_backup_keep)
         report_preparer_name     = request.data.get("report_preparer_name",     obj.report_preparer_name)
@@ -4431,29 +4431,14 @@ class SystemSettingsView(APIView):
                 f"({parked_after_seconds}s)."
             )
 
-        # "off" is a real frequency, not a missing value — it is how automatic
-        # backups are switched off, so it is accepted like any other choice.
-        valid_freqs = {'off', 'hourly', 'daily', 'weekly', 'monthly'}
-        auto_backup_frequency = str(auto_backup_frequency or 'off').lower()   # `or 'off'` covers None and ''; .lower() so "Daily" is accepted
-        if auto_backup_frequency not in valid_freqs:
-            errors["auto_backup_frequency"] = "Must be one of: off, hourly, daily, weekly, monthly."
-        try:
-            auto_backup_keep = int(auto_backup_keep)
-            # How many backups are retained. Still range-checked when the
-            # frequency is 'off': the number stays on the row and applies again
-            # the moment somebody switches backups back on.
-            if not (1 <= auto_backup_keep <= 90):
-                errors["auto_backup_keep"] = "Must be between 1 and 90 backups."
-        except (TypeError, ValueError):
-            errors["auto_backup_keep"] = "Must be an integer."
-
-        # The calendar-pinned schedule. Every part is range-checked even while
-        # it is off or not the part in use (the weekday on a monthly schedule),
-        # for the same reason as the keep count above: it stays on the row and
-        # applies the moment somebody switches to it.
-        scheduled_backup_frequency = str(scheduled_backup_frequency or 'off').lower()
-        if scheduled_backup_frequency not in {'off', 'daily', 'weekly', 'monthly'}:
-            errors["scheduled_backup_frequency"] = "Must be one of: off, daily, weekly, monthly."
+        # Automatic backups, pinned to the calendar. "off" is a real frequency,
+        # not a missing value: it is how they are switched off. Every part is
+        # range-checked even while it is off or not the part in use (the
+        # weekday on a monthly schedule): it stays on the row and applies the
+        # moment somebody switches to it.
+        scheduled_backup_frequency = str(scheduled_backup_frequency or 'off').lower()   # `or 'off'` covers None and ''; .lower() so "Weekly" is accepted
+        if scheduled_backup_frequency not in {'off', 'weekly', 'monthly', 'quarterly', 'yearly'}:
+            errors["scheduled_backup_frequency"] = "Must be one of: off, weekly, monthly, quarterly, yearly."
         if not isinstance(scheduled_backup_time, time_type):
             try:
                 scheduled_backup_time = time_type.fromisoformat(str(scheduled_backup_time).strip())
@@ -4465,6 +4450,7 @@ class SystemSettingsView(APIView):
         for _field, _value, _low, _high, _msg in (
             ("scheduled_backup_weekday", scheduled_backup_weekday, 0, 6,  "Must be a weekday, 0 (Monday) to 6 (Sunday)."),
             ("scheduled_backup_day",     scheduled_backup_day,     1, 31, "Must be a day of the month, 1 to 31."),
+            ("scheduled_backup_month",   scheduled_backup_month,   1, 12, "Must be a month, 1 (January) to 12 (December)."),
             ("scheduled_backup_keep",    scheduled_backup_keep,    1, 90, "Must be between 1 and 90 backups."),
         ):
             try:
@@ -4472,9 +4458,11 @@ class SystemSettingsView(APIView):
                     errors[_field] = _msg
             except (TypeError, ValueError):
                 errors[_field] = "Must be an integer."
-        if not any(k in errors for k in ("scheduled_backup_weekday", "scheduled_backup_day", "scheduled_backup_keep")):
+        if not any(k in errors for k in ("scheduled_backup_weekday", "scheduled_backup_day",
+                                         "scheduled_backup_month", "scheduled_backup_keep")):
             scheduled_backup_weekday = int(scheduled_backup_weekday)
             scheduled_backup_day     = int(scheduled_backup_day)
+            scheduled_backup_month   = int(scheduled_backup_month)
             scheduled_backup_keep    = int(scheduled_backup_keep)
         scheduled_backup_folder = ('' if scheduled_backup_folder is None else str(scheduled_backup_folder)).strip()
         if len(scheduled_backup_folder) > 500:
@@ -4541,13 +4529,11 @@ class SystemSettingsView(APIView):
         obj.parked_after_seconds      = parked_after_seconds
         obj.double_park_after_seconds = double_park_after_seconds
 
-        obj.auto_backup_frequency = auto_backup_frequency
-        obj.auto_backup_keep      = auto_backup_keep
-
         obj.scheduled_backup_frequency = scheduled_backup_frequency
         obj.scheduled_backup_time      = scheduled_backup_time
         obj.scheduled_backup_weekday   = scheduled_backup_weekday
         obj.scheduled_backup_day       = scheduled_backup_day
+        obj.scheduled_backup_month     = scheduled_backup_month
         obj.scheduled_backup_folder    = scheduled_backup_folder
         obj.scheduled_backup_keep      = scheduled_backup_keep
 
@@ -4565,18 +4551,17 @@ class SystemSettingsView(APIView):
         # to a TTL later. No restart, and no reaching into the threads.
         parking_camera.invalidate_dwell_settings()
 
-        # Apply a lowered keep-count now rather than at the next scheduled run.
+        # Apply a lowered keep count now rather than at the next scheduled run.
         # An admin who reduces it is usually looking at a disk that is filling
-        # up, and "it will tidy itself tomorrow" is not the answer they came for.
-        if before["auto_backup_keep"] != auto_backup_keep:   # only when the number actually moved; pruning on every save would be wasted work
-            from accounts.backup_utils import prune_backups
-            prune_backups(auto_backup_keep)      # deletes everything past the newest `keep` of each rotating kind, straight away
-
-        # Same for the scheduled folder's own keep count. Best effort: the
-        # folder may be a drive this server cannot see right now, and the
-        # settings are already saved.
-        if before["scheduled_backup_keep"] != scheduled_backup_keep:
-            from accounts.backup_utils import BackupFolderError, prune_scheduled, scheduled_dir
+        # up, and "it will tidy itself next week" is not the answer they came
+        # for. The same count rotates the copies kept of manual downloads.
+        # The folder part is best effort: it may be a drive this server cannot
+        # see right now, and the settings are already saved.
+        if before["scheduled_backup_keep"] != scheduled_backup_keep:   # only when the number actually moved; pruning on every save would be wasted work
+            from accounts.backup_utils import (
+                BackupFolderError, prune_backups, prune_scheduled, scheduled_dir,
+            )
+            prune_backups(scheduled_backup_keep)
             try:
                 prune_scheduled(scheduled_backup_keep, scheduled_dir(create=False))
             except BackupFolderError:
@@ -4588,7 +4573,7 @@ class SystemSettingsView(APIView):
         # first backup straight away.
         if any(before[k] != self._serialize(obj)[k] for k in (
                 "scheduled_backup_frequency", "scheduled_backup_time", "scheduled_backup_weekday",
-                "scheduled_backup_day", "scheduled_backup_folder")):
+                "scheduled_backup_day", "scheduled_backup_month", "scheduled_backup_folder")):
             from . import scheduler
             scheduler.wake()
 
