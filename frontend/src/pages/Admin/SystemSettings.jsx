@@ -133,12 +133,16 @@ function scheduleText(f) {
     : freq === 'quarterly' ? [0, 3, 6, 9].map((k) => quarterCycle(f.scheduled_backup_month) - 1 + k)
       : freq === 'yearly' ? [(Number(f.scheduled_backup_month) || 1) - 1] : []
   if (!months.length) return ''
-  const tail = months.some((m) => day > MONTH_MIN_DAYS[m])
-    ? (freq === 'yearly' ? ' (or the last day of the month when it is shorter)' : ' (or the last day of a shorter month)')
-    : ''
+  // A yearly day past the month's shortest length (April 31, February 29) runs
+  // on that month's last day, which is also what February 29 means in a leap year.
+  if (freq === 'yearly') {
+    return day > MONTH_MIN_DAYS[months[0]]
+      ? `every year on the last day of ${MONTHS[months[0]]} ${at}`
+      : `every ${MONTHS[months[0]]} ${day} ${at}`
+  }
+  const tail = months.some((m) => day > MONTH_MIN_DAYS[m]) ? ' (or the last day of a shorter month)' : ''
   if (freq === 'monthly') return `on the ${ordinal(day)} of every month ${at}${tail}`
-  if (freq === 'quarterly') return `on the ${ordinal(day)} of ${joinMonths(months.map((m) => MONTHS[m]))} ${at}${tail}`
-  return `every ${MONTHS[months[0]]} ${day} ${at}${tail}`
+  return `on the ${ordinal(day)} of ${joinMonths(months.map((m) => MONTHS[m]))} ${at}${tail}`
 }
 
 const scheduledInvalid = (f) => f.scheduled_backup_frequency !== 'off' && (

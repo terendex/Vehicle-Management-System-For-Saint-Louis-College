@@ -296,6 +296,13 @@ def scheduled_backup():
         raise RuntimeError(str(exc)) from exc
 
     previous, upcoming = scheduled_slots(cfg)
+    if previous is None:
+        # A frequency the calendar does not know (a retired "daily" written
+        # straight into the table). Without a slot nothing is ever "done", so
+        # carrying on would write a backup on every pass.
+        log.warning("[scheduled_backup] unknown frequency %r; skipping",
+                    cfg.scheduled_backup_frequency)
+        return {"skipped": f"unknown frequency {cfg.scheduled_backup_frequency}"}
     latest = latest_scheduled_backup(folder)
     if latest and parse_datetime(latest['created_at']) >= previous:
         return {"skipped": "not due", "next_due": upcoming.isoformat()}

@@ -271,6 +271,25 @@ class RestoreLoaderTests(BackupTempDirMixin, TestCase):
                 'fields': {'gate_id': gate_id, 'label': label, 'is_active': True,
                            'created_at': stamp.isoformat()}}
 
+    def test_a_backup_from_before_the_combined_schedule_still_restores(self):
+        """Every backup taken before migration 0101 carries the retired
+        schedule values ("daily", "hourly"), which the choice CHECK on the
+        column now refuses. Restoring one must map them the way the migration
+        did instead of failing the whole restore."""
+        from django.core import serializers
+
+        for auto, scheduled, expected in (('hourly', 'daily', 'weekly'),
+                                          ('monthly', 'off', 'monthly')):
+            with self.subTest(auto=auto, scheduled=scheduled):
+                row = json.loads(serializers.serialize('json', [SystemSettings.get()]))[0]
+                row['fields'].update(auto_backup_frequency=auto, scheduled_backup_frequency=scheduled)
+                row['fields'].pop('scheduled_backup_month')          # not in an old file
+                resp = self.restore([row])
+                self.assertEqual(resp.status_code, 200, resp.content)
+                cfg = SystemSettings.objects.get()
+                self.assertEqual(cfg.scheduled_backup_frequency, expected)
+                self.assertEqual(cfg.auto_backup_frequency, 'off')
+
     def test_a_row_holding_a_needed_unique_value_is_archived_not_deleted(self):
         """The case a restore onto a fresh install hits every single time.
 
@@ -597,6 +616,18 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         self.put_file(tz.localtime() - tz.timedelta(days=15))
         self.assertIn('created', self.run_task())
         self.assertEqual(self.run_task().get('skipped'), 'not due')
+
+    def test_an_unknown_frequency_writes_nothing(self):
+        """A retired "daily" written straight into the table has no slots, so
+        nothing would ever count as done: it must skip, not back up every pass."""
+        from django.db import connection
+        table = SystemSettings._meta.db_table
+        with connection.cursor() as cur:
+            cur.execute('SET CONSTRAINTS ALL IMMEDIATE')
+            cur.execute(f'ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_scheduled_backup_frequency_valid')
+        SystemSettings.objects.update(scheduled_backup_frequency='daily')
+        self.assertIn('unknown frequency', self.run_task()['skipped'])
+        self.assertEqual(os.listdir(self.folder), [])
 
     def test_blank_folder_uses_the_backups_directory(self):
         self.cfg.scheduled_backup_folder = ''

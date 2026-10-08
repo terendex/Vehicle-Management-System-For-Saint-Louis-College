@@ -57,8 +57,9 @@ BACKUP_EXCLUDE = [
 #
 # Automatic backups are written under SCHEDULED_PREFIX (they began as the
 # second, "scheduled" kind). AUTO_PREFIX is the retired interval schedule's:
-# nothing writes it any more, but its files are still listed, restorable and
-# rotated with the manual copies until they age out.
+# nothing writes it any more, but its files are still listed and restorable,
+# and rotated with the manual copies down to the keep count (they are only
+# ever all gone once someone deletes them from the list).
 AUTO_PREFIX      = 'auto-backup-'
 MANUAL_PREFIX    = 'manual-backup-'
 SAFETY_PREFIX    = 'pre-restore-'
@@ -754,6 +755,45 @@ def _resolve_displaced_rows(model, objs, using):
     return len(every_pk)
 
 
+# A settings row still holding the retired schedule: the old interval schedule
+# switched on, or the calendar one on "daily". Only such a file is parsed.
+_RETIRED_SCHEDULE_RE = re.compile(
+    r'"(?:auto_backup_frequency"\s*:\s*"(?:hourly|daily|weekly|monthly)'
+    r'|scheduled_backup_frequency"\s*:\s*"daily)"')
+
+
+def upgrade_retired_backup_schedule(payload: str) -> str:
+    """Rewrite a backup taken before the two backup schedules were combined.
+
+    Such a file carries scheduled_backup_frequency "daily" or an interval
+    schedule switched on. "daily" is no longer a choice, and the column's
+    CHECK constraint refuses it, so without this every older backup (and
+    every pre-restore snapshot taken before the change) would fail to
+    restore. Mapped the way migration vehicles/0101 mapped the live row:
+    daily, or an interval schedule alone, becomes weekly (monthly stays
+    monthly), and the interval schedule is switched off. A current backup
+    comes back unchanged.
+    """
+    import json
+    if not _RETIRED_SCHEDULE_RE.search(payload):
+        return payload                     # cheap exit: nothing to upgrade
+    records = json.loads(payload)
+    for record in records if isinstance(records, list) else []:
+        if record.get('model') != 'vehicles.systemsettings':
+            continue
+        fields = record.get('fields') or {}
+        auto = fields.get('auto_backup_frequency') or 'off'
+        freq = fields.get('scheduled_backup_frequency') or 'off'
+        if freq == 'daily':
+            freq = 'weekly'
+        elif freq == 'off' and auto != 'off':
+            freq = 'monthly' if auto == 'monthly' else 'weekly'
+        fields['scheduled_backup_frequency'] = freq
+        if 'auto_backup_frequency' in fields:
+            fields['auto_backup_frequency'] = 'off'
+    return json.dumps(records)
+
+
 class LoadResult(NamedTuple):
     records: int
     # Live rows archived to free a unique value the file needed - see
@@ -799,6 +839,7 @@ def load_backup(payload: str, using: str = DEFAULT_DB_ALIAS) -> LoadResult:
     # exists; rewrite it into last/first/middle initial so it still loads.
     from .names import upgrade_legacy_backup
     payload = upgrade_legacy_backup(payload)
+    payload = upgrade_retired_backup_schedule(payload)
 
     # Group by model, keeping the last row for any primary key that appears
     # twice. dumpdata never repeats one, but a fixture assembled by hand can,
