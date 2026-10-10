@@ -188,8 +188,10 @@ class Command(BaseCommand):
         self.stdout.write(f'Loaded the demo campus ({result.records} rows) from demo_campus.json.')
 
     # ── A copy of the live system ──────────────────────────────────────────
-    def _tool(self, exe):
-        """The newest installed copy of a PostgreSQL tool (the installer does not add it to PATH)."""
+    def _tool(self, name):
+        """The newest installed copy of a PostgreSQL tool (the Windows installer does
+        not add it to PATH). On Linux apt puts it on PATH, without the .exe."""
+        exe = name + '.exe' if os.name == 'nt' else name
         majors = sorted((int(v) for v in (os.listdir(PG_ROOT) if os.path.isdir(PG_ROOT) else [])
                          if v.isdigit() and os.path.exists(os.path.join(PG_ROOT, v, 'bin', exe))), reverse=True)
         if majors and majors[0] >= PG_MIN_MAJOR:
@@ -218,7 +220,7 @@ class Command(BaseCommand):
 
         dump = os.path.join(tempfile.gettempdir(), 'slc_live_copy.dump')
         self.stdout.write(f'Copying the live database from {host} (read-only)...')
-        done = subprocess.run([self._tool('pg_dump.exe'), '--format=custom', '--no-owner', '--no-acl',
+        done = subprocess.run([self._tool('pg_dump'), '--format=custom', '--no-owner', '--no-acl',
                                f'--file={dump}', live], capture_output=True, text=True)
         if done.returncode != 0:
             raise CommandError(f'pg_dump failed: {done.stderr.strip()[-800:]}')
@@ -236,7 +238,7 @@ class Command(BaseCommand):
             conn.close()
 
         env = {**os.environ, 'PGPASSWORD': db['PASSWORD']}
-        done = subprocess.run([self._tool('pg_restore.exe'), '--no-owner', '--no-acl',
+        done = subprocess.run([self._tool('pg_restore'), '--no-owner', '--no-acl',
                                f'--host={db["HOST"]}', f'--port={db["PORT"]}', f'--username={db["USER"]}',
                                f'--dbname={name}', dump], capture_output=True, text=True, env=env)
         try:

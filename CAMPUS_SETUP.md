@@ -1,5 +1,9 @@
 # Campus setup — restoring live camera scanning
 
+> Setting up the campus server on **Linux (Ubuntu 24.04)** instead of Windows?
+> Follow [CAMPUS_SETUP_LINUX.md](CAMPUS_SETUP_LINUX.md). The architecture below
+> applies to both.
+
 Railway runs the public app. It cannot open the cameras: they sit on the campus
 LAN at `192.168.137.x`, and a cloud container has no route to a private address.
 

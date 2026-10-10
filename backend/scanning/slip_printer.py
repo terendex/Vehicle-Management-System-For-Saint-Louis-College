@@ -9,17 +9,25 @@ Printing from the server removes all three. The slip is rendered here as one
 printer driver's paper sizes, margins and scaling never touch it - and a guard
 issuing a pass from a phone still gets the slip out of the printer at the gate.
 
-Only the campus deployment has a printer. On Railway (Linux) or a PC with no
+A Linux campus server sends the same bytes through CUPS instead: a raw queue
+(`lp -o raw`, set up by scripts/linux/slip-printer-setup.sh), or straight to
+the USB device file when SLIP_PRINTER names one.
+
+Only the campus deployment has a printer. On Railway (no CUPS) or a PC with no
 thermal printer installed, `find_printer()` returns None and the view answers
 503, which tells the frontend to fall back to the browser print dialog.
 
 Settings (backend/.env):
-    SLIP_PRINTER=POS58 Printer   use this Windows printer by name
+    SLIP_PRINTER=POS58 Printer   use this Windows printer (or CUPS queue) by name
+    SLIP_PRINTER=/dev/usb/lp0    Linux: write straight to this device, no CUPS
     SLIP_PRINTER=off             never print from the server (browser dialog)
     (unset)                      pick the installed thermal printer by name/driver
+                                 (on Linux: by CUPS queue name or device URI)
 """
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 
@@ -35,6 +43,21 @@ PX = 203 / 96
 THERMAL_PATTERN = re.compile(r'pos-?\s?58|jp-?\s?58|58\s?mm|thermal|receipt', re.I)
 
 FONT_DIR = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'Fonts')
+# Linux has no Courier New. Liberation Mono is drawn to its exact metrics
+# (fonts-liberation / fonts-liberation2), so a slip wraps the same lines;
+# DejaVu Sans Mono is on nearly every desktop if neither is installed.
+_LINUX_FONTS = '/usr/share/fonts/truetype'
+LINUX_FONT_FILES = {
+    True:  ('liberation/LiberationMono-Bold.ttf', 'liberation2/LiberationMono-Bold.ttf',
+            'dejavu/DejaVuSansMono-Bold.ttf'),
+    False: ('liberation/LiberationMono-Regular.ttf', 'liberation2/LiberationMono-Regular.ttf',
+            'dejavu/DejaVuSansMono.ttf'),
+}
+
+# Values of SLIP_PRINTER that mean "never print from the server".
+_OFF = ('off', 'none', 'browser', '0', 'false')
+# CUPS tools print English only under the C locale, and their output is parsed.
+_C_LOCALE = {'LC_ALL': 'C', 'LANG': 'C'}
 
 
 class SlipPrinterError(Exception):
@@ -65,14 +88,64 @@ def _installed_printers():
     return out
 
 
+def _cups(*args, payload=None, timeout=5):
+    """Run a CUPS command-line tool; CompletedProcess, or None when CUPS is not
+    installed or did not answer in time."""
+    try:
+        return subprocess.run(args, input=payload, capture_output=True, timeout=timeout,
+                              env={**os.environ, **_C_LOCALE})
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _cups_down(done):
+    """True when a CUPS tool failed because the cupsd service is not running."""
+    return bool(done) and done.returncode != 0 and b'scheduler' in done.stderr.lower()
+
+
+def _cups_printers():
+    """[(queue, device URI)] for every CUPS queue, or [] with no CUPS.
+
+    The URI stands in for the Windows driver name: a POS58 on USB shows up as
+    usb://...POS58... even when the queue was given some other name. Queue
+    names cannot contain spaces, so the line splits cleanly."""
+    if not shutil.which('lpstat'):
+        return []
+    done = _cups('lpstat', '-v')
+    if _cups_down(done):
+        # A stopped cupsd cannot list its queues. With the printer named in
+        # SLIP_PRINTER that is worth saying - the Windows "spooler is stopped"
+        # case. Without it, this could be any Linux box, so: browser fallback.
+        if os.getenv('SLIP_PRINTER', '').strip():
+            raise SlipPrinterError('the CUPS print service is stopped. '
+                                   'Run "sudo systemctl start cups", then print again')
+        return []
+    if not done or done.returncode != 0:
+        return []
+    out = []
+    for line in done.stdout.decode(errors='replace').splitlines():
+        m = re.match(r'device for (\S+?):\s*(.*)$', line.strip())
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
 def find_printer():
-    """Name of the Windows printer the slip goes to, or None to use the browser."""
-    if sys.platform != 'win32':
-        return None
+    """Name of the printer the slip goes to (a Windows printer, a CUPS queue,
+    or on Linux a device path), or None to use the browser."""
     wanted = os.getenv('SLIP_PRINTER', '').strip()
-    if wanted.lower() in ('off', 'none', 'browser', '0', 'false'):
+    if wanted.lower() in _OFF:
         return None
-    printers = _installed_printers()
+    if sys.platform == 'win32':
+        printers = _installed_printers()
+    elif wanted.startswith('/'):
+        # A device file, written to directly: no CUPS involved at all. Named
+        # on purpose, so returned even when it is missing - an unplugged
+        # printer's node disappears, and quietly falling back to the browser
+        # would hide that. _send_device then says to check the printer.
+        return wanted
+    else:
+        printers = _cups_printers()
     if wanted:
         return next((n for n, _ in printers if n.lower() == wanted.lower()), None)
     return next((n for n, d in printers if THERMAL_PATTERN.search(n) or THERMAL_PATTERN.search(d)), None)
@@ -85,8 +158,9 @@ def _font(size_px, bold=False):
     from PIL import ImageFont
     size = round(size_px * PX)
     names = ['courbd.ttf', 'consolab.ttf'] if bold else ['cour.ttf', 'consola.ttf']
-    for n in names:
-        path = os.path.join(FONT_DIR, n)
+    paths = [os.path.join(FONT_DIR, n) for n in names]
+    paths += [os.path.join(_LINUX_FONTS, f) for f in LINUX_FONT_FILES[bold]]
+    for path in paths:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
     return ImageFont.load_default(size)
@@ -282,9 +356,111 @@ _JOB_FAILED = {0x2: 'printer error', 0x20: 'printer is offline', 0x40: 'printer 
                0x200: 'printer queue is blocked', 0x400: 'printer needs attention'}
 # RPC_S_SERVER_UNAVAILABLE from OpenPrinterW: no spooler to talk to.
 _SPOOLER_STOPPED = 1722
+# What `lpstat -p` shows under a queue whose USB printer is not there.
+_CUPS_NOT_CONNECTED = ('waiting for printer to become available', 'unplugged',
+                       'not connected', 'turned off')
 
 
 def send_raw(printer_name, payload, doc_name='Visitor Slip', wait_seconds=6.0):
+    """Send RAW ESC/POS bytes to the printer find_printer() named, through the
+    Windows spooler, a CUPS raw queue, or a Linux device file."""
+    if sys.platform == 'win32':
+        return _send_winspool(printer_name, payload, doc_name, wait_seconds)
+    if printer_name.startswith('/'):
+        return _send_device(printer_name, payload)
+    return _send_cups(printer_name, payload, doc_name, wait_seconds)
+
+
+# How long a device file may take to accept a whole slip. The printer takes
+# bytes about as fast as it prints, so this is a long slip at full speed plus
+# room to spare - not the 6s the spoolers get, which only covers queueing.
+DEVICE_WRITE_SECONDS = 20
+
+
+def _send_device(path, payload, timeout=None):
+    """Write straight to the printer's device file (SLIP_PRINTER=/dev/usb/lp0).
+
+    Non-blocking with a deadline: usblp blocks a plain write for as long as
+    the printer refuses bytes (jammed, out of paper, paused), which would hang
+    the guard's request - and every retry after it - with no answer at all."""
+    import select
+    timeout = DEVICE_WRITE_SECONDS if timeout is None else timeout
+    try:
+        fd = os.open(path, os.O_WRONLY | getattr(os, 'O_NONBLOCK', 0))
+    except PermissionError as exc:
+        raise SlipPrinterError(f'the server is not allowed to write to {path}. Add the user '
+                               'the server runs as to the "lp" group, then restart it') from exc
+    except OSError as exc:
+        raise SlipPrinterError(f'cannot open {path} ({exc.strerror or exc}). '
+                               'Check the printer is plugged in and switched on') from exc
+    try:
+        deadline = time.monotonic() + timeout
+        rest = memoryview(payload)
+        while rest:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SlipPrinterError('printer stopped taking the slip. Check the paper '
+                                       'and that it is switched on, then print again')
+            if not select.select([], [fd], [], remaining)[1]:
+                continue
+            try:
+                rest = rest[os.write(fd, rest):]
+            except BlockingIOError:
+                continue
+            except OSError as exc:
+                raise SlipPrinterError(f'cannot write to {path} ({exc.strerror or exc}). '
+                                       'Check the printer is plugged in and switched on') from exc
+    finally:
+        os.close(fd)
+
+
+def _send_cups(printer_name, payload, doc_name, wait_seconds):
+    """Queue RAW bytes on a CUPS printer and watch the job, the CUPS version of
+    _send_winspool. A queue CUPS has disabled (its backend gave up on the
+    printer) or a printer it cannot find after the wait is reported, and the
+    job is cancelled so the next slip is not stuck behind it."""
+    done = _cups('lp', '-d', printer_name, '-o', 'raw', '-t', doc_name, payload=payload, timeout=10)
+    if done is None:
+        raise SlipPrinterError('the CUPS print service did not answer')
+    if _cups_down(done):
+        raise SlipPrinterError('the CUPS print service is stopped. '
+                               'Run "sudo systemctl start cups", then print again')
+    m = re.search(rb'request id is (\S+)', done.stdout)
+    if done.returncode != 0 or not m:
+        err = done.stderr.decode(errors='replace').strip() or f'exit {done.returncode}'
+        raise SlipPrinterError(f'CUPS refused the job ({err})')
+    job = m.group(1).decode()
+
+    deadline = time.monotonic() + wait_seconds
+    state = ''
+    while True:
+        queued = _cups('lpstat', '-o', printer_name)
+        if queued and queued.returncode == 0 and job.encode() not in queued.stdout.split():
+            return  # gone from the queue: printed
+        status = _cups('lpstat', '-p', printer_name)
+        state = status.stdout.decode(errors='replace').lower() if status else ''
+        if 'disabled' in state:
+            # The backend gave up and CUPS stopped the queue - and it never
+            # restarts it by itself, so every later slip would fail too. Drop
+            # this job and re-enable the queue (the server's user is in
+            # lpadmin, see install.sh) so the guard's next try reaches the printer.
+            _cups('cancel', job)
+            _cups('cupsenable', printer_name)
+            raise SlipPrinterError('printer is offline or out of paper. Check the cable and paper, '
+                                   'then print again')
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.25)
+    # The usb backend keeps an unplugged printer's job waiting forever, with
+    # the queue still enabled. That is the Linux face of the wrong-USB-port case.
+    if any(s in state for s in _CUPS_NOT_CONNECTED):
+        _cups('cancel', job)
+        raise SlipPrinterError('printer is not connected. Check the USB cable and that it is switched on')
+    # Still queued with no error after the wait: a slow USB hand-off, not a
+    # failure. CUPS will finish it.
+
+
+def _send_winspool(printer_name, payload, doc_name, wait_seconds):
     """Spool RAW bytes and watch the job until it leaves the queue. Raises
     SlipPrinterError when the spooler flags it - a wrong USB port shows up here
     as 'printer error' within a second or two - and deletes the stuck job so

@@ -25,7 +25,6 @@ EXIT CODE
 # ── Tools this command uses ──────────────────────────────────────────────────
 import platform                      # reports the Python version
 import re                            # reads package names out of requirements.txt
-import shutil                        # finds programs such as ffmpeg on the PATH
 import subprocess                    # runs `pip check` as a separate program
 import sys                           # the Python interpreter running this command
 from importlib import metadata       # lists which package versions are installed
@@ -236,9 +235,13 @@ class Command(BaseCommand):
     # ── 7. ffmpeg: needed to read the IP cameras ─────────────────────────────
     def check_ffmpeg(self):
         # Every camera stream goes through ffmpeg (vehicles/ffmpeg_capture.py).
-        path = shutil.which('ffmpeg')
+        # Asked the same way the camera code asks, so the pip-installed
+        # imageio-ffmpeg build counts too: it is the fallback the campus scripts
+        # install when the machine has no system ffmpeg.
+        from vehicles.ffmpeg_capture import ffmpeg_binary
+        path = ffmpeg_binary()
         if not path:
-            self._fail('ffmpeg', 'not found on PATH - camera feeds cannot open')
+            self._fail('ffmpeg', 'not found on PATH or in imageio-ffmpeg - camera feeds cannot open')
             return
         # Chocolatey installs a small launcher ("shim") that starts the real
         # ffmpeg. Stopping the shim can leave the real ffmpeg running and holding

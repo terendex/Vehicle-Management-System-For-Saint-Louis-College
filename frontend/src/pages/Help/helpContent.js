@@ -597,6 +597,7 @@ export const HELP_TOPICS = [
       { type: 'steps', items: ['Check the summary and press Install. The launcher opens when Setup finishes.'] },
       { type: 'figure', id: 'installer-ready' },
       { type: 'note', text: 'The first launch downloads the application and builds its Python environment (about 6 GB). Keep the computer online until it finishes.' },
+      { type: 'note', text: 'On a Linux computer (Ubuntu 24.04) there is no Setup program. Your IT office runs the setup script that comes with the system instead, as described in CAMPUS_SETUP_LINUX.md. The server then starts by itself whenever the computer starts, and the gate page opens full screen.' },
     ],
   },
   {

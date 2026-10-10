@@ -479,6 +479,7 @@ half is worth having.
 |---|---|
 | **[DEPLOY.md](DEPLOY.md)** | Railway: Railpack build, env vars, region, what to watch in the build log |
 | **[CAMPUS_SETUP.md](CAMPUS_SETUP.md)** | On-site instance: config, `run-campus.ps1`, scheduled maintenance |
+| **[CAMPUS_SETUP_LINUX.md](CAMPUS_SETUP_LINUX.md)** | The same on-site instance on Ubuntu 24.04: `install.sh`, the systemd service, kiosk, CUPS slip printer |
 
 Quick start for the campus half, on a PC that can reach the cameras — clone the
 repo, then:
@@ -492,6 +493,13 @@ installs dependencies, writes `backend\.env` from the campus template, and asks
 once for the values it cannot work out — `SECRET_KEY`, `DATABASE_URL` and the R2
 keys, all copied from Railway. Re-run it any time; use `-Reconfigure` to change
 those answers.
+
+On an Ubuntu 24.04 PC the same setup is one command, which also installs the
+system packages and a service that starts the server on boot:
+
+```bash
+sudo scripts/linux/install.sh --open guard
+```
 
 Everything else it derives on every run: this machine's LAN address (so a new
 DHCP lease never means editing a file), `RUN_MIGRATIONS=false` so the campus

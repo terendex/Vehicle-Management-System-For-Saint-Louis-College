@@ -15,6 +15,8 @@
 #  docker/Dockerfile both install the CPU-only wheels from
 #  https://download.pytorch.org/whl/cpu BEFORE this file, which satisfies these
 #  pins and stops pip pulling the ~2.5GB CUDA build from PyPI.
+#  scripts/linux/run-campus.sh does the same, choosing the cpu or cu130 index
+#  by whether the machine has an NVIDIA card; it reads the pins from here.
 # ─────────────────────────────────────────────────────────────────────────────
 amqp==5.3.1
 asgiref==3.11.1
@@ -34,8 +36,9 @@ django-cors-headers==4.9.0
 djangorestframework==3.16.1
 djangorestframework_simplejwt==5.5.1
 # paddlepaddle (CPU) is NOT pinned here - the pin differs per platform, so each
-# builder installs it before this file: backend/Dockerfile, railpack.json and
-# scripts/run-campus.ps1 all pin paddlepaddle==3.0.0. Keep those three in step;
+# builder installs it before this file: backend/Dockerfile, railpack.json,
+# scripts/run-campus.ps1 and scripts/linux/run-campus.sh all pin
+# paddlepaddle==3.0.0. Keep those four in step;
 # a builder that skips it gets a working paddleocr import and no `paddle`, which
 # surfaces at startup as OCR disabled rather than as a failed install.
 # Paddle 3.x is required for numpy 2 compatibility.

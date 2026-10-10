@@ -5,7 +5,8 @@ import { Lock } from 'lucide-react'
  * Shown under a camera error. A browser refuses the camera on a page that is
  * not a secure context — which is the campus server opened at
  * http://<LAN IP>:8000 from any device but the launcher's own kiosk. The
- * campus server also serves https on another port (run-campus.ps1), so this
+ * campus server also serves https on another port (run-campus.ps1, or
+ * scripts/linux/run-campus.sh on a Linux server), so this
  * offers the same page there. Renders nothing on Railway, on localhost, in the
  * kiosk (all already secure) or when the server has no https port.
  */

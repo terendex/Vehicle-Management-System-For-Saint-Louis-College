@@ -274,12 +274,16 @@ def scheduled_backup():
     retries on the next pass instead of quietly marking the day done. The one
     exception is a folder that is not a path on this machine at all — the
     cloud server reading a Windows path set on the campus PC — which is not
-    this machine's job and is skipped.
+    this machine's job and is skipped. A Linux campus server's folder
+    (/media/backups) IS an absolute path on Railway too, so a chosen folder
+    is skipped on Railway outright: it always names the campus PC's disk, and
+    Railway's own disk is wiped on every deploy.
     """
     from accounts.backup_utils import (
         BackupFolderError, latest_scheduled_backup, prune_scheduled, scheduled_dir,
         scheduled_folder_setting, scheduled_prefix, scheduled_slots, write_backup,
     )
+    from django.conf import settings
     from django.utils.dateparse import parse_datetime
     from .models import SystemSettings
 
@@ -288,7 +292,8 @@ def scheduled_backup():
         return {"skipped": "scheduled backups are off"}
 
     folder_setting = scheduled_folder_setting()
-    if folder_setting and not os.path.isabs(folder_setting):
+    if folder_setting and (getattr(settings, 'ON_RAILWAY', False)
+                           or not os.path.isabs(folder_setting)):
         return {"skipped": "folder is not on this machine"}
     try:
         folder = scheduled_dir(folder_setting)

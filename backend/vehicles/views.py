@@ -4476,10 +4476,21 @@ class SystemSettingsView(APIView):
                 scheduled_backup_folder != (obj.scheduled_backup_folder or '').strip()
                 or obj.scheduled_backup_frequency == 'off'):
             from accounts.backup_utils import BackupFolderError, check_scheduled_dir
-            try:
-                check_scheduled_dir(scheduled_backup_folder)
-            except BackupFolderError as exc:
-                errors["scheduled_backup_folder"] = str(exc)
+            from django.conf import settings
+            if getattr(settings, 'ON_RAILWAY', False):
+                # The cloud server never runs a backup into a chosen folder
+                # (vehicles.tasks.scheduled_backup skips it), so "checking" one
+                # here would only create it on Railway's own disk and pass. A
+                # Windows path was already refused here as not a full path; a
+                # Linux campus path must be refused too, with the real reason.
+                errors["scheduled_backup_folder"] = (
+                    'This folder is on the campus computer, so it can only be checked there. '
+                    'Set it from the campus system.')
+            else:
+                try:
+                    check_scheduled_dir(scheduled_backup_folder)
+                except BackupFolderError as exc:
+                    errors["scheduled_backup_folder"] = str(exc)
 
         # The signatory strings. They are free text, so the only thing that can
         # be wrong is the length: each column is sized for a name or a caption,

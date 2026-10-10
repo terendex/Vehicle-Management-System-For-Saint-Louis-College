@@ -1,0 +1,30 @@
+# slc-vms.service - the campus server, started on boot and restarted if it
+# crashes. A template: install.sh fills in @USER@ and @REPO@ and installs it
+# as /etc/systemd/system/slc-vms.service. Edit this file, not the copy.
+#
+#   systemctl status slc-vms        is it running?
+#   journalctl -u slc-vms -f        its log, live
+#   sudo systemctl restart slc-vms  restart (scripts/linux/update.sh does this)
+
+[Unit]
+Description=SLC Smart Parking campus server
+Wants=network-online.target
+After=network-online.target cups.service
+# A server that cannot start (missing secrets, a broken install) stops
+# retrying after 5 tries in 5 minutes instead of looping all day.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/bin/bash "@REPO@/scripts/linux/run-campus.sh" --non-interactive
+Restart=on-failure
+RestartSec=10
+# The default KillMode (control-group) stops every ffmpeg the server started
+# along with it, so no orphan is left holding a camera's RTSP session.
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

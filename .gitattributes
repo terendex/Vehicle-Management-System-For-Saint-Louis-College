@@ -1,5 +1,8 @@
 # Ensure shell scripts always use LF so they execute correctly in Linux containers
 *.sh text eol=lf
+# The Linux campus files, templates included: a systemd unit or .desktop
+# file checked out with CRLF carries a stray \r into every value.
+scripts/linux/* text eol=lf
 
 # Default: auto-normalize everything else
 * text=auto

@@ -1500,9 +1500,11 @@ export default function SystemSettings() {
                           <label className="ss-row-label" htmlFor="scheduled_backup_folder">Save to folder</label>
                           <span className="ss-row-hint">
                             A full folder path <strong>on the server computer</strong>, e.g. <code>D:\SLC Backups</code> or
-                            a USB drive like <code>E:\Backups</code>. It is created if missing, and checked when you save.
-                            Leave blank to use the app&rsquo;s own backups folder. At the server computer, Browse opens the
-                            Windows folder window; from any other computer it lists the server&rsquo;s folders here.
+                            a USB drive like <code>E:\Backups</code> on Windows, or a folder in the server
+                            account&rsquo;s home such as <code>/home/gate/SLC Backups</code> on Linux.
+                            It is created if missing, and checked when you save. Leave blank to use the app&rsquo;s own
+                            backups folder. At a Windows server computer, Browse opens the Windows folder window;
+                            anywhere else it lists the server&rsquo;s folders here.
                           </span>
                         </div>
                         <div className="ss-row-control">

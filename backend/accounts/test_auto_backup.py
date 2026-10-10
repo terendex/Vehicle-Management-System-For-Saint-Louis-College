@@ -656,6 +656,13 @@ class ScheduledBackupTaskTests(BackupTempDirMixin, TestCase):
         self.assertEqual(self.run_task().get('skipped'), 'folder is not on this machine')
         self.assertFalse(os.path.exists('relative\\not-a-real-path'))
 
+    def test_a_chosen_folder_is_skipped_on_railway(self):
+        """A Linux campus server's folder is an absolute path on Railway too.
+        It still names the campus PC's disk, so Railway must not write there."""
+        with override_settings(ON_RAILWAY=True):
+            self.assertEqual(self.run_task().get('skipped'), 'folder is not on this machine')
+        self.assertEqual(os.listdir(self.folder), [])
+
     def test_an_unusable_folder_fails_loudly(self):
         """So the scheduler releases the claim and retries, rather than
         recording the slot as done when no file was written."""
@@ -776,6 +783,16 @@ class ScheduledBackupSettingsTests(BackupTempDirMixin, TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn('scheduled_backup_folder', resp.json())
         self.assertEqual(SystemSettings.get().scheduled_backup_frequency, 'off')
+
+    def test_railway_refuses_a_folder_instead_of_creating_it_on_its_own_disk(self):
+        """A Linux campus path is absolute on Railway too, so the write test
+        would pass there for a folder Railway will never back up into."""
+        target = os.path.join(self.folder, 'campus-only')
+        with override_settings(ON_RAILWAY=True):
+            resp = self.put(scheduled_backup_frequency='weekly', scheduled_backup_folder=target)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('campus system', resp.json()['scheduled_backup_folder'])
+        self.assertFalse(os.path.exists(target))
 
     def test_a_relative_folder_is_refused(self):
         resp = self.put(scheduled_backup_frequency='weekly', scheduled_backup_folder='backups-here')
