@@ -1498,6 +1498,10 @@ function Start-UpdateCheck {
         -ArgumentList @('-c', $safeArg,
                         '-C', "`"$($App.Repo)`"", 'fetch', '--quiet', 'origin', $cfg.Branch) `
         -NoNewWindow -PassThru
+    # Touch .Handle now. A -PassThru process that exits before anything has
+    # opened its handle reports ExitCode as $null, so every successful fetch
+    # read as failed and the log filled with "Could not fetch" every check.
+    $null = $App.FetchProc.Handle
 }
 
 function Complete-UpdateCheck {
