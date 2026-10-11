@@ -14,11 +14,10 @@
 
 export const NOTES = {
   // ── Getting Started ─────────────────────────────────────────────────────
-  '01-getting-started--05b-student-application-form': [
-    'After the form is submitted, the applicant pays the Vehicle Pass fee at the Accounting Office '
-    + 'and records it on the payment page: the Official Receipt number **and a photograph of the '
-    + 'receipt**, which is required. The photograph backs up the number, which on its own is only '
-    + 'a claim. It is never emailed, and it is never shown outside the CDSO review screen.',
+  '01-getting-started--05c-payment': [
+    'The Official Receipt number **and a photograph of the receipt** are both required. The '
+    + 'photograph backs up the number, which on its own is only a claim. It is never emailed, and it '
+    + 'is never shown outside the CDSO review screen.',
   ],
 
   // ── CDSO ────────────────────────────────────────────────────────────────
@@ -94,9 +93,10 @@ export const NOTES = {
     + 'Inside** lists the no-plate vehicles still on campus, each with a Slip button (reprint it, or '
     + 'record the exit from it) and a Log Exit button — without them those vehicles would sit in '
     + 'the inside count for ever. **Overstaying** lists vehicles still on campus past the maximum '
-    + 'stay their entry rule allows, with how far over they are; **Acknowledge** issues the Time '
-    + 'Exceed violation there and then. They may still leave, but not return until the confiscation '
-    + 'ends, and a vehicle already recorded today is marked as such rather than offered again.',
+    + 'stay their entry rule allows, with how far over they are; **Acknowledge**, once confirmed, '
+    + 'issues the Overstaying violation there and then. They may still leave, but not return until '
+    + 'the confiscation ends, and a vehicle already recorded today is marked as such rather than '
+    + 'offered again.',
     '**Passes and slips print on the thermal printer.** Creating a visitor pass asks for the '
     + 'visitor’s name, the office, the purpose and the allowed duration in hours and minutes, then '
     + 'prints the slip — and the visitor’s entry is logged once the slip prints, not before. If '

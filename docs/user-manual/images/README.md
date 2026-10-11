@@ -71,8 +71,9 @@ Every application starts with the Data Privacy Notice (RA 10173).
 The public application form, used by students, employees and fetchers.
 
 1. **Registration window**: Shows whether applications are being accepted, and the dates of the current window.
-2. **Registrant type**: Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs.
+2. **Registrant type**: Choose Student, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs. Student first asks whether you drive: the student pass is only for a student with a valid driver’s license, and a No moves the application to Fetcher / Drop & Go / Driver.
 3. **Back to Login**: Leave the application without submitting.
+4. **Pass validity and payment**: A pass is valid until July 31 of its school year. After submitting you have 3 working days (Monday to Friday) to pay at the Accounting Office and file the Official Receipt, or the application expires.
 
 ### Applying for a vehicle pass: student form
 
@@ -84,12 +85,24 @@ The details a student applicant fills in.
 2. **Campus Schedule**: Choose one schedule (Mon · Wed · Fri or Tue · Thu · Fri). Slots are first come, first served; a full schedule cannot be selected.
 3. **Registrant type**: Switch here if you picked the wrong type.
 4. **Vehicle identification**: Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number. Choosing E-Bike asks for neither: the college issues the unit a control number (FM-001, FM-002, and so on) on submission, and that number is what the gate, the pass and the QR code use in place of a plate.
-5. **Personal information**: Your name, then contact details further down. Scroll to the end to attach the required documents and submit.
+5. **Personal information**: Your name, then further down your email address, education level, campus schedule and driver’s license number. Scroll to the end to accept the terms, confirm your details and submit.
 
-> After the form is submitted, the applicant pays the Vehicle Pass fee at the Accounting Office
-> and records it on the payment page: the Official Receipt number **and a photograph of the
-> receipt**, which is required. The photograph backs up the number, which on its own is only a
-> claim. It is never emailed, and it is never shown outside the CDSO review screen.
+### Paying and filing the Official Receipt
+
+![Paying and filing the Official Receipt](01-getting-started/05c-payment.png)
+
+Opened from the link emailed after you apply. Pay at the Accounting Office, then file the receipt here.
+
+1. **Vehicle pass fee**: The amount to pay at the Accounting Office for your type of registration.
+2. **Deadline**: When your 3 working days (Monday to Friday) end, and how long is left. If the receipt is not filed by then, the application expires and you have to apply again.
+3. **How this works**: Pay at the counter, enter the OR number here, then the CDSO reviews the application and emails you the outcome. It is not queued for review until the number is filed.
+4. **Official Receipt (OR) Number**: Copy it exactly as printed on the receipt: 6 or 7 digits.
+5. **Photo of the Receipt**: A photograph of the whole receipt, with the number readable. The CDSO checks it against the number.
+6. **Submit Receipt**: Files the number and the photo. You are emailed once the CDSO has reviewed the application.
+
+> The Official Receipt number **and a photograph of the receipt** are both required. The
+> photograph backs up the number, which on its own is only a claim. It is never emailed, and it is
+> never shown outside the CDSO review screen.
 
 ### Guard sign-in: choosing a gate
 
@@ -151,14 +164,13 @@ Alerts raised by new registrations, uploaded receipts and violations.
 
 Management › Vehicle Registration. Review and process vehicle pass applications.
 
-1. **Registration Form QR**: Shows a QR code applicants can scan to open the online application form.
-2. **Registrations report**: Pick a date range, then export a PDF or Excel report, or a one-page summary PDF. The export carries the screen’s own filters too — registrant type, payment and status — and the bar names them beside the label, so a table narrowed to Employees produces a report of employees.
-3. **Total registrations**: All applications received.
-4. **Quick filters**: Click a payment state or registrant type to narrow the list below.
-5. **Search**: Find an application by name, plate or type.
-6. **Type, payment and status filters**: Pending Review lists the applications still waiting for your decision.
-7. **Applications table**: Each row shows the applicant, plate, schedule, payment and status.
-8. **View**: Opens the application to check documents and approve or reject it.
+1. **Registrations report**: Pick a date range, then export a PDF or Excel report, or a one-page summary PDF. The export carries the screen’s own filters too — registrant type, payment and status — and the bar names them beside the label, so a table narrowed to Employees produces a report of employees.
+2. **Total registrations**: All applications received.
+3. **Quick filters**: Click a payment state or registrant type to narrow the list below.
+4. **Search**: Find an application by name, plate or type.
+5. **Type, payment and status filters**: Pending Review lists the applications still waiting for your decision.
+6. **Applications table**: Each row shows the applicant, plate, schedule, payment and status.
+7. **View**: Opens the application to check its details and receipt, and approve or reject it.
 
 > **How reports are exported, everywhere in the system.** A PDF is confirmed before it is made:
 > the dialog restates the period, the filters in force and how many records match, and says so
@@ -202,16 +214,28 @@ The bottom of the Registration Details window.
 
 ![User Management](02-cdso-admin/05-user-management.png)
 
-Management › User Management. Create, edit, disable and delete accounts.
+Management › User Management. Create, edit, disable and enable accounts.
 
 1. **Add User**: Create a security guard or vehicle-owner account.
 2. **Screen tabs**: User Accounts lists everyone. Detail Change Requests holds owners’ requested corrections; the badge counts pending ones.
-3. **Account counts**: Total, active and disabled accounts.
+3. **Account counts**: Total, active, disabled and archived accounts.
 4. **Role tabs**: Show only one kind of account.
 5. **Search**: Search by name, email or user ID (e.g. SLC-OWN-000005).
 6. **Status filter**: Show active, disabled or archived accounts.
 7. **Accounts table**: User ID, name, email, role and status.
-8. **Actions menu**: Edit, disable/enable, reset two-factor, print a guard QR badge, or delete the account.
+8. **Actions menu**: View Profile (details, activity, editing and the QR code), print a guard’s QR badge, reset two-factor, or disable or enable the account.
+
+### User profile and activity
+
+![User profile and activity](02-cdso-admin/05b-user-profile.png)
+
+View Profile, from an account’s actions menu. A vehicle owner’s profile adds their schedule and violations.
+
+1. **Account details**: Status, user ID, email and the date the account was created.
+2. **Schedule, vehicles and violations**: The owner’s campus days, the entry hours that apply to them, when their pass expires, their vehicles, and their violations with the offense count.
+3. **View Activity**: Every entry, exit and violation of this owner, newest first. Filter by kind, or by dates.
+4. **Edit Details**: Correct the name or email on the account.
+5. **View QR**: The owner’s vehicle pass QR code, to show or reprint.
 
 ### Approving detail change requests
 
@@ -239,16 +263,17 @@ Management › Device Management. Register the IP cameras used at the gates and 
 6. **Test, Edit, Delete**: Check the camera answers, change its settings, or remove it.
 7. **Live Feeds**: Live pictures from the cameras you connected. (Sample picture shown.)
 
-### Supplier Management
+### Visits and Suppliers
 
-![Supplier Management](02-cdso-admin/08-suppliers.png)
+![Visits and Suppliers](02-cdso-admin/08-suppliers.png)
 
-Management › Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.
+Management › Visits and Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.
 
 1. **Add Supplier**: Register a supplier company and its plates.
 2. **Supplier card**: Company name and how many plates it has registered.
-3. **Category**: Delivery, maintenance, vendor, contractor or other.
+3. **Category**: Delivery, maintenance, vendor, contractor or other. Choosing Other asks you to name it.
 4. **Active**: Click to deactivate a supplier; its vehicles stop being admitted automatically.
+5. **Screen tabs**: Suppliers (this view) and Scheduled Visits, where a visitor expected on a given day is booked ahead by plate so the gate recognises them on arrival.
 
 > Each registered plate has a **Print Supplier Pass** button. It prints a standing pass for that
 > plate on the thermal printer, to be kept in the vehicle: the guard scans its QR at the gate the
@@ -261,11 +286,22 @@ Management › Suppliers. Supplier vehicles are admitted automatically when thei
 
 Operations › Operations Center. Watch all gates, guards and cameras at once.
 
-1. **Live summary**: Guards on duty, recent entries, vehicles that came in and left by different gates today, and total guards.
-2. **Screen tabs**: Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate records and confiscated accounts).
+1. **Live summary**: Guards on duty, vehicles inside the campus now, vehicles that came in and left by different gates today, and total guards.
+2. **Screen tabs**: Live Monitor (this view), Vehicles Inside (everyone on campus now), Guards (who is on shift where) and Gate Records (cross-gate records and confiscated accounts).
 3. **Camera Monitor**: View-only camera pictures. Plate detection runs on the guard terminals. (Sample picture shown.)
 4. **Gate column**: Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.
 5. **Refresh**: Reloads the screen.
+
+### Operations Center: vehicles inside
+
+![Operations Center: vehicles inside](02-cdso-admin/09b-operations-vehicles-inside.png)
+
+Everyone on campus right now, from the gate scans.
+
+1. **Vehicles Inside tab**: The same list the guards see in their Vehicles Inside panel, as a table. The Vehicles Inside tile above counts the same people.
+2. **Who is inside**: Everyone, or one group at a time. The number on each chip counts that group.
+3. **Search**: Find a plate or a name.
+4. **Inside table**: Plate, owner or driver, category, vehicle, the gate it came in by, the time in and how long it has been inside. A visitor’s Time Left counts down their pass and turns into Overstay once it runs out.
 
 ### Operations Center: guards
 
@@ -282,12 +318,11 @@ Guard shifts: who is on duty at which gate.
 
 ![Operations Center: gate records](02-cdso-admin/11-operations-gate-records.png)
 
-Visitors still on campus, cross-gate records and confiscated accounts.
+Cross-gate records and confiscated accounts. Everyone on campus is on the Vehicles Inside tab.
 
-1. **Active Visitors**: Visitor passes still inside, with the office visited, who issued the pass, and time left (or how long they have overstayed).
-2. **Cross-Gate Records**: Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.
-3. **Confiscated accounts**: Owners serving a violation penalty and when it ends.
-4. **Lift**: Ends a confiscation early. The violations themselves stay on record.
+1. **Cross-Gate Records**: Vehicles that came in by one gate and left by another, newest first, with both gates, both times and how long they stayed. The pager moves through older records.
+2. **Confiscated accounts**: Owners serving a violation penalty and when it ends.
+3. **Lift**: Ends a confiscation early. The violations themselves stay on record.
 
 ### Parking Space Management
 
@@ -361,13 +396,12 @@ Events reserve part of campus parking and note organizer plates.
 
 Operations › Violations. The 3-offense penalty ladder and every recorded offense.
 
-1. **Active warnings**: How many violations are still counting against their owners.
-2. **Violations report**: Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.
-3. **Status filter**: All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.
-4. **Type and period**: Filter by violation type, and by Today, Week, Month or Year.
-5. **Search**: Find by plate, conduction number, owner or notes. The arrow button resets all filters.
-6. **Violations table**: Plate, owner, type with offense number (1st, 2nd, 3rd), notes, evidence photo, when it was issued and by whom.
-7. **Lift**: Voids a violation as a false alarm. It stops counting, and later offenses are renumbered.
+1. **Violations report**: Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.
+2. **Status filter**: All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.
+3. **Type and period**: Filter by violation type (Overstaying, Double Parking, Unauthorized Entry and the rest), and by Today, Week, Month or Year.
+4. **Search**: Find by plate, conduction number, owner or notes. The arrow button resets all filters.
+5. **Violations table**: One row per person: plate, owner, each violation type with the offense number (1st, 2nd, 3rd), the latest notes, when it was first issued, the confiscation and the status. A lifted violation is greyed out and marked false alarm.
+6. **View**: Opens the violation profile: every violation in full, with Lift to void one as a false alarm. A lifted one stops counting, and later offenses are renumbered.
 
 ### Vehicle Log
 
@@ -399,9 +433,9 @@ System › Rule Constraints. When each kind of vehicle may enter campus.
 
 Set when the online application form accepts submissions.
 
-1. **New Period**: Create a registration window with a label, start date and end date.
-2. **Period**: Label, start and end dates. Only one period can be Active; the public form accepts applications only while it is open.
-3. **Extend Duration / Deactivate**: Open a running period to move its end date, or close the window early. The editor is headed "Extending period" and saves with Save New Dates.
+1. **New Period**: Create the registration period of a school year. Choose the school year (August 1 to July 31), then when registration opens and closes inside it.
+2. **Period**: School year and its registration dates. One period per school year; only one can be Active, and the public form accepts applications only while it is open. A period marked "manual dates" was saved before periods belonged to a school year.
+3. **Change Dates / Deactivate**: Change Dates moves the open or close date inside the school year; Deactivate closes the window early; Set Active makes another school year the active one.
 
 ### Rule Constraints: access mode
 
@@ -431,9 +465,9 @@ System › Audit Log. What staff did to accounts and records.
 System › System Settings. System-wide policies, grouped into five tabs.
 
 1. **Settings tabs**: Accounts & Fees, Gates & Scanning, Parking, Data & Backup, and Report Signatories. A tab holding unsaved changes carries a dot, and Save stays disabled until something differs from what is stored.
-2. **Account expiry period**: How long a vehicle-owner account lasts before it is archived automatically.
-3. **Retention notice**: What the chosen period means for owners’ records.
-4. **Vehicle pass fees**: The amounts applicants are asked to pay at the Accounting Office.
+2. **Account expiration**: Fixed by the school year rather than set here: every owner account expires on July 31 of the school year (August 1 to July 31) it was accepted for, and is then archived automatically. The owner is emailed and can register again for the next school year.
+3. **What it means today**: The date an account accepted today would expire, and when it is deleted under the retention period set on the Data & Backup tab.
+4. **Vehicle pass fees**: The amounts applicants pay at the Accounting Office: one for students and fetchers, one for employees. They are shown on the public registration form and in the Vehicle Pass Terms.
 
 ### System Settings: gates & scanning
 
@@ -463,8 +497,8 @@ Parking detection thresholds.
 Backups, restore and data retention.
 
 1. **Retention period**: Access logs, violations and archived accounts older than this are deleted automatically. The audit log is kept.
-2. **Download / Restore**: Download a full snapshot of the system data, or restore the system from a backup file.
-3. **Automatic backups**: How often the server backs itself up, and how many automatic backups to keep.
+2. **Download / Restore**: Download a full snapshot of the system data (you pick the folder and file name first), or restore the system from a backup file.
+3. **Automatic backups**: How often the server backs itself up (weekly, monthly, quarterly or yearly) and at what time, the folder it saves to (Browse picks one on the server computer), and how many automatic backups to keep. If the computer is off at that moment, it takes the missed backup as soon as it is back on.
 4. **Backups on the server**: Saved backups. Save As downloads a copy, Restore brings the system back to that point, and the bin deletes it.
 
 > **What a restore does to the live data.** It is a merge, not a wipe: records in the backup are
@@ -495,9 +529,20 @@ Who signs the PDF reports. Every exported PDF ends with this block.
 
 The built-in guide, available to every role from the sidebar.
 
-1. **Search the manual**: Type a keyword such as backup, violations or scanning.
+1. **Search the guide**: Type a keyword such as forgot password, violations or backup.
 2. **Topics**: Topics for your role, grouped by area. Click one to read it.
 3. **Article**: Step-by-step instructions for the selected topic.
+4. **Picture**: Many topics carry a picture with the same numbered boxes as this manual. Point at a numbered item to highlight it on the screen, or click the picture to enlarge it.
+
+### Editing the policies
+
+![Editing the policies](02-cdso-admin/25b-policy.png)
+
+Policy, from the sidebar. The CDSO can change the wording of both policies.
+
+1. **Policy tabs**: The Data Privacy Policy and the Vehicle Pass Terms & Conditions. Each is edited on its own.
+2. **Edit**: Opens the wording in an editor. Only the CDSO sees it; everyone else reads the page. Outside editing, this corner says when the wording was last changed and by whom.
+3. **Editor**: Change the wording below this toolbar, with its headings, bold, lists and links. Below the text, Save puts the new wording live for everyone who opens the policy and Cancel discards the changes; once the wording has been edited, Restore default appears beside them to put the original back.
 
 
 ## Security Guard
@@ -525,9 +570,10 @@ The guard’s main screen at the gate. Plates are read automatically from the en
 > Inside** lists the no-plate vehicles still on campus, each with a Slip button (reprint it, or
 > record the exit from it) and a Log Exit button — without them those vehicles would sit in the
 > inside count for ever. **Overstaying** lists vehicles still on campus past the maximum stay
-> their entry rule allows, with how far over they are; **Acknowledge** issues the Time Exceed
-> violation there and then. They may still leave, but not return until the confiscation ends, and
-> a vehicle already recorded today is marked as such rather than offered again.
+> their entry rule allows, with how far over they are; **Acknowledge**, once confirmed, issues the
+> Overstaying violation there and then. They may still leave, but not return until the
+> confiscation ends, and a vehicle already recorded today is marked as such rather than offered
+> again.
 
 > **Passes and slips print on the thermal printer.** Creating a visitor pass asks for the
 > visitor’s name, the office, the purpose and the allowed duration in hours and minutes, then

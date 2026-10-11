@@ -32,7 +32,7 @@ total = 0
 for meta_path in sorted(CLEAN.rglob('*.json')):
     meta = json.loads(meta_path.read_text(encoding='utf-8'))
     section = meta_path.parent.name
-    name = re.sub(r'^\d+b?-', '', meta_path.stem)
+    name = re.sub(r'^\d+[a-z]?-', '', meta_path.stem)
     key = f'{PREFIX[section]}-{name}'
     if key in SKIP:
         continue

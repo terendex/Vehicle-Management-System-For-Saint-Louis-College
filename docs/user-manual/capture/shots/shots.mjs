@@ -105,8 +105,9 @@ export const SHOTS = [
     },
     marks: [
       m(1, 'Registration window', 'Shows whether applications are being accepted, and the dates of the current window.', card(text('Registration is currently open', 'body', false))),
-      m(2, 'Registrant type', 'Choose Student — Vehicle, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs.', union(card(text('Student — Vehicle', 'body')), card(text('Fetcher / Drop & Go', 'body')))),
+      m(2, 'Registrant type', 'Choose Student, Employee, or Fetcher / Drop & Go / Driver. The form that follows asks only for what that type needs. Student first asks whether you drive: the student pass is only for a student with a valid driver’s license, and a No moves the application to Fetcher / Drop & Go / Driver.', union(card(text('Student', 'body')), card(text('Fetcher / Drop & Go / Driver', 'body')))),
       m(3, 'Back to Login', 'Leave the application without submitting.', (p) => p.getByRole('button', { name: /Back to Login/ }).last()),
+      m(4, 'Pass validity and payment', 'A pass is valid until July 31 of its school year. After submitting you have 3 working days (Monday to Friday) to pay at the Accounting Office and file the Official Receipt, or the application expires.', union(text(/Registration is open on the dates set/, 'body', false), text(/apply again/, 'body', false))),
     ],
   }),
   fig(GS, '05b-student-application-form', {
@@ -116,14 +117,30 @@ export const SHOTS = [
     prepare: async (p) => {
       await p.locator('input[type=checkbox]').first().check()
       await p.getByRole('button', { name: 'Agree & Continue' }).click()
-      await p.getByText('Student — Vehicle', { exact: true }).click()
+      await p.getByText('Student', { exact: true }).first().click()
+      await p.getByRole('button', { name: 'Yes, I drive' }).click()
     },
     marks: [
       m(1, 'Form type', 'The kind of application you are filling in.', union(text(/application form for a vehicle pass/i, 'body', false), text(/student — vehicle registration/i, 'body', false))),
       m(2, 'Campus Schedule', 'Choose one schedule (Mon · Wed · Fri or Tue · Thu · Fri). Slots are first come, first served; a full schedule cannot be selected.', union(text(/^campus schedule/i, 'body', false), card(text(/Choose one schedule/, 'body', false)))),
-      m(3, 'Registrant type', 'Switch here if you picked the wrong type.', union(card(text('Registered SLC student', 'body')), card(text('Parent, guardian or driver', 'body')))),
-      m(4, 'Vehicle identification', 'Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number. Choosing E-Bike asks for neither: the college issues the unit a control number (FM-001, FM-002, and so on) on submission, and that number is what the gate, the pass and the QR code use in place of a plate.', union(card(text(/brand-new and does not have a plate/, 'body', false)), (p) => p.getByPlaceholder(/AAA 0000/).first(), text('Select Color', 'body'))),
-      m(5, 'Personal information', 'Your name, then contact details further down. Scroll to the end to attach the required documents and submit.', union(text(/^personal information$/i, 'body', false), ph('e.g. Santos'))),
+      m(3, 'Registrant type', 'Switch here if you picked the wrong type.', union(card(text('College or SHS student who drives', 'body')), card(text('Parent, guardian or driver', 'body')))),
+      m(4, 'Vehicle identification', 'Plate number, vehicle type and colour. Tick the box instead if the vehicle is brand-new and only has a conduction number. Choosing E-Bike asks for neither: the college issues the unit a control number (FM-001, FM-002, and so on) on submission, and that number is what the gate, the pass and the QR code use in place of a plate.', union(card(text(/brand.new and does not have a plate/, 'body', false)), (p) => p.getByPlaceholder(/AAA 0000/).first(), text('Select Color', 'body'))),
+      m(5, 'Personal information', 'Your name, then further down your email address, education level, campus schedule and driver’s license number. Scroll to the end to accept the terms, confirm your details and submit.', union(text(/^personal information$/i, 'body', false), ph('e.g. Santos'))),
+    ],
+  }),
+  fig(GS, '05c-payment', {
+    // seed_figures.py gives this applicant the token and keeps the link open.
+    fresh: true, path: '/registration/payment?token=5eed0000-0000-4000-8000-0000000000a1',
+    title: 'Paying and filing the Official Receipt',
+    viewport: { width: 1440, height: 1340 },
+    caption: 'Opened from the link emailed after you apply. Pay at the Accounting Office, then file the receipt here.',
+    marks: [
+      m(1, 'Vehicle pass fee', 'The amount to pay at the Accounting Office for your type of registration.', parent(text(/Payable at the Accounting Office/, 'body', false))),
+      m(2, 'Deadline', 'When your 3 working days (Monday to Friday) end, and how long is left. If the receipt is not filed by then, the application expires and you have to apply again.', card(text(/Pay and file your receipt by/, 'body', false))),
+      m(3, 'How this works', 'Pay at the counter, enter the OR number here, then the CDSO reviews the application and emails you the outcome. It is not queued for review until the number is filed.', card(text(/How this works/i, 'body', false))),
+      m(4, 'Official Receipt (OR) Number', 'Copy it exactly as printed on the receipt: 6 or 7 digits.', ph(/e\.g\. 1380093/)),
+      m(5, 'Photo of the Receipt', 'A photograph of the whole receipt, with the number readable. The CDSO checks it against the number.', union(text(/^Photo of the Receipt/, 'body', false), text(/Photograph the whole receipt/, 'body', false))),
+      m(6, 'Submit Receipt', 'Files the number and the photo. You are emailed once the CDSO has reviewed the application.', btn(/Submit Receipt/)),
     ],
   }),
   fig(GS, '06-guard-select-gate', {
@@ -192,7 +209,7 @@ export const SHOTS = [
       m(4, 'Search', 'Find an application by name, plate or type.', ph('Search name, plate, type')),
       m(5, 'Type, payment and status filters', 'Pending Review lists the applications still waiting for your decision.', union(css('main select >> nth=0'), css('main select >> nth=2'))),
       m(6, 'Applications table', 'Each row shows the applicant, plate, schedule, payment and status.', css('main table')),
-      m(7, 'View', 'Opens the application to check documents and approve or reject it.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
+      m(7, 'View', 'Opens the application to check its details and receipt, and approve or reject it.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
     ],
   }),
   fig(AD, '04-registration-review', {
@@ -231,16 +248,36 @@ export const SHOTS = [
   }),
   fig(AD, '05-user-management', {
     who: 'admin', path: '/admin/users', title: 'User Management',
-    caption: 'Management › User Management. Create, edit, disable and delete accounts.',
+    caption: 'Management › User Management. Create, edit, disable and enable accounts.',
     marks: [
       m(1, 'Add User', 'Create a security guard or vehicle-owner account.', btn(/Add User/)),
       m(2, 'Screen tabs', 'User Accounts lists everyone. Detail Change Requests holds owners’ requested corrections; the badge counts pending ones.', union(btn(/User Accounts/), btn(/Detail Change Requests/))),
-      m(3, 'Account counts', 'Total, active and disabled accounts.', parent(card(text('Total Users', 'main', false)))),
+      m(3, 'Account counts', 'Total, active, disabled and archived accounts.', parent(card(text('Total Users', 'main', false)))),
       m(4, 'Role tabs', 'Show only one kind of account.', union(text('All Users'), text('Fetcher / Drop & Go'))),
       m(5, 'Search', 'Search by name, email or user ID (e.g. SLC-OWN-000005).', ph('Search by name, email, or user ID')),
       m(6, 'Status filter', 'Show active, disabled or archived accounts.', card(text('All Statuses'))),
       m(7, 'Accounts table', 'User ID, name, email, role and status.', css('main table')),
-      m(8, 'Actions menu', 'Edit, disable/enable, reset two-factor, print a guard QR badge, or delete the account.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
+      m(8, 'Actions menu', 'View Profile (details, activity, editing and the QR code), print a guard’s QR badge, reset two-factor, or disable or enable the account.', (p) => p.locator('main table tbody tr').first().locator('button').last()),
+    ],
+  }),
+  fig(AD, '05b-user-profile', {
+    who: 'admin', path: '/admin/users', title: 'User profile and activity',
+    viewport: { width: 1440, height: 1200 },
+    caption: 'View Profile, from an account’s actions menu. A vehicle owner’s profile adds their schedule and violations.',
+    prepare: async (p) => {
+      await p.getByPlaceholder('Search by name, email, or user ID').fill('VILLANUEVA')
+      await p.waitForTimeout(1200)
+      await p.locator('main table tbody tr').first().locator('button').last().click()
+      await p.getByRole('button', { name: /View Profile/ }).click()
+      await p.waitForTimeout(1500)
+    },
+    after: async (p) => { await p.keyboard.press('Escape') },
+    marks: [
+      m(1, 'Account details', 'Status, user ID, email and the date the account was created.', css('.um-profile-grid')),
+      m(2, 'Schedule, vehicles and violations', 'The owner’s campus days, the entry hours that apply to them, when their pass expires, their vehicles, and their violations with the offense count.', css('.ua-summary')),
+      m(3, 'View Activity', 'Every entry, exit and violation of this owner, newest first. Filter by kind, or by dates.', btn(/View Activity/)),
+      m(4, 'Edit Details', 'Correct the name or email on the account.', btn(/Edit Details/)),
+      m(5, 'View QR', 'The owner’s vehicle pass QR code, to show or reprint.', btn(/View QR/)),
     ],
   }),
   fig(AD, '06-detail-change-requests', {
@@ -274,14 +311,15 @@ export const SHOTS = [
     ],
   }),
   fig(AD, '08-suppliers', {
-    who: 'admin', path: '/admin/suppliers', title: 'Supplier Management',
-    caption: 'Management › Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.',
+    who: 'admin', path: '/admin/suppliers', title: 'Visits and Suppliers',
+    caption: 'Management › Visits and Suppliers. Supplier vehicles are admitted automatically when their plate is scanned.',
     prepare: async (p) => { await p.locator('main').getByText('Ilocos Fresh Produce Trading').click().catch(() => {}); },
     marks: [
       m(1, 'Add Supplier', 'Register a supplier company and its plates.', btn(/Add Supplier/)),
       m(2, 'Supplier card', 'Company name and how many plates it has registered.', card(text('Coastal Office Supplies Inc.'))),
-      m(3, 'Category', 'Delivery, maintenance, vendor, contractor or other.', css('main select >> nth=0'), { badge: 'bl' }),
+      m(3, 'Category', 'Delivery, maintenance, vendor, contractor or other. Choosing Other asks you to name it.', css('main select >> nth=0'), { badge: 'bl' }),
       m(4, 'Active', 'Click to deactivate a supplier; its vehicles stop being admitted automatically.', (p) => p.locator('main').getByRole('button', { name: /Active|Inactive/ }).first()),
+      m(5, 'Screen tabs', 'Suppliers (this view) and Scheduled Visits, where a visitor expected on a given day is booked ahead by plate so the gate recognises them on arrival.', union(btn(/^Suppliers$/), btn(/Scheduled Visits/))),
     ],
   }),
   fig(AD, '09-operations-center', {
@@ -289,11 +327,23 @@ export const SHOTS = [
     caption: 'Operations › Operations Center. Watch all gates, guards and cameras at once.',
     wait: 3500,
     marks: [
-      m(1, 'Live summary', 'Guards on duty, recent entries, vehicles that came in and left by different gates today, and total guards.', parent(card(text('Guards On Duty', 'main', false)))),
-      m(2, 'Screen tabs', 'Live Monitor (this view), Guards (who is on shift where) and Gate Records (visitors inside, cross-gate records and confiscated accounts).', union(btn(/Live Monitor/), btn(/Gate Records/))),
+      m(1, 'Live summary', 'Guards on duty, vehicles inside the campus now, vehicles that came in and left by different gates today, and total guards.', parent(card(text('Guards On Duty', 'main', false)))),
+      m(2, 'Screen tabs', 'Live Monitor (this view), Vehicles Inside (everyone on campus now), Guards (who is on shift where) and Gate Records (cross-gate records and confiscated accounts).', union(btn(/Live Monitor/), btn(/Gate Records/))),
       m(3, 'Camera Monitor', 'View-only camera pictures. Plate detection runs on the guard terminals. (Sample picture shown.)', card(text('Camera Monitor'))),
-      m(4, 'Gate column', 'Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.', card((p) => p.locator('main').getByText('789UIO').first())),
+      m(4, 'Gate column', 'Latest scans at each gate. The green chip names the guard on duty and how long they have been on shift.', (p) => p.locator('main .oc-gate-panel').first()),
       m(5, 'Refresh', 'Reloads the screen.', btn('Refresh', 'main')),
+    ],
+  }),
+  fig(AD, '09b-operations-vehicles-inside', {
+    who: 'admin', path: '/admin/entries', title: 'Operations Center: vehicles inside',
+    caption: 'Everyone on campus right now, from the gate scans.',
+    wait: 2500,
+    prepare: async (p) => { await clickTab(p, /^Vehicles Inside$/) },
+    marks: [
+      m(1, 'Vehicles Inside tab', 'The same list the guards see in their Vehicles Inside panel, as a table. The Vehicles Inside tile above counts the same people.', btn(/^Vehicles Inside$/)),
+      m(2, 'Who is inside', 'Everyone, or one group at a time. The number on each chip counts that group.', css('main .ic-chips')),
+      m(3, 'Search', 'Find a plate or a name.', css('main .ic-search')),
+      m(4, 'Inside table', 'Plate, owner or driver, category, vehicle, the gate it came in by, the time in and how long it has been inside. A visitor’s Time Left counts down their pass and turns into Overstay once it runs out.', (p) => p.locator('main table').filter({ hasText: 'Inside For' }).first()),
     ],
   }),
   fig(AD, '10-operations-guards', {
@@ -341,7 +391,7 @@ export const SHOTS = [
     who: 'admin', path: '/admin/parking', title: 'Drawing parking bays',
     // Tall enough to hold the whole Set Up Bay Monitoring checklist, which
     // sits under the canvas and is one of the callouts.
-    viewport: { width: 1440, height: 1560 },
+    viewport: { width: 1440, height: 1760 },
     caption: 'Edit Parking Slots mode: draw and adjust bays over the zone’s reference image.',
     prepare: async (p) => { await clickTab(p, /Edit Parking Slots/) },
     marks: [
@@ -354,6 +404,7 @@ export const SHOTS = [
   }),
   fig(AD, '14-events', {
     who: 'admin', path: '/admin/parking', title: 'Campus events',
+    viewport: { width: 1440, height: 1100 },
     caption: 'Events reserve part of campus parking and note organizer plates.',
     prepare: async (p) => { await clickTab(p, /^Events$/) },
     marks: [
@@ -368,13 +419,12 @@ export const SHOTS = [
     who: 'admin', path: '/admin/violations', title: 'Violations',
     caption: 'Operations › Violations. The 3-offense penalty ladder and every recorded offense.',
     marks: [
-      m(1, 'Active warnings', 'How many violations are still counting against their owners.', card(text('Active Warnings', 'main', false))),
-      m(2, 'Violations report', 'Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.', css('.report-bar')),
-      m(3, 'Status filter', 'All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.', union(btn(/^All$/, 'main'), btn(/Cleared \/ Resolved/))),
-      m(4, 'Type and period', 'Filter by violation type, and by Today, Week, Month or Year.', union(css('main select >> nth=0'), btn('Year', 'main'))),
-      m(5, 'Search', 'Find by plate, conduction number, owner or notes. The arrow button resets all filters.', union(ph(/Search plate, owner/), (p) => p.locator('main').getByPlaceholder(/Search plate, owner/).locator('xpath=following::button[1]'))),
-      m(6, 'Violations table', 'One row per person: plate, owner, type with offense number (1st, 2nd, 3rd), latest notes, when it was issued, confiscation and status.', css('main table')),
-      m(7, 'View', 'Opens the violation profile: every violation in full, with Lift to void one as a false alarm. A lifted one stops counting, and later offenses are renumbered.', (p) => p.locator('main').getByRole('button', { name: /View violations/ }).first()),
+      m(1, 'Violations report', 'Pick a date range and export a PDF or Excel report. The range narrows the table on screen as well, so what you are looking at is what the file will contain; where it is set, it overrides the period buttons below.', css('.report-bar')),
+      m(2, 'Status filter', 'All, Warnings, Confiscated (3rd offense) or Cleared / Resolved.', union(btn(/^All$/, 'main'), btn(/Cleared \/ Resolved/))),
+      m(3, 'Type and period', 'Filter by violation type (Overstaying, Double Parking, Unauthorized Entry and the rest), and by Today, Week, Month or Year.', union(css('main select >> nth=0'), btn('Year', 'main'))),
+      m(4, 'Search', 'Find by plate, conduction number, owner or notes. The arrow button resets all filters.', union(ph(/Search plate, owner/), (p) => p.locator('main').getByPlaceholder(/Search plate, owner/).locator('xpath=following::button[1]'))),
+      m(5, 'Violations table', 'One row per person: plate, owner, each violation type with the offense number (1st, 2nd, 3rd), the latest notes, when it was first issued, the confiscation and the status. A lifted violation is greyed out and marked false alarm.', css('main table')),
+      m(6, 'View', 'Opens the violation profile: every violation in full, with Lift to void one as a false alarm. A lifted one stops counting, and later offenses are renumbered.', (p) => p.locator('main').getByRole('button', { name: /View violations/ }).first()),
     ],
   }),
   fig(AD, '16-vehicle-log', {
@@ -434,9 +484,9 @@ export const SHOTS = [
     caption: 'System › System Settings. System-wide policies, grouped into five tabs.',
     marks: [
       m(1, 'Settings tabs', 'Accounts & Fees, Gates & Scanning, Parking, Data & Backup, and Report Signatories. A tab holding unsaved changes carries a dot, and Save stays disabled until something differs from what is stored.', union(btn(/Accounts & Fees/), btn(/Report Signatories/))),
-      m(2, 'Account expiry period', 'How long a vehicle-owner account lasts before it is archived automatically.', union(css('main input >> nth=0'), css('main input >> nth=1'))),
-      m(3, 'Retention notice', 'What the chosen period means for owners’ records.', card(text(/Owner accounts archive/, 'main', false))),
-      m(4, 'Vehicle pass fees', 'The amounts applicants are asked to pay at the Accounting Office.', union(css('main input >> nth=2'), css('main input >> nth=3'))),
+      m(2, 'Account expiration', 'Fixed by the school year rather than set here: every owner account expires on July 31 of the school year (August 1 to July 31) it was accepted for, and is then archived automatically. The owner is emailed and can register again for the next school year.', union(text('Vehicle-Owner Account Expiration', 'main'), text(/Every vehicle pass is valid for one school year/, 'main', false))),
+      m(3, 'What it means today', 'The date an account accepted today would expire, and when it is deleted under the retention period set on the Data & Backup tab.', card(text(/An account accepted today is valid until/, 'main', false))),
+      m(4, 'Vehicle pass fees', 'The amounts applicants pay at the Accounting Office: one for students and fetchers, one for employees. They are shown on the public registration form and in the Vehicle Pass Terms.', union(css('main input >> nth=0'), css('main input >> nth=1'))),
     ],
   }),
   fig(AD, '22-settings-gates-scanning', {
@@ -451,6 +501,7 @@ export const SHOTS = [
   }),
   fig(AD, '23-settings-parking', {
     who: 'admin', path: '/admin/settings', title: 'System Settings: parking',
+    viewport: { width: 1440, height: 980 },
     caption: 'Parking detection thresholds.',
     prepare: async (p) => { await clickTab(p, /^Parking$/) },
     marks: [
@@ -462,13 +513,13 @@ export const SHOTS = [
   }),
   fig(AD, '24-settings-data-backup', {
     who: 'admin', path: '/admin/settings', title: 'System Settings: data & backup',
-    viewport: { width: 1440, height: 1100 },
+    viewport: { width: 1440, height: 1500 },
     caption: 'Backups, restore and data retention.',
     prepare: async (p) => { await clickTab(p, /Data & Backup/) },
     marks: [
       m(1, 'Retention period', 'Access logs, violations and archived accounts older than this are deleted automatically. The audit log is kept.', union((p) => p.locator('main input[type=number]').nth(0), card(text(/permanently deleted/, 'main', false)))),
-      m(2, 'Download / Restore', 'Download a full snapshot of the system data, or restore the system from a backup file.', union(btn(/Download Backup/), btn(/Restore from Backup/))),
-      m(3, 'Automatic backups', 'How often the server backs itself up, and how many automatic backups to keep.', union(css('main select >> nth=0'), (p) => p.locator('main input[type=number]').nth(1))),
+      m(2, 'Download / Restore', 'Download a full snapshot of the system data (you pick the folder and file name first), or restore the system from a backup file.', union(btn(/Download Backup/), btn(/Restore from Backup/))),
+      m(3, 'Automatic backups', 'How often the server backs itself up (weekly, monthly, quarterly or yearly) and at what time, the folder it saves to (Browse picks one on the server computer), and how many automatic backups to keep. If the computer is off at that moment, it takes the missed backup as soon as it is back on.', union(css('#scheduled_backup_frequency'), css('#scheduled_backup_keep'))),
       m(4, 'Backups on the server', 'Saved backups. Save As downloads a copy, Restore brings the system back to that point, and the bin deletes it.', (p) => p.locator('main').getByRole('button', { name: /Save As/ }).first().locator('xpath=ancestor::*[.//*[contains(text(),".json")]][1]')),
     ],
   }),
@@ -490,15 +541,32 @@ export const SHOTS = [
     who: 'admin', path: '/help', title: 'Help & User Manual',
     caption: 'The built-in guide, available to every role from the sidebar.',
     marks: [
-      m(1, 'Search the manual', 'Type a keyword such as backup, violations or scanning.', ph(/Search the manual/)),
+      m(1, 'Search the guide', 'Type a keyword such as forgot password, violations or backup.', ph(/Search the guide/)),
       m(2, 'Topics', 'Topics for your role, grouped by area. Click one to read it.', card((p) => p.locator('main').getByText('GETTING STARTED', { exact: false }).first())),
-      m(3, 'Article', 'Step-by-step instructions for the selected topic.', card((p) => p.locator('main h2, main h3').filter({ hasText: 'Logging In & Your Account' }))),
+      m(3, 'Article', 'Step-by-step instructions for the selected topic.', card((p) => p.locator('main h1, main h2, main h3').filter({ hasText: /^Logging In$/ }).first())),
+      m(4, 'Picture', 'Many topics carry a picture with the same numbered boxes as this manual. Point at a numbered item to highlight it on the screen, or click the picture to enlarge it.', union(text(/This topic has a picture/, 'main', false), btn(/Click to enlarge/))),
+    ],
+  }),
+  fig(AD, '25b-policy', {
+    who: 'admin', path: '/policy', title: 'Editing the policies',
+    viewport: { width: 1440, height: 1000 },
+    caption: 'Policy, from the sidebar. The CDSO can change the wording of both policies.',
+    prepare: async (p) => {
+      await p.locator('.policy-edit-btn').click()
+      await p.waitForTimeout(2000)
+    },
+    marks: [
+      m(1, 'Policy tabs', 'The Data Privacy Policy and the Vehicle Pass Terms & Conditions. Each is edited on its own.', css('.policy-tabs-inner')),
+      m(2, 'Edit', 'Opens the wording in an editor. Only the CDSO sees it; everyone else reads the page. Outside editing, this corner says when the wording was last changed and by whom.', css('.policy-card-meta')),
+      m(3, 'Editor', 'Change the wording below this toolbar, with its headings, bold, lists and links. Below the text, Save puts the new wording live for everyone who opens the policy and Cancel discards the changes; once the wording has been edited, Restore default appears beside them to put the original back.', css('.pe-toolbar')),
     ],
   }),
 
   // ════════════════════════ SECURITY GUARD ════════════════════════
   fig(SE, '01-entry-management', {
     who: 'guard', path: '/security/entries', title: 'Entry Management (gate terminal)',
+    // Tall enough for the right-hand column down to Confiscated accounts.
+    viewport: { width: 1440, height: 1320 },
     caption: 'The guard’s main screen at the gate. Plates are read automatically from the entry camera.',
     wait: 3500,
     marks: [
@@ -583,6 +651,12 @@ export const SHOTS = [
   fig(SE, '06-vehicle-log', {
     who: 'guard', path: '/security/audit', title: 'Vehicle Log (gate)',
     caption: 'Every scan at your gate, with the gate each visit came in and left by.',
+    // The log opens on today, which in the demo data holds no guard's scans.
+    // 27 September has ABK5521 coming in at Gate 1 and leaving by Gate 4.
+    prepare: async (p) => {
+      await p.locator('main input[type=date]').fill('2026-09-27')
+      await p.waitForTimeout(1500)
+    },
     marks: [
       m(1, 'Status filter', 'Show all scans or only one decision: Authorized, Denied, Wrong Day, Visitor or Exited.', union(btn(/^All$/, 'main'), btn(/^Exited$/, 'main'))),
       m(2, 'Date and refresh', 'Pick another day, or reload the list.', union(css('main input[type=date]'), (p) => p.locator('main input[type=date]').locator('xpath=following::button[1]'))),

@@ -21,6 +21,12 @@ What it sets, and why the figure needs it:
     not zero. Zero next to seven parked bays reads as a broken counter, and
     the manual says in the same breath that On Campus is normally the HIGHER
     of the two - drop-offs and vehicles still circling.
+  * The demo events and the demo confiscation re-dated around today. Both
+    were seeded relative to the day seed_demo.py ran and expire with time,
+    which empties the Events list and every Confiscated accounts panel.
+  * One unpaid application submitted today with a fixed payment link, for
+    the payment-page figure: the page opens only from the emailed link, and
+    only while the application's 3 working days to pay are running.
 """
 import os
 import sys
@@ -139,7 +145,9 @@ def put_cars_on_campus(target=9):
     marker = 'manual figure: on campus'
     AccessLog.objects.filter(entry_note=marker).delete()
 
-    cars = list(Vehicle.objects.filter(vehicle_type__iexact='car')[:target])
+    # NBC1234 is the plate the "Checking a plate" figure looks up; left
+    # inside, the check would log it out instead of showing an entry decision.
+    cars = list(Vehicle.objects.filter(vehicle_type__iexact='car').exclude(plate_number=PLATE_CHECKED)[:target])
     if not cars:
         print('  no car vehicles in the demo data, skipped')
         return
@@ -150,7 +158,9 @@ def put_cars_on_campus(target=9):
             vehicle=vehicle,
             plate_number=vehicle.plate_number or '',
             status=AccessLog.Status.AUTHORIZED,
-            gate_id='1',
+            # A Gate key, as the scanner writes it: a bare '1' matches no
+            # gate, so the Gate columns would print '1' instead of its label.
+            gate_id='gate1',
             entry_note=marker,
             # Spread across the morning, and well inside STALE_ENTRY_HOURS so
             # none of them is dropped as an entry whose exit scan was missed.
@@ -158,6 +168,68 @@ def put_cars_on_campus(target=9):
         )
     print('  %d cars left inside the gates' % len(cars))
 
+
+def keep_events_current():
+    """Re-date the demo events around today, as seed_demo.py first placed them.
+
+    seed_demo.py dated them relative to the day it ran, and an event archives
+    itself once its date passes, so a month later the Events figure showed
+    "No upcoming events". Two upcoming, one past, as originally seeded.
+    """
+    from datetime import timedelta                    # noqa: PLC0415
+    from vehicles.models import Event                 # noqa: PLC0415
+
+    today = timezone.localdate()
+    for name, days, archived in [('Research Congress 2026', 2, False),
+                                 ('Foundation Day Parade', 12, False),
+                                 ('Parents-Teachers Conference', -9, True)]:
+        n = Event.objects.filter(name=name).update(date=today + timedelta(days=days), archived=archived)
+        print('  %s: %s' % (name, ('%+d days' % days) if n else 'not in the demo data, skipped'))
+
+
+def keep_confiscation_current():
+    """Keep the demo 2nd-offense owner confiscated, ending two weeks out.
+
+    The seeded confiscation ran out, which emptied every "Confiscated accounts"
+    panel and left the Lift button the gate-records figure points at with
+    nothing to point at.
+    """
+    from datetime import timedelta                    # noqa: PLC0415
+    from accounts.models import User                  # noqa: PLC0415
+
+    # Only the seeded 2nd-offense owner: a 2nd offense is two weeks, and other
+    # levels run for other lengths (a 3rd has no end date at all).
+    until = timezone.localdate() + timedelta(days=13)
+    n = User.objects.filter(email=CONFISCATED_OWNER, confiscation_level=2).update(
+        confiscated_at=timezone.now() - timedelta(days=1), confiscated_until=until)
+    print('  %s: %s' % (CONFISCATED_OWNER, ('confiscated until %s' % until) if n else 'not at 2nd offense, skipped'))
+
+
+def open_payment_link():
+    """Give one unpaid applicant a fixed payment link that is still open.
+
+    The payment page is reached only through the emailed link, and an unpaid
+    application expires after 3 working days, so the payment-page figure needs
+    an application submitted today with a token it can put in the URL.
+    """
+    from datetime import timedelta                    # noqa: PLC0415
+    from vehicles.models import VehicleRegistration   # noqa: PLC0415
+
+    # The hourly expiry job moves the row to 'expired' once its 3 working days
+    # pass between captures, so bring an expired one back to pending too,
+    # dropping the reason expire_overdue() wrote on it.
+    n = VehicleRegistration.objects.filter(
+        email=PAYMENT_APPLICANT, status__in=['pending', 'expired'], payment_status='unpaid',
+    ).update(status='pending', rejection_reason='', payment_token=PAYMENT_TOKEN,
+             created_at=timezone.now() - timedelta(hours=2))
+    print('  %s: %s' % (PAYMENT_APPLICANT, 'link open, submitted 2 hours ago' if n else 'not an unpaid application, skipped'))
+
+
+PLATE_CHECKED = 'NBC1234'
+CONFISCATED_OWNER = '20221187@slc-sflu.edu.ph'   # MARK VILLANUEVA, 2nd offense in seed_demo.py
+# Must match the payment-page figure's path in shots/shots.mjs.
+PAYMENT_APPLICANT = 'sophia.navarro@example.com'
+PAYMENT_TOKEN = '5eed0000-0000-4000-8000-0000000000a1'
 
 print('baselines:')
 set_baselines()
@@ -167,4 +239,10 @@ print('receipt photos:')
 attach_receipt_photos()
 print('on campus:')
 put_cars_on_campus()
+print('events:')
+keep_events_current()
+print('confiscations:')
+keep_confiscation_current()
+print('payment link:')
+open_payment_link()
 print('done')

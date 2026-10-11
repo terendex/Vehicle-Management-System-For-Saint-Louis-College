@@ -50,7 +50,7 @@ IMAGES   = os.path.join(HERE, 'images')
 SOURCE   = os.path.join(IMAGES, 'README.md')
 DOCX     = os.path.join(HERE, 'SLC-VMS-User-Manual.docx')
 
-VERSION_LINE = 'Version 1.2  ·  September 2026'
+VERSION_LINE = 'Version 1.3  ·  October 2026'
 
 # Page geometry, copied from the document Word produced: A4 with 1304-twip side
 # margins leaves 9298 twips of text, and the figures and tables are sized to
@@ -84,7 +84,7 @@ ABOUT_INTRO = (
     'It is organised by who uses each part of the system:'
 )
 ABOUT_BULLETS = [
-    ('Getting Started', 'How to sign in, reset a forgotten password, apply for a vehicle pass, '
+    ('Getting Started', 'How to sign in, reset a forgotten password, apply and pay for a vehicle pass, '
                         'and how security guards sign in at a gate.'),
     ('CDSO (Administrator)', 'Every screen available to the CDSO account: the dashboard, '
                              'registrations, users, devices, suppliers, operations, parking, '
@@ -111,7 +111,7 @@ PICTURE_NOTES = [
     'camera feed.',
     'Dates and counts will differ on your system.',
     'The Activity log in the launcher picture is deliberately blurred.',
-    'Every picture in this edition was taken from the September 2026 system. Where a screen is '
+    'Every picture in this edition was taken from the October 2026 system. Where a screen is '
     'described here and looks different on yours, the system has moved on since — tell the '
     'CDSO Office so the picture can be re-taken.',
 ]

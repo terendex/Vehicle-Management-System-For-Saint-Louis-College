@@ -145,7 +145,16 @@ for (const shot of SHOTS) {
     for (const m of shot.marks || []) {
       const b = await boxOf(page, m.at)
       if (!b) { console.log(`  ! ${shot.id}: mark ${m.n} "${m.label}" not found`); continue }
-      marks.push({ ...m, at: undefined, box: { x: b.x - clip.x, y: b.y - clip.y, w: b.w, h: b.h } })
+      // Clipped to the picture: a box past its edge has no visible far side,
+      // and the help page scrolls to the middle of the box from the legend,
+      // which for a long table or panel is somewhere below the picture.
+      const x0 = Math.max(0, b.x - clip.x), y0 = Math.max(0, b.y - clip.y)
+      const x1 = Math.min(clip.width, b.x - clip.x + b.w), y1 = Math.min(clip.height, b.y - clip.y + b.h)
+      if (x1 - x0 < 8 || y1 - y0 < 8) {
+        console.log(`  ! ${shot.id}: mark ${m.n} "${m.label}" is outside the picture`)
+        continue
+      }
+      marks.push({ ...m, at: undefined, box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } })
     }
     await page.screenshot({ path: `raw/${shot.id}.png`, clip, fullPage: !!(shot.fullPage || shot.clipFn) })
     fs.writeFileSync(`raw/${shot.id}.json`, JSON.stringify({
